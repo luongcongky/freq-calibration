@@ -1,0 +1,26 @@
+{
+  "_help": "Sao chép file này thành addresses.json và điền địa chỉ VISA thật. Chạy: pytest unit_test --real --addr-file unit_test/addresses.json. Chỉ cần liệt kê thiết bị đang có; thiết bị thiếu sẽ bị SKIP.",
+
+  "CNT85":  "GPIB0::2::INSTR",
+  "CNT90":  "GPIB0::3::INSTR",
+  "CNT91":  "GPIB0::4::INSTR",
+
+  "53131A": "GPIB0::5::INSTR",
+  "53132A": "GPIB0::6::INSTR",
+  "53220A": "TCPIP0::192.168.1.10::inst0::INSTR",
+  "53150A": "GPIB0::8::INSTR",
+  "53151A": "GPIB0::9::INSTR",
+  "53147A": "GPIB0::10::INSTR",
+
+  "PM6680": "GPIB0::11::INSTR",
+  "PM6690": "GPIB0::12::INSTR",
+
+  "R5372P": "GPIB0::13::INSTR",
+
+  "E4410A": "GPIB0::14::INSTR",
+  "N1911A": "GPIB0::15::INSTR",
+  "N1913A": "GPIB0::16::INSTR",
+  "N1914A": "GPIB0::17::INSTR",
+
+  "4231A":  "GPIB0::18::INSTR"
+}

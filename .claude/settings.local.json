@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest unit_test/test_devices.py -q)",
+      "Bash(python -m pytest unit_test -q)",
+      "Bash(PYTHONIOENCODING=utf-8 QT_QPA_PLATFORM=offscreen python -c ' *)"
+    ]
+  }
+}
