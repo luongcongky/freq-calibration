@@ -44,11 +44,11 @@ class ParamSpec:
 ACTION_SPECS: dict[str, dict] = {
     "identify": {
         "label": "Nhận diện model (*IDN?)",
-        "categories": ("counter", "power"), "needs_device": True, "params": [],
+        "categories": ("counter", "power", "generator"), "needs_device": True, "params": [],
     },
     "status": {
         "label": "Đọc trạng thái (get_status)",
-        "categories": ("counter", "power"), "needs_device": True, "params": [],
+        "categories": ("counter", "power", "generator"), "needs_device": True, "params": [],
     },
     "set_gate_time": {
         "label": "Đặt gate time",
@@ -60,7 +60,7 @@ ACTION_SPECS: dict[str, dict] = {
         "categories": ("counter",), "needs_device": True, "params": [],
     },
     "set_frequency": {
-        "label": "Đặt tần số (cal factor)",
+        "label": "Đặt tần số (cal factor — power meter)",
         "categories": ("power",), "needs_device": True,
         "params": [ParamSpec("freq_hz", "Tần số", "freq_hz", 50e6, "Hz")],
     },
@@ -71,6 +71,25 @@ ACTION_SPECS: dict[str, dict] = {
     "measure_power": {
         "label": "Đo công suất",
         "categories": ("power",), "needs_device": True, "params": [],
+    },
+    # --- Generator (SMW200A) ---
+    "set_rf_frequency": {
+        "label": "Đặt tần số RF (generator)",
+        "categories": ("generator",), "needs_device": True,
+        "params": [ParamSpec("freq_hz", "Tần số RF", "freq_hz", 1e9, "Hz")],
+    },
+    "set_rf_power": {
+        "label": "Đặt công suất RF (generator)",
+        "categories": ("generator",), "needs_device": True,
+        "params": [ParamSpec("power_dbm", "Công suất", "power_dbm", -10.0, "dBm")],
+    },
+    "rf_on": {
+        "label": "Bật RF output",
+        "categories": ("generator",), "needs_device": True, "params": [],
+    },
+    "rf_off": {
+        "label": "Tắt RF output",
+        "categories": ("generator",), "needs_device": True, "params": [],
     },
     "wait": {
         "label": "Chờ ổn định (settle)",
@@ -118,6 +137,13 @@ class ScenarioStep:
     enabled: bool = True
 
     def describe_params(self) -> str:
+        if self.action == "raw_scpi":
+            template = self.params.get("__template__", "")
+            sub = {k: v for k, v in self.params.items() if not k.startswith("__")}
+            try:
+                return template.format(**sub)
+            except (KeyError, ValueError):
+                return template
         if not self.params:
             return ""
         spec_params = {p.key: p for p in ACTION_SPECS.get(self.action, {}).get("params", [])}

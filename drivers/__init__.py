@@ -13,7 +13,7 @@ from .base_visa import (
     MeasurementError, IdentificationError,
 )
 
-# --- Driver gốc ------------------------------------------------------------
+# --- Driver gốc / Signal Generator -----------------------------------------
 from .smw200a import SMW200A, SMW200AError, SMW200AConnectionError
 from .cnt90xl import (
     CNT90XL, CNT90XLError, CNT90XLConnectionError,
@@ -31,6 +31,7 @@ from .advantest_r5372p import AdvantestR5372P
 # --- Máy đo công suất ------------------------------------------------------
 from .keysight_power import E4410A, N1911A, N1913A, N1914A
 from .boonton_4231a import Boonton4231A
+from .rs_nrvd import RSNRVD
 
 
 # Phân loại: "counter" = máy đếm tần số, "power" = máy đo công suất.
@@ -39,6 +40,8 @@ from .boonton_4231a import Boonton4231A
 # test_connectivity.py. Nó KHÔNG nằm trong registry API-thống-nhất này; dòng
 # CNT-90/90XL được class CNT90 (API mới) bao phủ ở đây.
 DEVICE_REGISTRY: dict[str, dict] = {
+    # ---- Signal generators ----
+    "SMW200A":  {"category": "generator", "cls": SMW200A,  "vendor": "Rohde&Schwarz"},
     # ---- Frequency counters ----
     "CNT85":    {"category": "counter", "cls": CNT85,    "vendor": "Pendulum"},
     "CNT90":    {"category": "counter", "cls": CNT90,    "vendor": "Pendulum"},
@@ -58,6 +61,7 @@ DEVICE_REGISTRY: dict[str, dict] = {
     "N1913A":   {"category": "power", "cls": N1913A,  "vendor": "Keysight"},
     "N1914A":   {"category": "power", "cls": N1914A,  "vendor": "Keysight"},
     "4231A":    {"category": "power", "cls": Boonton4231A, "vendor": "Boonton"},
+    "NRVD":     {"category": "power", "cls": RSNRVD,      "vendor": "Rohde&Schwarz"},
 }
 
 
@@ -75,7 +79,7 @@ __all__ = [
     "KS53131A", "KS53132A", "KS53220A", "KS53150A", "KS53151A", "KS53147A",
     "PM6680", "PM6690", "AdvantestR5372P",
     # power
-    "E4410A", "N1911A", "N1913A", "N1914A", "Boonton4231A",
+    "E4410A", "N1911A", "N1913A", "N1914A", "Boonton4231A", "RSNRVD",
     # registry
     "DEVICE_REGISTRY",
 ]

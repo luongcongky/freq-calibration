@@ -25,6 +25,7 @@ from drivers import DEVICE_REGISTRY, Reading
 ALL_MODELS = list(DEVICE_REGISTRY.keys())
 COUNTERS = [k for k, v in DEVICE_REGISTRY.items() if v["category"] == "counter"]
 POWER_METERS = [k for k, v in DEVICE_REGISTRY.items() if v["category"] == "power"]
+GENERATORS = [k for k, v in DEVICE_REGISTRY.items() if v["category"] == "generator"]
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,8 @@ def _do_control(model_key, dev):
         dev.set_gate_time(0.1)
     elif category == "power":
         dev.set_frequency(50e6)
+    elif category == "generator":
+        dev.set_frequency(1e9)
     else:
         pytest.fail(f"Category không hỗ trợ: {category}")
 
@@ -61,6 +64,8 @@ def _do_acquire(model_key, dev) -> Reading:
         return dev.measure_frequency()
     if category == "power":
         return dev.measure_power()
+    if category == "generator":
+        return dev.measure_frequency()
     pytest.fail(f"Category không hỗ trợ: {category}")
 
 
@@ -143,13 +148,17 @@ def test_acquire(device):
         assert reading.value > 0, f"{model_key}: tần số phải > 0"
     elif category == "power":
         assert reading.unit == "dBm", f"{model_key}: đơn vị phải là dBm"
+    elif category == "generator":
+        assert reading.unit == "Hz", f"{model_key}: đơn vị phải là Hz"
+        assert reading.value > 0, f"{model_key}: tần số phải > 0"
 
 
 # ---------------------------------------------------------------------------
-# Sanity: registry phủ đủ cả 2 nhóm
+# Sanity: registry phủ đủ cả 3 nhóm
 # ---------------------------------------------------------------------------
 
 def test_registry_coverage():
     assert COUNTERS, "Registry phải có ít nhất 1 máy đếm tần số"
     assert POWER_METERS, "Registry phải có ít nhất 1 máy đo công suất"
+    assert GENERATORS, "Registry phải có ít nhất 1 máy phát tín hiệu"
     assert len(ALL_MODELS) == len(set(ALL_MODELS)), "Có model_key trùng lặp"

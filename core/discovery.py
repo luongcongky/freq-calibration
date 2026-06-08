@@ -39,6 +39,8 @@ MOCK_TOPOLOGY: dict[str, Optional[str]] = {
     "USB0::0x0957::0x1707::MY12345678::INSTR": "N1913A",
     "TCPIP0::192.168.1.10::inst0::INSTR": "53220A",
     "GPIB0::13::INSTR": None,            # Advantest R5372P giả lập (không *IDN?)
+    "GPIB0::21::INSTR": "NRVD",          # R&S NRVD power meter
+    "GPIB0::28::INSTR": "SMW200A",       # R&S SMW200A signal generator
 }
 
 

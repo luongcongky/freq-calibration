@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView, QTextEdit, QStyle, QStyleOptionButton, QSpinBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QFont
 
 from drivers import DEVICE_REGISTRY
 from core.scenario import (
@@ -33,6 +33,9 @@ from core.scenario import (
     actions_for_devices, validate_scenario, node_kind, node_from_dict,
 )
 from core.scenario_runner import ScenarioRunner, StepResult
+from core.commands import (
+    parse_cmd, get_commands_for, get_common_commands, load_custom, WAIT_CMD,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +106,22 @@ class StepEditorDialog(QDialog):
         super().__init__(parent)
         self._connected = connected_keys or set()
         self.setWindowTitle("Soạn bước")
-        self.setMinimumWidth(520)
-        self._param_edits: dict[str, QLineEdit] = {}
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(520)
+        self._param_widgets: dict[str, object] = {}
+        self._parsed_params: list = []
+        self._current_template: str = ""
+        self._current_is_query: bool = False
+        self._result: ScenarioStep | None = None
+
         root = QVBoxLayout(self)
+        root.setSpacing(6)
 
         root.addWidget(QLabel("Thiết bị (chọn 1 hoặc nhiều — chạy cùng bước):"))
         root.addWidget(QLabel("🟢 = đang kết nối   ·   ○ = chưa thấy"))
         self.dev_list = QListWidget()
         self.dev_list.setSelectionMode(QAbstractItemView.NoSelection)
-        self.dev_list.setMaximumHeight(190)
+        self.dev_list.setMaximumHeight(150)
         ordered = sorted(DEVICE_REGISTRY.items(),
                          key=lambda kv: (kv[0] not in self._connected, kv[0]))
         for key, entry in ordered:
@@ -124,14 +134,26 @@ class StepEditorDialog(QDialog):
             it.setCheckState(Qt.Unchecked)
             it.setForeground(QColor(Colors.ACCENT_GREEN) if is_conn else QColor(Colors.TEXT_DIM))
             self.dev_list.addItem(it)
-        self.dev_list.itemChanged.connect(lambda *_: self._refresh_actions())
+        self.dev_list.itemChanged.connect(lambda *_: self._refresh_commands())
         root.addWidget(self.dev_list)
 
-        form = QFormLayout()
-        self.action_combo = QComboBox()
-        self.action_combo.currentIndexChanged.connect(self._rebuild_params)
-        form.addRow("Hành động:", self.action_combo)
-        root.addLayout(form)
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Lệnh:"))
+        self.cmd_search = QLineEdit()
+        self.cmd_search.setPlaceholderText("Tìm lệnh…")
+        self.cmd_search.textChanged.connect(self._filter_commands)
+        search_row.addWidget(self.cmd_search)
+        root.addLayout(search_row)
+
+        self.cmd_list = QListWidget()
+        self.cmd_list.setMinimumHeight(160)
+        self.cmd_list.currentItemChanged.connect(self._on_cmd_selected)
+        root.addWidget(self.cmd_list)
+
+        self.cmd_info = QLabel("")
+        self.cmd_info.setWordWrap(True)
+        self.cmd_info.setStyleSheet("color: #a0a5ad; font-size: 11px;")
+        root.addWidget(self.cmd_info)
 
         self.param_form = QFormLayout()
         root.addLayout(self.param_form)
@@ -142,72 +164,216 @@ class StepEditorDialog(QDialog):
         root.addLayout(note_form)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self._on_accept); bb.rejected.connect(self.reject)
+        bb.accepted.connect(self._on_accept)
+        bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
-        self._refresh_actions()
+        self._refresh_commands()
         if step is not None:
             self._load_step(step)
+
+    # ── helpers ────────────────────────────────────────────────────────────
 
     def _selected_devices(self):
         return [self.dev_list.item(i).data(Qt.UserRole)
                 for i in range(self.dev_list.count())
                 if self.dev_list.item(i).checkState() == Qt.Checked]
 
-    def _refresh_actions(self):
-        current = self.action_combo.currentData()
-        valid = actions_for_devices(self._selected_devices())
-        self.action_combo.blockSignals(True)
-        self.action_combo.clear()
-        for key in valid:
-            self.action_combo.addItem(ACTION_SPECS[key]["label"], key)
-        if current in valid:
-            self.action_combo.setCurrentIndex(valid.index(current))
-        self.action_combo.blockSignals(False)
-        self._rebuild_params()
+    def _add_header_item(self, text: str):
+        item = QListWidgetItem(text)
+        item.setFlags(Qt.NoItemFlags)
+        f = item.font(); f.setBold(True); item.setFont(f)
+        item.setForeground(QColor(Colors.TEXT_DIM))
+        item.setData(Qt.UserRole, None)
+        self.cmd_list.addItem(item)
 
-    def _rebuild_params(self):
+    def _add_cmd_item(self, cmd, model_key: str):
+        item = QListWidgetItem(f"  {cmd.cmd}")
+        item.setFont(QFont("Consolas", 9))
+        item.setData(Qt.UserRole, cmd)
+        item.setData(Qt.UserRole + 1, model_key)
+        item.setToolTip(cmd.desc + ("\n" + cmd.note if cmd.note else ""))
+        self.cmd_list.addItem(item)
+
+    # ── command list ────────────────────────────────────────────────────────
+
+    def _refresh_commands(self):
+        devices = self._selected_devices()
+        self.cmd_list.clear()
+        custom = load_custom()
+
+        self._add_header_item("── Điều khiển kịch bản ──")
+        self._add_cmd_item(WAIT_CMD, "__wait__")
+
+        self._add_header_item("── Lệnh chung (IEEE 488.2) ──")
+        for cmd in get_common_commands(custom):
+            self._add_cmd_item(cmd, "__common__")
+
+        for dk in devices:
+            cmds = get_commands_for(dk, custom)
+            if not cmds:
+                continue
+            cls = DEVICE_REGISTRY.get(dk, {}).get("cls")
+            model_name = getattr(cls, "MODEL_NAME", dk) if cls else dk
+            self._add_header_item(f"── {model_name} ({dk}) ──")
+            for cmd in cmds:
+                self._add_cmd_item(cmd, dk)
+
+        self._filter_commands(self.cmd_search.text())
+
+    def _filter_commands(self, text: str):
+        text = text.strip().lower()
+        for i in range(self.cmd_list.count()):
+            item = self.cmd_list.item(i)
+            if item.data(Qt.UserRole) is None:
+                continue
+            cmd = item.data(Qt.UserRole)
+            match = not text or text in cmd.cmd.lower() or text in cmd.desc.lower()
+            item.setHidden(not match)
+
+        # Hide headers whose entire section is hidden
+        i = 0
+        while i < self.cmd_list.count():
+            item = self.cmd_list.item(i)
+            if item.data(Qt.UserRole) is None:
+                j = i + 1
+                has_visible = False
+                while j < self.cmd_list.count() and self.cmd_list.item(j).data(Qt.UserRole) is not None:
+                    if not self.cmd_list.item(j).isHidden():
+                        has_visible = True
+                        break
+                    j += 1
+                item.setHidden(not has_visible)
+            i += 1
+
+    def _on_cmd_selected(self, current, _prev):
+        if current is None or current.data(Qt.UserRole) is None:
+            return
+        cmd = current.data(Qt.UserRole)
+        template, params, is_query = parse_cmd(cmd)
+        self._current_template = template
+        self._current_is_query = is_query
+        self._parsed_params = params
+
+        parts = [cmd.desc]
+        if cmd.note:
+            parts.append(f"({cmd.note})")
+        if is_query:
+            parts.append("→ trả kết quả")
+        self.cmd_info.setText("  ".join(parts))
+
+        self._rebuild_param_form(params)
+
+    def _rebuild_param_form(self, params):
         while self.param_form.rowCount():
             self.param_form.removeRow(0)
-        self._param_edits.clear()
-        action = self.action_combo.currentData()
-        if not action:
-            return
-        for p in ACTION_SPECS[action]["params"]:
-            edit = QLineEdit(str(p.default))
-            self.param_form.addRow(f"{p.label}" + (f" ({p.unit})" if p.unit else "") + ":", edit)
-            self._param_edits[p.key] = edit
+        self._param_widgets.clear()
+        for p in params:
+            if p.ptype == "enum":
+                w = QComboBox()
+                for c in p.choices:
+                    w.addItem(c, c)
+            else:
+                w = QLineEdit(str(p.default))
+            label = p.label + (f" ({p.unit})" if p.unit else "") + ":"
+            self.param_form.addRow(label, w)
+            self._param_widgets[p.name] = w
+
+    # ── load existing step ──────────────────────────────────────────────────
 
     def _load_step(self, step: ScenarioStep):
         for i in range(self.dev_list.count()):
             it = self.dev_list.item(i)
             it.setCheckState(Qt.Checked if it.data(Qt.UserRole) in step.devices else Qt.Unchecked)
-        self._refresh_actions()
-        idx = self.action_combo.findData(step.action)
-        if idx >= 0:
-            self.action_combo.setCurrentIndex(idx)
-        self._rebuild_params()
-        for k, edit in self._param_edits.items():
-            if k in step.params:
-                edit.setText(str(step.params[k]))
+        self._refresh_commands()
+
+        if step.action == "wait":
+            self._select_by_model_key("__wait__")
+            w = self._param_widgets.get("seconds")
+            if isinstance(w, QLineEdit):
+                w.setText(str(step.params.get("seconds", 0.5)))
+        elif step.action == "raw_scpi":
+            self._select_cmd_by_original(step.params.get("__cmd_original__", ""))
+            for name, w in self._param_widgets.items():
+                if name in step.params:
+                    val = step.params[name]
+                    if isinstance(w, QComboBox):
+                        idx = w.findData(str(val))
+                        if idx >= 0:
+                            w.setCurrentIndex(idx)
+                    elif isinstance(w, QLineEdit):
+                        w.setText(str(val))
         self.note_edit.setText(step.note)
 
+    def _select_by_model_key(self, model_key: str):
+        for i in range(self.cmd_list.count()):
+            item = self.cmd_list.item(i)
+            if item.data(Qt.UserRole + 1) == model_key:
+                self.cmd_list.setCurrentItem(item)
+                return
+
+    def _select_cmd_by_original(self, original: str):
+        for i in range(self.cmd_list.count()):
+            item = self.cmd_list.item(i)
+            cmd = item.data(Qt.UserRole)
+            if cmd is not None and cmd.cmd == original:
+                self.cmd_list.setCurrentItem(item)
+                return
+
+    # ── accept ──────────────────────────────────────────────────────────────
+
     def _on_accept(self):
-        action = self.action_combo.currentData()
-        if not action:
-            QMessageBox.warning(self, "Thiếu", "Chưa chọn hành động."); return
-        spec = ACTION_SPECS[action]
-        devices = self._selected_devices()
-        if spec["needs_device"] and not devices:
-            QMessageBox.warning(self, "Thiếu", "Hành động này cần ít nhất 1 thiết bị."); return
-        params = {}
-        for k, edit in self._param_edits.items():
+        item = self.cmd_list.currentItem()
+        if item is None or item.data(Qt.UserRole) is None:
+            QMessageBox.warning(self, "Thiếu", "Chưa chọn lệnh."); return
+
+        model_key = item.data(Qt.UserRole + 1)
+        cmd = item.data(Qt.UserRole)
+        note = self.note_edit.text().strip()
+
+        if model_key == "__wait__":
+            w = self._param_widgets.get("seconds")
             try:
-                params[k] = float(edit.text().strip())
-            except ValueError:
-                QMessageBox.warning(self, "Sai tham số", f"Tham số '{k}' phải là số."); return
-        self._result = ScenarioStep(action=action, devices=devices, params=params,
-                                    note=self.note_edit.text().strip())
+                s_val = float(w.text().strip()) if isinstance(w, QLineEdit) else 0.5
+            except (ValueError, AttributeError):
+                QMessageBox.warning(self, "Sai tham số", "Thời gian chờ phải là số."); return
+            self._result = ScenarioStep(action="wait", devices=[], params={"seconds": s_val}, note=note)
+            self.accept()
+            return
+
+        devices = self._selected_devices()
+        if not devices:
+            QMessageBox.warning(self, "Thiếu thiết bị", "Chọn ít nhất 1 thiết bị cho lệnh này."); return
+
+        params = {
+            "__template__":     self._current_template,
+            "__is_query__":     self._current_is_query,
+            "__cmd_original__": cmd.cmd,
+            "__cmd_desc__":     cmd.desc,
+        }
+
+        for p in self._parsed_params:
+            w = self._param_widgets.get(p.name)
+            if w is None:
+                continue
+            if isinstance(w, QComboBox):
+                params[p.name] = w.currentData()
+            else:
+                raw = w.text().strip()
+                if p.ptype == "int":
+                    try:
+                        params[p.name] = int(float(raw))
+                    except ValueError:
+                        QMessageBox.warning(self, "Sai tham số",
+                                            f"'{p.label}' phải là số nguyên."); return
+                else:
+                    try:
+                        params[p.name] = float(raw)
+                    except ValueError:
+                        QMessageBox.warning(self, "Sai tham số",
+                                            f"'{p.label}' phải là số."); return
+
+        self._result = ScenarioStep(action="raw_scpi", devices=devices, params=params, note=note)
         self.accept()
 
     def get_step(self) -> ScenarioStep:
@@ -458,7 +624,7 @@ class ScenarioWorker(QThread):
 class ScenarioGridWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("FREQ-CAL PRO :: Scenario Builder (Tree)")
+        self.setWindowTitle("FREQ-CAL PRO :: Scenario Builder")
         self.setMinimumSize(1150, 680)
         self.scenario = Scenario(name="Kịch bản mới")
         self.worker: ScenarioWorker | None = None
@@ -466,7 +632,6 @@ class ScenarioGridWindow(QMainWindow):
         self._last_results: list[StepResult] = []
         self._last_mode = ""
         self._connected_keys: set[str] = set()
-        self._connected_scanned = False
         self.address_map: dict[str, str] = {}
 
         # ánh xạ runtime (QTreeWidgetItem không hashable -> meta lưu trong item)
@@ -482,12 +647,12 @@ class ScenarioGridWindow(QMainWindow):
         root = QVBoxLayout(central); root.setContentsMargins(12, 12, 12, 12); root.setSpacing(10)
 
         head = QHBoxLayout()
-        title = QLabel("Scenario Builder — <font color='#00d1ff'>cây có Loop & If</font>")
+        title = QLabel("Scenario Builder")
         title.setStyleSheet("font-size:16pt; font-weight:bold;")
         head.addWidget(title); head.addStretch()
         self.chk_mock = QCheckBox("Chạy MOCK (không cần phần cứng)")
-        self.chk_mock.setChecked(True)
-        self.chk_mock.stateChanged.connect(lambda *_: setattr(self, "_connected_scanned", False))
+        self.chk_mock.setChecked(False)
+        self.chk_mock.setEnabled(False)
         head.addWidget(self.chk_mock)
         root.addLayout(head)
 
@@ -498,6 +663,7 @@ class ScenarioGridWindow(QMainWindow):
                 b.setStyleSheet(f"background:{color}; color:{Colors.BG_WINDOW}; font-weight:bold;"
                                 f" border:none; border-radius:6px; padding:8px 14px;")
             bar.addWidget(b); return b
+        mkbtn("🔌 Thiết bị", self._open_device_manager)
         mkbtn("➕ Bước", self._add_step)
         mkbtn("🔁 Loop", self._add_loop)
         mkbtn("❓ If", self._add_if)
@@ -506,7 +672,7 @@ class ScenarioGridWindow(QMainWindow):
         mkbtn("🗑 Xóa", self._del_node)
         mkbtn("▲", lambda: self._move(-1))
         mkbtn("▼", lambda: self._move(1))
-        mkbtn("🔌 Thiết bị", self._open_device_manager)
+        mkbtn("📖 Tập lệnh", self._open_command_reference)
         bar.addStretch()
         mkbtn("📂 Mở", self._load); mkbtn("💾 Lưu", self._save)
         self.btn_run = mkbtn("▶ CHẠY", self._run, Colors.ACCENT_CYAN)
@@ -591,8 +757,13 @@ class ScenarioGridWindow(QMainWindow):
     def _add_node_item(self, node, parent_item, parent_obj):
         kind = node_kind(node)
         if kind == "step":
+            if node.action == "raw_scpi":
+                step_label = node.params.get("__cmd_original__",
+                                             node.params.get("__template__", "lệnh thô"))
+            else:
+                step_label = ACTION_SPECS.get(node.action, {}).get("label", node.action)
             self._new_item(parent_item, node.enabled,
-                           f"Bước: {ACTION_SPECS.get(node.action, {}).get('label', node.action)}",
+                           f"Bước: {step_label}",
                            ", ".join(node.devices) if node.devices else "—",
                            node.describe_params(), "step", node, parent_obj)
         elif kind == "loop":
@@ -664,17 +835,8 @@ class ScenarioGridWindow(QMainWindow):
         return items[0] if items else None
 
     def _ensure_connected(self):
-        if self._connected_scanned:
-            return
-        self._connected_scanned = True
-        keys = set(self.address_map.keys())
-        try:
-            from core.discovery import scan_and_identify
-            keys |= {d.matched_key for d in scan_and_identify(mock=self.chk_mock.isChecked())
-                     if d.matched_key}
-        except Exception as exc:  # noqa: BLE001
-            logger.info("Quét thiết bị kết nối thất bại: %s", exc)
-        self._connected_keys = keys
+        # Dùng address_map đã cấu hình từ Device Manager — không scan lại VISA bus.
+        self._connected_keys = set(self.address_map.keys())
 
     def _container_for_step(self, item):
         """Trả list để chèn 1 BƯỚC dựa trên item đang chọn (None nếu phải chọn nhánh)."""
@@ -822,6 +984,11 @@ class ScenarioGridWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Device manager / lưu / mở
     # ------------------------------------------------------------------
+    def _open_command_reference(self):
+        from gui.command_reference import CommandReferenceDialog
+        dlg = CommandReferenceDialog(self)
+        dlg.exec_()
+
     def _open_device_manager(self):
         from gui.device_manager import DeviceManagerDialog
         from core.profile import ConnectionProfile
@@ -830,7 +997,7 @@ class ScenarioGridWindow(QMainWindow):
         if dlg.exec_() == QDialog.Accepted:
             self._profile = dlg.get_profile()
             self.address_map = self._profile.address_map()
-            self._connected_scanned = False
+            self._connected_keys = set(self.address_map.keys())
             self._log(f"Đã cấu hình {len(self.address_map)} thiết bị: "
                       f"{', '.join(self.address_map) or '(trống)'}", Colors.ACCENT_GREEN)
 

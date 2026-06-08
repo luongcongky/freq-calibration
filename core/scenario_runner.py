@@ -144,9 +144,34 @@ def execute_action(action: str, device, params: dict[str, Any]) -> dict:
     if action == "measure_power":
         r = device.measure_power()
         return {"value": r.value, "unit": r.unit}
+    if action == "set_rf_frequency":
+        device.set_frequency(float(params["freq_hz"]))
+        return {"text": f"RF freq={params['freq_hz']}Hz"}
+    if action == "set_rf_power":
+        device.set_power(float(params["power_dbm"]))
+        return {"text": f"RF power={params['power_dbm']}dBm"}
+    if action == "rf_on":
+        device.rf_on()
+        return {"text": "RF output ON"}
+    if action == "rf_off":
+        device.rf_off()
+        return {"text": "RF output OFF"}
     if action == "wait":
         time.sleep(float(params.get("seconds", 0)))
         return {"text": f"waited {params.get('seconds', 0)}s"}
+    if action == "raw_scpi":
+        template = params.get("__template__", "")
+        is_query = bool(params.get("__is_query__", False))
+        sub = {k: v for k, v in params.items() if not k.startswith("__")}
+        try:
+            cmd_str = template.format(**sub)
+        except KeyError as e:
+            raise ValueError(f"Thiếu tham số {e} trong lệnh '{template}'") from e
+        if is_query:
+            result = device._query(cmd_str)
+            return {"text": result}
+        device._write(cmd_str)
+        return {"text": cmd_str}
     raise ValueError(f"Action không hỗ trợ: {action}")
 
 

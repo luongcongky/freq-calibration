@@ -1,0 +1,4 @@
+{
+  "NRVD": "GPIB0::21::INSTR",
+  "SMW200A": "GPIB0::28::INSTR"
+}

@@ -70,6 +70,9 @@ class SMW200A:
       - Context-manager (with statement) for safe resource release
     """
 
+    IDN_KEYWORDS: tuple = ("SMW200A",)
+    MODEL_NAME: str = "R&S SMW200A"
+
     def __init__(
         self,
         resource_address: str,
@@ -135,6 +138,8 @@ class SMW200A:
                 )
             else:
                 logger.info("Connected to: %s", idn.strip())
+
+            self.clear_status()   # drain stale error queue from previous sessions
 
             if self._reset_on_connect:
                 self.reset()
@@ -224,6 +229,17 @@ class SMW200A:
     def identify(self) -> str:
         """Return the *IDN? string."""
         return self._query("*IDN?")
+
+    def get_model(self) -> str:
+        """Lấy tên model từ *IDN? (trường thứ 2)."""
+        idn = self.identify()
+        parts = [p.strip() for p in idn.split(",")]
+        return parts[1] if len(parts) >= 2 and parts[1] else idn.strip()
+
+    def measure_frequency(self):
+        """Readback tần số hiện tại dưới dạng Reading (Hz). Dùng cho test/acquire."""
+        from drivers.base_visa import Reading
+        return Reading(value=self.get_frequency(), unit="Hz")
 
     def reset(self) -> None:
         """Send *RST and wait for operation complete."""
@@ -437,10 +453,14 @@ class SMW200A:
 
         Returns
         -------
-        dict with keys: idn, frequency_hz, power_dbm, rf_on, ref_source
+        dict with keys: model_name, idn, frequency_hz, power_dbm, rf_on, ref_source
         """
+        idn = self.identify()
         return {
-            "idn":          self.identify(),
+            "model_name":   self.MODEL_NAME,
+            "idn":          idn,
+            "address":      self._address,
+            "mock":         self._mock,
             "frequency_hz": self.get_frequency(channel),
             "power_dbm":    self.get_power(channel),
             "rf_on":        self.is_rf_on(channel),
