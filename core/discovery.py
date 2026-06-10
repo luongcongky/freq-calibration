@@ -121,6 +121,12 @@ def identify_resource(
         try:
             inst.read_termination = "\n"
             inst.write_termination = "\n"
+            # USB-TMC cần Device Clear trước khi query (tránh VI_ERROR_NCIC)
+            if address.startswith("USB"):
+                try:
+                    inst.clear()
+                except Exception:
+                    pass
             return inst.query("*IDN?").strip()
         finally:
             inst.close()
@@ -151,6 +157,10 @@ def _parse_serial(idn: str) -> str:
     return parts[2] if len(parts) >= 3 else ""
 
 
+# Prefix VISA không cần quét — serial port gây timeout dài khi gửi *IDN? mù.
+_SKIP_PREFIXES = ("ASRL",)
+
+
 def scan_and_identify(
     mock: bool = False,
     visa_backend: str = "",
@@ -163,7 +173,11 @@ def scan_and_identify(
     addresses : nếu cho sẵn thì chỉ nhận diện các địa chỉ này (vd kết quả wizard),
                 ngược lại tự scan toàn bộ.
     """
-    addrs = addresses if addresses is not None else scan_resources(mock, visa_backend)
+    all_addrs = addresses if addresses is not None else scan_resources(mock, visa_backend)
+    addrs = [a for a in all_addrs if not any(a.startswith(p) for p in _SKIP_PREFIXES)]
+    skipped = len(all_addrs) - len(addrs)
+    if skipped:
+        log.debug("Bỏ qua %d địa chỉ serial (ASRL) — không phải thiết bị đo lường.", skipped)
     out: list[DiscoveredDevice] = []
     for addr in addrs:
         idn = identify_resource(addr, mock=mock, timeout_ms=timeout_ms, visa_backend=visa_backend)

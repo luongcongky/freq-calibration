@@ -29,7 +29,7 @@ from .fluke_counters import PM6680, PM6690
 from .advantest_r5372p import AdvantestR5372P
 
 # --- Máy đo công suất ------------------------------------------------------
-from .keysight_power import E4410A, N1911A, N1913A, N1914A
+from .keysight_power import E4410A, E4418A, N1911A, N1913A, N1914A
 from .boonton_4231a import Boonton4231A
 from .rs_nrvd import RSNRVD
 
@@ -57,6 +57,7 @@ DEVICE_REGISTRY: dict[str, dict] = {
     "R5372P":   {"category": "counter", "cls": AdvantestR5372P, "vendor": "Advantest"},
     # ---- Power meters ----
     "E4410A":   {"category": "power", "cls": E4410A,  "vendor": "Keysight"},
+    "E4418A":   {"category": "power", "cls": E4418A,  "vendor": "Keysight"},
     "N1911A":   {"category": "power", "cls": N1911A,  "vendor": "Keysight"},
     "N1913A":   {"category": "power", "cls": N1913A,  "vendor": "Keysight"},
     "N1914A":   {"category": "power", "cls": N1914A,  "vendor": "Keysight"},
@@ -79,7 +80,7 @@ __all__ = [
     "KS53131A", "KS53132A", "KS53220A", "KS53150A", "KS53151A", "KS53147A",
     "PM6680", "PM6690", "AdvantestR5372P",
     # power
-    "E4410A", "N1911A", "N1913A", "N1914A", "Boonton4231A", "RSNRVD",
+    "E4410A", "E4418A", "N1911A", "N1913A", "N1914A", "Boonton4231A", "RSNRVD",
     # registry
     "DEVICE_REGISTRY",
 ]

@@ -293,6 +293,7 @@ DEVICE_COMMANDS: dict[str, list[Cmd]] = {
     "PM6690":  _PENDULUM_CMDS,
     "R5372P":  _R5372P_CMDS,
     "E4410A":  _KS_PWR_CMDS,
+    "E4418A":  _KS_PWR_CMDS,
     "N1911A":  _KS_PWR_CMDS,
     "N1913A":  _KS_PWR_CMDS,
     "N1914A":  _KS_PWR_CMDS,

@@ -112,6 +112,15 @@ class E4410A(_KeysightPowerMeter):
         return "Agilent Technologies,E4410A,GB00000001,A1.00.00"
 
 
+class E4418A(_KeysightPowerMeter):
+    """HP/Agilent/Keysight E4418A RF Power Meter (1 kênh, dòng EPM-441A)."""
+    IDN_KEYWORDS = ("E4418A", "EPM-441A")   # EPM-441A = tên HP cũ của E4418A
+    MODEL_NAME = "Keysight E4418A"
+
+    def _mock_idn(self) -> str:
+        return "HEWLETT-PACKARD,EPM-441A,US00000001,A1.02.00"
+
+
 class N1911A(_KeysightPowerMeter):
     """Keysight N1911A P-Series Power Meter (1 kênh)."""
     IDN_KEYWORDS = ("N1911A",)

@@ -395,6 +395,13 @@ class Scenario:
 # ---------------------------------------------------------------------------
 
 def _validate_step(step: ScenarioStep, where: str, problems: list[str]) -> None:
+    if step.action == "raw_scpi":
+        if not step.devices:
+            problems.append(f"{where}: lệnh SCPI cần ít nhất 1 thiết bị.")
+        for dk in step.devices:
+            if dk not in DEVICE_REGISTRY:
+                problems.append(f"{where}: thiết bị không có trong registry '{dk}'.")
+        return
     if step.action not in ACTION_SPECS:
         problems.append(f"{where}: action không hợp lệ '{step.action}'.")
         return
