@@ -15,6 +15,7 @@ Hàm parse_cmd() tự phát hiện tham số từ cú pháp lệnh:
 from __future__ import annotations
 
 import re
+import sys
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -390,7 +391,13 @@ def parse_cmd(cmd: Cmd) -> tuple[str, list[ParsedParam], bool]:
 # Truy cập lệnh (có hỗ trợ custom override từ data/custom_commands.json)
 # ---------------------------------------------------------------------------
 
-CUSTOM_DATA_PATH = Path(__file__).parent.parent / "data" / "custom_commands.json"
+# Khi chạy bản đóng gói (PyInstaller, sys.frozen=True): ghi cạnh file .exe để tùy
+# chỉnh được lưu lâu dài. Khi chạy từ source: ghi ở gốc project như cũ.
+if getattr(sys, "frozen", False):
+    _BASE_DIR = Path(sys.executable).parent
+else:
+    _BASE_DIR = Path(__file__).parent.parent
+CUSTOM_DATA_PATH = _BASE_DIR / "data" / "custom_commands.json"
 
 
 def load_custom() -> dict[str, list[dict]]:

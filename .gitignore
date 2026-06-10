@@ -9,6 +9,12 @@ dist/
 *.egg-info/
 .eggs/
 
+# PyInstaller build artifacts
+*.spec
+
+# App runtime data (custom command overrides ghi luc chay)
+/data/
+
 # Virtual environments
 .venv/
 venv/
