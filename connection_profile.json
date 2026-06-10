@@ -1,0 +1,26 @@
+{
+  "name": "Cấu hình kết nối",
+  "entries": [
+    {
+      "model_key": "E4418A",
+      "address": "GPIB0::13::INSTR",
+      "label": "",
+      "serial": "US38261676",
+      "idn": "HEWLETT-PACKARD,EPM-441A,US38261676,A1.02.00"
+    },
+    {
+      "model_key": "NRVD",
+      "address": "GPIB0::21::INSTR",
+      "label": "",
+      "serial": "101692.002",
+      "idn": "ROHDE&SCHWARZ,NRVD, 101692.002,V1.52  V1.40"
+    },
+    {
+      "model_key": "SMW200A",
+      "address": "GPIB0::28::INSTR",
+      "label": "",
+      "serial": "1412.0000K02/111417",
+      "idn": "Rohde&Schwarz,SMW200A,1412.0000K02/111417,5.10.035.29"
+    }
+  ]
+}
