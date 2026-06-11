@@ -46,6 +46,7 @@ class ProfileEntry:
 class ConnectionProfile:
     name: str = "Cấu hình kết nối"
     entries: list[ProfileEntry] = field(default_factory=list)
+    cmd_delay_ms: int = 100        # nghỉ giữa các lệnh khi chạy REAL (ms; 0 = tắt)
 
     # --- chỉnh sửa ---
     def set_entry(self, entry: ProfileEntry) -> None:
@@ -83,12 +84,17 @@ class ConnectionProfile:
 
     # --- serialize ---
     def to_dict(self) -> dict:
-        return {"name": self.name, "entries": [e.to_dict() for e in self.entries]}
+        return {
+            "name": self.name,
+            "cmd_delay_ms": self.cmd_delay_ms,
+            "entries": [e.to_dict() for e in self.entries],
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> "ConnectionProfile":
         return cls(
             name=d.get("name", "Cấu hình kết nối"),
+            cmd_delay_ms=int(d.get("cmd_delay_ms", 100)),
             entries=[ProfileEntry.from_dict(e) for e in d.get("entries", [])],
         )
 

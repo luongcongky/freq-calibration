@@ -35,6 +35,27 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Định dạng số kiểu Việt Nam (nhóm nghìn '.', thập phân ',') — KHÔNG dùng ký
+# pháp khoa học. Ví dụ: 1e11 -> "100.000.000.000", -10.5 -> "-10,5".
+# Chỉ dùng để HIỂN THỊ; giá trị tính toán (so sánh điều kiện) vẫn là float.
+# ---------------------------------------------------------------------------
+
+def format_number_vi(v: float, max_frac: int = 9) -> str:
+    if v != v or v in (float("inf"), float("-inf")):   # NaN / vô cực
+        return str(v)
+    neg = v < 0
+    a = abs(v)
+    if a == int(a):                                    # số nguyên (vd tần số Hz)
+        body = f"{int(a):,}".replace(",", ".")
+    else:                                              # có phần thập phân
+        s = f"{a:,.{max_frac}f}".rstrip("0").rstrip(".")   # ',' = nghìn, '.' = thập phân
+        int_str, _, frac_str = s.partition(".")
+        int_str = int_str.replace(",", ".")
+        body = f"{int_str},{frac_str}" if frac_str else int_str
+    return f"-{body}" if neg else body
+
+
+# ---------------------------------------------------------------------------
 # Kết quả mỗi (bước, thiết bị) hoặc sự kiện điều khiển
 # ---------------------------------------------------------------------------
 
@@ -59,7 +80,7 @@ class StepResult:
         if not self.ok:
             return f"{it}{tag}{self.action}: LỖI — {self.error}"
         if self.value is not None:
-            return f"{it}{tag}{self.action}: {self.value:.9g} {self.unit}"
+            return f"{it}{tag}{self.action}: {format_number_vi(self.value)} {self.unit}"
         return f"{it}{tag}{self.action}: {self.text or 'OK'}"
 
 
@@ -114,12 +135,28 @@ def evaluate_condition(cond: Condition, ctx: _Ctx) -> tuple[bool, str]:
     if v is None:
         return False, "chưa có giá trị đo"
     res = _compare(v, cond.op, cond.value, cond.value2)
-    return res, f"giá trị={v:.9g}"
+    return res, f"giá trị={format_number_vi(v)}"
 
 
 # ---------------------------------------------------------------------------
 # Thực thi 1 action lên 1 thiết bị
 # ---------------------------------------------------------------------------
+
+def _parse_leading_float(resp: str) -> Optional[float]:
+    """Thử lấy SỐ (float) ở đầu chuỗi trả lời SCPI; None nếu không phải số.
+
+    Hỗ trợ các dạng phổ biến: '1.2345E9', '1.2345E9 HZ' (kèm đơn vị),
+    '-10.0,...' (lấy phần tử đầu trước dấu phẩy), '+1.0E+02'.
+    Trả None cho chuỗi trạng thái như 'ON', 'INT' → khi đó chỉ giữ text.
+    """
+    if not resp:
+        return None
+    head = resp.strip().split(",")[0].split()[0] if resp.strip() else ""
+    try:
+        return float(head)
+    except ValueError:
+        return None
+
 
 def execute_action(action: str, device, params: dict[str, Any]) -> dict:
     if action == "identify":
@@ -167,9 +204,16 @@ def execute_action(action: str, device, params: dict[str, Any]) -> dict:
             cmd_str = template.format(**sub)
         except KeyError as e:
             raise ValueError(f"Thiếu tham số {e} trong lệnh '{template}'") from e
+        except (ValueError, IndexError):
+            # '{' hoặc '}' lẻ (không phải placeholder) → coi là ký tự thật, gửi nguyên văn.
+            cmd_str = template
         if is_query:
             result = device._query(cmd_str)
-            return {"text": result}
+            out: dict[str, Any] = {"text": result}
+            num = _parse_leading_float(result)
+            if num is not None:        # đọc được SỐ → vào cột Giá trị + dùng được cho điều kiện If
+                out["value"] = num
+            return out
         device._write(cmd_str)
         return {"text": cmd_str}
     raise ValueError(f"Action không hỗ trợ: {action}")
@@ -187,12 +231,16 @@ class ScenarioRunner:
         on_result: Optional[ResultCallback] = None,
         stop_flag: Optional[StopFlag] = None,
         settle_wait: bool = True,
+        cmd_delay_s: float = 0.1,
     ):
         self._mock = mock
         self._addr = address_map or {}
         self._on_result = on_result or (lambda r: None)
         self._stop_flag = stop_flag or (lambda: False)
         self._settle_wait = settle_wait
+        # Nghỉ giữa các lệnh gửi tới thiết bị THẬT (giây). Mock bỏ qua để chạy
+        # nhanh. Đặt 0 = tắt. Nhiều máy GPIB đời cũ cần khoảng nghỉ này để ổn định.
+        self._cmd_delay_s = cmd_delay_s
         self._results: list[StepResult] = []
         self._ctx = _Ctx()
         self._devices: dict[str, Any] = {}
@@ -315,3 +363,6 @@ class ScenarioRunner:
             except Exception as exc:  # noqa: BLE001
                 res.ok = False; res.error = str(exc)
             self._emit(res)
+            # Nghỉ giữa các lệnh khi chạy máy thật (mock chạy nhanh, không nghỉ).
+            if not self._mock and self._cmd_delay_s > 0:
+                time.sleep(self._cmd_delay_s)

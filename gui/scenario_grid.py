@@ -69,13 +69,16 @@ class CheckBoxHeader(QHeaderView):
             self.updateSection(0)
 
     def paintSection(self, painter, rect, logicalIndex):
+        # Cột 1+ do QSS vẽ (đã có border-bottom + border-right). Chỉ cột 0 vẽ tay
+        # để chèn ô tick — nên tự vẽ luôn đường ngang dưới + dọc phải cho đồng bộ.
         if logicalIndex != 0:
             super().paintSection(painter, rect, logicalIndex)
             return
         painter.save()
         painter.fillRect(rect, QColor(Colors.BG_CARD))
         painter.setPen(QColor(Colors.BORDER))
-        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+        painter.drawLine(rect.bottomLeft(), rect.bottomRight())   # ngang dưới
+        painter.drawLine(rect.topRight(), rect.bottomRight())     # dọc phải (ngăn cách cột)
         sz = 15
         cb = QRect(rect.x() + 6, rect.y() + (rect.height() - sz) // 2, sz, sz)
         opt = QStyleOptionButton()
@@ -88,8 +91,16 @@ class CheckBoxHeader(QHeaderView):
         painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, self._label)
         painter.restore()
 
+    def _checkbox_rect(self) -> QRect:
+        """Vùng hình ô tick ở cột 0 (toạ độ viewport của header)."""
+        sz = 15
+        x0 = self.sectionViewportPosition(0)
+        return QRect(x0 + 6, (self.height() - sz) // 2, sz, sz)
+
     def mousePressEvent(self, event):
-        if self.logicalIndexAt(event.pos()) == 0:
+        # Chỉ bật/tắt "chọn tất cả" khi bấm ĐÚNG vào ô tick. Mọi chỗ khác — kể cả
+        # mép giữa các cột để KÉO RỘNG/HẸP — đều để QHeaderView xử lý như thường.
+        if self._checkbox_rect().contains(event.pos()):
             self.setChecked(not self._checked)
             self.toggled_all.emit(self._checked)
             return
@@ -597,10 +608,12 @@ class ScenarioWorker(QThread):
     finished_all = pyqtSignal(int)
     failed = pyqtSignal(str)
 
-    def __init__(self, scenario: Scenario, mock: bool, address_map: dict | None = None):
+    def __init__(self, scenario: Scenario, mock: bool, address_map: dict | None = None,
+                 cmd_delay_s: float = 0.1):
         super().__init__()
         self._scn = scenario; self._mock = mock
         self._addr = address_map or {}; self._stop = False
+        self._cmd_delay_s = cmd_delay_s
 
     def request_stop(self):
         self._stop = True
@@ -609,7 +622,8 @@ class ScenarioWorker(QThread):
         try:
             runner = ScenarioRunner(mock=self._mock, address_map=self._addr,
                                     on_result=self.result_ready.emit,
-                                    stop_flag=lambda: self._stop)
+                                    stop_flag=lambda: self._stop,
+                                    cmd_delay_s=self._cmd_delay_s)
             results = runner.run(self._scn)
             self.finished_all.emit(len(results))
         except Exception as exc:  # noqa: BLE001
@@ -633,6 +647,7 @@ class ScenarioGridWindow(QMainWindow):
         self._last_mode = ""
         self._connected_keys: set[str] = set()
         self.address_map: dict[str, str] = {}
+        self.cmd_delay_s: float = 0.1     # nghỉ giữa lệnh khi chạy REAL (mặc định 100ms)
 
         # ánh xạ runtime (QTreeWidgetItem không hashable -> meta lưu trong item)
         self._id_to_item: dict = {}       # id(node) -> item
@@ -689,6 +704,10 @@ class ScenarioGridWindow(QMainWindow):
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.itemDoubleClicked.connect(lambda *_: self._edit_node())
+        # Cột 0 (Nội dung) tự dãn lấp chỗ trống; cột 1–4 kéo rộng/hẹp tự do.
+        # Tắt "dãn cột cuối" để tránh tranh chấp với cột 0 Stretch -> kéo mượt hơn.
+        self.header.setStretchLastSection(False)
+        self.header.setMinimumSectionSize(50)          # cột không co về 0, dễ thấy mép
         self.header.setSectionResizeMode(0, QHeaderView.Stretch)
         for c in range(1, len(COLS)):
             self.header.setSectionResizeMode(c, QHeaderView.Interactive)
@@ -998,8 +1017,11 @@ class ScenarioGridWindow(QMainWindow):
             self._profile = dlg.get_profile()
             self.address_map = self._profile.address_map()
             self._connected_keys = set(self.address_map.keys())
+            self.cmd_delay_s = self._profile.cmd_delay_ms / 1000.0
             self._log(f"Đã cấu hình {len(self.address_map)} thiết bị: "
-                      f"{', '.join(self.address_map) or '(trống)'}", Colors.ACCENT_GREEN)
+                      f"{', '.join(self.address_map) or '(trống)'} "
+                      f"| delay giữa lệnh: {self._profile.cmd_delay_ms}ms",
+                      Colors.ACCENT_GREEN)
 
     def _save(self):
         path, _ = QFileDialog.getSaveFileName(self, "Lưu kịch bản", "scenario.json", "JSON (*.json)")
@@ -1045,7 +1067,8 @@ class ScenarioGridWindow(QMainWindow):
         self.btn_run.setEnabled(False); self.btn_stop.setEnabled(True)
         self._last_mode = "MOCK" if mock else "REAL"
         self._log(f"--- Bắt đầu chạy ({self._last_mode}) ---", Colors.ACCENT_CYAN)
-        self.worker = ScenarioWorker(self.scenario, mock=mock, address_map=self.address_map)
+        self.worker = ScenarioWorker(self.scenario, mock=mock, address_map=self.address_map,
+                                     cmd_delay_s=self.cmd_delay_s)
         self.worker.result_ready.connect(self._on_result)
         self.worker.finished_all.connect(self._on_finished)
         self.worker.failed.connect(self._on_failed)

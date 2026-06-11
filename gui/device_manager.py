@@ -21,7 +21,7 @@ import logging
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget,
     QTableWidgetItem, QComboBox, QHeaderView, QFileDialog, QMessageBox,
-    QCheckBox, QAbstractItemView, QInputDialog,
+    QCheckBox, QAbstractItemView, QInputDialog, QSpinBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
@@ -83,7 +83,8 @@ class DeviceManagerDialog(QDialog):
             f"QTableWidget {{ background:{Colors.BG_INPUT}; gridline-color:{Colors.BORDER};"
             f" border:1px solid {Colors.BORDER}; }}"
             f"QHeaderView::section {{ background:{Colors.BG_CARD}; color:{Colors.TEXT_DIM};"
-            f" border:none; border-bottom:2px solid {Colors.BORDER}; padding:7px; }}"
+            f" border:none; border-bottom:2px solid {Colors.BORDER};"
+            f" border-right:1px solid {Colors.BORDER}; padding:7px; }}"
             f"QComboBox, QLineEdit {{ background:{Colors.BG_CARD}; color:{Colors.TEXT_MAIN};"
             f" border:1px solid {Colors.BORDER}; border-radius:4px; padding:4px; }}"
         )
@@ -91,6 +92,7 @@ class DeviceManagerDialog(QDialog):
 
         # Mặc định mock theo tham số.
         self.chk_mock.setChecked(mock)
+        self.spn_delay.setValue(int(getattr(self.profile, "cmd_delay_ms", 100)))
         if self.profile.entries:
             self._load_profile_into_table(self.profile)
 
@@ -144,6 +146,17 @@ class DeviceManagerDialog(QDialog):
         self.btn_save.clicked.connect(self._save_profile_file)
         bottom.addWidget(self.btn_load)
         bottom.addWidget(self.btn_save)
+        bottom.addSpacing(16)
+        bottom.addWidget(QLabel("Delay giữa lệnh (ms):"))
+        self.spn_delay = QSpinBox()
+        self.spn_delay.setRange(0, 60000)
+        self.spn_delay.setSingleStep(10)
+        self.spn_delay.setValue(100)
+        self.spn_delay.setToolTip(
+            "Khoảng nghỉ giữa các lệnh khi chạy MÁY THẬT (0 = tắt).\n"
+            "Không áp dụng ở chế độ MOCK. Lưu kèm profile."
+        )
+        bottom.addWidget(self.spn_delay)
         bottom.addStretch()
         self.lbl_status = QLabel("")
         self.lbl_status.setStyleSheet(f"color:{Colors.TEXT_DIM};")
@@ -327,7 +340,8 @@ class DeviceManagerDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _build_profile_from_table(self) -> ConnectionProfile:
-        prof = ConnectionProfile(name=self.profile.name)
+        prof = ConnectionProfile(name=self.profile.name,
+                                 cmd_delay_ms=int(self.spn_delay.value()))
         for r in range(self.table.rowCount()):
             combo: QComboBox = self.table.cellWidget(r, 3)
             model_key = combo.currentData()
@@ -344,6 +358,7 @@ class DeviceManagerDialog(QDialog):
 
     def _load_profile_into_table(self, prof: ConnectionProfile):
         self._clear_rows()
+        self.spn_delay.setValue(int(getattr(prof, "cmd_delay_ms", 100)))
         for e in prof.entries:
             dev = DiscoveredDevice(address=e.address, idn=e.idn,
                                    matched_key=e.model_key, serial=e.serial)

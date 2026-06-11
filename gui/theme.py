@@ -62,7 +62,8 @@ def build_global_qss() -> str:
                    border: 1px solid {C.BORDER}; }}
         QStatusBar {{ color: {C.TEXT_DIM}; }}
         QHeaderView::section {{ background-color: {C.BG_CARD}; color: {C.TEXT_DIM};
-                   border: none; border-bottom: 2px solid {C.BORDER}; padding: 7px; }}
+                   border: none; border-bottom: 2px solid {C.BORDER};
+                   border-right: 1px solid {C.BORDER}; padding: 7px; }}
         QTableWidget {{ background-color: {C.BG_INPUT}; gridline-color: {C.BORDER};
                    border: 1px solid {C.BORDER}; }}
     """

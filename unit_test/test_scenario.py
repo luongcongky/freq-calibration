@@ -194,3 +194,197 @@ def test_runner_real_without_address_raises():
     scn = Scenario(nodes=[ScenarioStep(action="identify", devices=["CNT91"])])
     with pytest.raises(ValueError, match="thiếu địa chỉ VISA"):
         ScenarioRunner(mock=False, address_map={}).run(scn)
+
+
+# ---------------------------------------------------------------------------
+# Delay giữa các lệnh (cmd_delay_s)
+# ---------------------------------------------------------------------------
+
+def _open_mock_device(dk):
+    """Mở thiết bị giả (mock) để test luồng REAL mà không cần phần cứng."""
+    import core.scenario_runner as sr
+    return sr.DEVICE_REGISTRY[dk]["cls"](f"MOCK::{dk}", mock=True)
+
+
+def test_cmd_delay_applied_between_real_commands(monkeypatch):
+    import core.scenario_runner as sr
+    sleeps: list[float] = []
+    monkeypatch.setattr(sr.time, "sleep", lambda s: sleeps.append(s))
+
+    runner = ScenarioRunner(mock=False, address_map={"x": "y"},
+                            settle_wait=False, cmd_delay_s=0.1)
+    monkeypatch.setattr(runner, "_open_device", _open_mock_device)
+    runner.run(_flat_scenario())
+
+    # _flat_scenario có 6 lệnh tới thiết bị (identify×2, set_gate_time,
+    # set_frequency, measure_frequency, measure_power) -> 6 lần nghỉ 0.1s.
+    assert sleeps.count(0.1) == 6
+
+
+def test_cmd_delay_skipped_in_mock(monkeypatch):
+    import core.scenario_runner as sr
+    sleeps: list[float] = []
+    monkeypatch.setattr(sr.time, "sleep", lambda s: sleeps.append(s))
+
+    ScenarioRunner(mock=True, cmd_delay_s=0.1).run(_flat_scenario())
+    assert 0.1 not in sleeps      # mock không nghỉ giữa lệnh
+
+
+def test_cmd_delay_zero_disables(monkeypatch):
+    import core.scenario_runner as sr
+    sleeps: list[float] = []
+    monkeypatch.setattr(sr.time, "sleep", lambda s: sleeps.append(s))
+
+    runner = ScenarioRunner(mock=False, address_map={"x": "y"},
+                            settle_wait=False, cmd_delay_s=0.0)
+    monkeypatch.setattr(runner, "_open_device", _open_mock_device)
+    runner.run(_flat_scenario())
+    # cmd_delay_s=0 -> không chèn nghỉ nào (sleep(0.0) còn lại chỉ do action wait).
+    assert all(s == 0.0 for s in sleeps)
+
+
+def test_profile_cmd_delay_round_trip(tmp_path):
+    from core.profile import ConnectionProfile, ProfileEntry
+    prof = ConnectionProfile(name="P", cmd_delay_ms=250)
+    prof.set_entry(ProfileEntry(model_key="CNT91", address="GPIB0::7::INSTR"))
+    p = tmp_path / "prof.json"
+    prof.save_json(p)
+    loaded = ConnectionProfile.load_json(p)
+    assert loaded.cmd_delay_ms == 250
+
+
+def test_profile_cmd_delay_default_when_missing():
+    # Profile cũ (JSON không có cmd_delay_ms) -> mặc định 100ms.
+    from core.profile import ConnectionProfile
+    loaded = ConnectionProfile.from_dict({"name": "old", "entries": []})
+    assert loaded.cmd_delay_ms == 100
+
+
+# ---------------------------------------------------------------------------
+# raw_scpi: parse value, format an toàn, validate
+# ---------------------------------------------------------------------------
+
+class _StubDev:
+    """Thiết bị giả tối giản cho test execute_action(raw_scpi)."""
+    def __init__(self, resp: str = ""):
+        self._resp = resp
+        self.written: list[str] = []
+
+    def _query(self, cmd: str, **_kw) -> str:
+        return self._resp
+
+    def _write(self, cmd: str) -> None:
+        self.written.append(cmd)
+
+
+def test_raw_scpi_query_sets_numeric_value():
+    from core.scenario_runner import execute_action
+    info = execute_action("raw_scpi", _StubDev("1.2345E9"),
+                          {"__template__": "MEAS:FREQ?", "__is_query__": True})
+    assert info["value"] == pytest.approx(1.2345e9)
+    assert info["text"] == "1.2345E9"
+
+
+def test_raw_scpi_query_value_with_unit_suffix():
+    from core.scenario_runner import execute_action
+    info = execute_action("raw_scpi", _StubDev("1.0E9 HZ"),
+                          {"__template__": "FREQ?", "__is_query__": True})
+    assert info["value"] == pytest.approx(1.0e9)
+
+
+def test_raw_scpi_query_nonnumeric_keeps_text_only():
+    from core.scenario_runner import execute_action
+    info = execute_action("raw_scpi", _StubDev("ON"),
+                          {"__template__": "OUTP?", "__is_query__": True})
+    assert "value" not in info
+    assert info["text"] == "ON"
+
+
+def test_raw_scpi_query_value_feeds_if_condition():
+    # Giá trị đọc bằng raw_scpi phải dùng được cho điều kiện If/measure.
+    from core.scenario_runner import ScenarioRunner
+
+    def open_stub(dk):
+        from unittest.mock import MagicMock
+        m = MagicMock()
+        m._query.return_value = "5.0"
+        return m
+
+    scn = Scenario(nodes=[
+        ScenarioStep(action="raw_scpi", devices=["CNT91"],
+                     params={"__template__": "MEAS:FREQ?", "__is_query__": True}),
+        IfBlock(branches=[
+            Branch(condition=Condition(kind="measure", op=">", value=1.0),
+                   body=[ScenarioStep(action="raw_scpi", devices=["CNT91"],
+                                      params={"__template__": "*CLS", "__is_query__": False})]),
+        ]),
+    ])
+    runner = ScenarioRunner(mock=False, address_map={"CNT91": "x"}, cmd_delay_s=0.0)
+    runner._open_device = open_stub
+    results = runner.run(scn)
+    # node If phải chọn được nhánh (5.0 > 1.0) → có dòng control "→ nhánh 1".
+    assert any(r.kind == "control" and "nhánh 1" in r.text for r in results)
+
+
+def test_raw_scpi_lone_brace_sent_literally():
+    from core.scenario_runner import execute_action
+    dev = _StubDev("")
+    info = execute_action("raw_scpi", dev,
+                          {"__template__": "CONF:LIST #{", "__is_query__": False})
+    assert info["text"] == "CONF:LIST #{"
+    assert dev.written == ["CONF:LIST #{"]
+
+
+def test_raw_scpi_missing_param_raises():
+    from core.scenario_runner import execute_action
+    with pytest.raises(ValueError, match="Thiếu tham số"):
+        execute_action("raw_scpi", _StubDev(""),
+                       {"__template__": "FREQ {Hz}", "__is_query__": False})
+
+
+def test_validate_raw_scpi_missing_param_value():
+    scn = Scenario(nodes=[ScenarioStep(action="raw_scpi", devices=["CNT91"],
+        params={"__template__": "SENS:GATE:TIME {s}", "__is_query__": False})])
+    problems = validate_scenario(scn)
+    assert any("thiếu giá trị tham số" in p for p in problems)
+
+
+def test_validate_raw_scpi_query_not_marked():
+    scn = Scenario(nodes=[ScenarioStep(action="raw_scpi", devices=["CNT91"],
+        params={"__template__": "MEAS:FREQ?", "__is_query__": False})])
+    problems = validate_scenario(scn)
+    assert any("truy vấn" in p for p in problems)
+
+
+def test_validate_raw_scpi_clean():
+    scn = Scenario(nodes=[ScenarioStep(action="raw_scpi", devices=["CNT91"],
+        params={"__template__": "MEAS:FREQ?", "__is_query__": True})])
+    assert validate_scenario(scn) == []
+
+
+# ---------------------------------------------------------------------------
+# Định dạng số kiểu VN (chấm nghìn, phẩy thập phân, không khoa học)
+# ---------------------------------------------------------------------------
+
+# Lưu ý: float chỉ biểu diễn CHÍNH XÁC số nguyên tới ~2^53 (~9e15). Tần số thật
+# (≤ vài chục GHz = ~5e10) nằm thừa trong vùng này nên hiển thị luôn chính xác.
+@pytest.mark.parametrize("value,expected", [
+    (1e11,            "100.000.000.000"),
+    (1_000_000,       "1.000.000"),
+    (1234567.89,      "1.234.567,89"),
+    (-10.5,           "-10,5"),
+    (0.1,             "0,1"),
+    (0.0,             "0"),
+    (50e9,            "50.000.000.000"),
+    (1.2345e9,        "1.234.500.000"),
+    (1_000_000_000_000_000, "1.000.000.000.000.000"),   # 1e15, vẫn chính xác
+])
+def test_format_number_vi(value, expected):
+    from core.scenario_runner import format_number_vi
+    assert format_number_vi(value) == expected
+
+
+def test_summary_uses_vi_format():
+    r = StepResult(action="raw_scpi", value=1e11, unit="Hz")
+    assert "100.000.000.000" in r.summary()
+    assert "e+" not in r.summary().lower()

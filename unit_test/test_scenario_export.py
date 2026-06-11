@@ -33,9 +33,12 @@ def test_export_csv(tmp_path):
     assert len(rows) == len(results)
     assert rows[0]["action"] == "identify"
     assert set(sx.FIELDS).issubset(rows[0].keys())
-    # dòng đo tần số có value + unit Hz
+    # dòng đo tần số có value (định dạng VN: chấm nghìn, phẩy thập phân) + unit Hz
     freq = [r for r in rows if r["action"] == "measure_frequency"][0]
-    assert freq["unit"] == "Hz" and float(freq["value"]) > 0
+    assert freq["unit"] == "Hz"
+    raw = float(freq["value"].replace(".", "").replace(",", "."))   # gỡ định dạng VN -> số
+    assert raw > 0
+    assert "e" not in freq["value"].lower()                         # không còn ký pháp khoa học
 
 
 def test_export_dispatch_by_extension(tmp_path):

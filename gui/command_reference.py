@@ -225,9 +225,15 @@ class CommandReferenceDialog(QDialog):
         # Bảng lệnh
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Lệnh", "Mô tả", "Ghi chú"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        # Interactive = kéo rộng/hẹp tự do. Cột cuối tự dãn lấp chỗ trống.
+        hdr = self.table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(1, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(2, QHeaderView.Interactive)
+        hdr.setStretchLastSection(True)
+        hdr.setMinimumSectionSize(60)
+        self.table.setColumnWidth(0, 240)
+        self.table.setColumnWidth(1, 360)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)

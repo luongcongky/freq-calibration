@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from core.scenario_runner import StepResult
+from core.scenario_runner import StepResult, format_number_vi
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +48,9 @@ def result_to_row(r: StepResult) -> dict:
         "timestamp": datetime.fromtimestamp(r.timestamp).strftime("%Y-%m-%d %H:%M:%S"),
         "device": r.device_key,
         "action": r.action,
-        "value": "" if r.value is None else r.value,
+        # Hiển thị kiểu VN (chấm nghìn, phẩy thập phân), không ký pháp khoa học.
+        # Giá trị thô (raw response) vẫn còn nguyên ở cột "text" cho lệnh raw_scpi.
+        "value": "" if r.value is None else format_number_vi(r.value),
         "unit": r.unit,
         "text": r.text,
         "status": "OK" if r.ok else "LỖI",

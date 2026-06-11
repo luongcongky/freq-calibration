@@ -20,6 +20,7 @@ ACTION_SPECS chỉ là metadata cho GUI; phần thực thi nằm ở core/scenar
 
 from __future__ import annotations
 
+import re
 import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -401,6 +402,18 @@ def _validate_step(step: ScenarioStep, where: str, problems: list[str]) -> None:
         for dk in step.devices:
             if dk not in DEVICE_REGISTRY:
                 problems.append(f"{where}: thiết bị không có trong registry '{dk}'.")
+        template = step.params.get("__template__", "")
+        # #4: mọi placeholder {name} trong lệnh phải có giá trị tương ứng trong params.
+        provided = {k for k in step.params if not k.startswith("__")}
+        placeholders = set(re.findall(r"\{([A-Za-z_]\w*)\}", template))
+        missing = placeholders - provided
+        if missing:
+            problems.append(f"{where}: lệnh SCPI thiếu giá trị tham số: "
+                            f"{', '.join(sorted(missing))}.")
+        # #3: có '?' nhưng chưa đánh dấu là truy vấn → kết quả sẽ không được đọc.
+        if "?" in template and not step.params.get("__is_query__", False):
+            problems.append(f"{where}: lệnh '{template}' có '?' nhưng chưa đánh dấu là "
+                            f"truy vấn (query) — kết quả trả về sẽ không được đọc về.")
         return
     if step.action not in ACTION_SPECS:
         problems.append(f"{where}: action không hợp lệ '{step.action}'.")
