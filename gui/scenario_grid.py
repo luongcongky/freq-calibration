@@ -1103,8 +1103,13 @@ class ScenarioGridWindow(QMainWindow):
             return
         self._loading = True
         key = id(item)
-        self._item_results.setdefault(key, []).append(res.summary())
-        item.setText(4, " | ".join(self._item_results[key]))   # cột Kết quả
+        self._item_results.setdefault(key, []).append(res.result_cell())
+        # Bỏ ô trống (lệnh ghi) + gộp giá trị trùng LIÊN TIẾP cho gọn.
+        collapsed = []
+        for c in self._item_results[key]:
+            if c and (not collapsed or collapsed[-1] != c):
+                collapsed.append(c)
+        item.setText(4, "  |  ".join(collapsed))   # cột Kết quả
         if res.kind != "control":
             any_err = any("LỖI" in s for s in self._item_results[key])
             item.setText(5, "LỖI" if any_err else "OK")          # cột Trạng thái

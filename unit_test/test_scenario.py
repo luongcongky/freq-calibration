@@ -388,3 +388,32 @@ def test_summary_uses_vi_format():
     r = StepResult(action="raw_scpi", value=1e11, unit="Hz")
     assert "100.000.000.000" in r.summary()
     assert "e+" not in r.summary().lower()
+
+
+# ---------------------------------------------------------------------------
+# result_cell(): chuỗi gọn cho cột Kết quả trên grid
+# ---------------------------------------------------------------------------
+
+def test_result_cell_write_is_empty():
+    # lệnh ghi (không query) -> TRỐNG (cột Trạng thái đã báo OK), không trùng lặp.
+    r = StepResult(action="raw_scpi", device_key="SMW200A",
+                   text="SOUR1:FREQ:CW 1000000000 HZ", is_query=False)
+    assert r.result_cell() == ""
+
+
+def test_result_cell_query_numeric():
+    r = StepResult(action="raw_scpi", device_key="CNT91",
+                   value=1e11, unit="Hz", is_query=True)
+    assert r.result_cell() == "100.000.000.000 Hz"
+
+
+def test_result_cell_query_string():
+    r = StepResult(action="raw_scpi", device_key="SMW200A",
+                   text="INT", is_query=True)
+    assert r.result_cell() == "INT"
+
+
+def test_result_cell_error():
+    r = StepResult(action="raw_scpi", device_key="CNT91",
+                   ok=False, error="Timeout")
+    assert r.result_cell() == "LỖI — Timeout"

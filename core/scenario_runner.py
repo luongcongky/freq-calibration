@@ -69,12 +69,14 @@ class StepResult:
     unit: str = ""
     text: str = ""
     error: str = ""
+    is_query: bool = False           # raw_scpi: lệnh truy vấn (có đọc kết quả về)
     node_id: int = 0                 # id(obj) của node/step để GUI ánh xạ
     iteration: int = 0               # vòng lặp hiện tại (0 nếu không trong loop)
     kind: str = "step"              # "step" | "control"
     timestamp: float = field(default_factory=time.time)
 
     def summary(self) -> str:
+        """Chuỗi ĐẦY ĐỦ cho LOG (kèm thiết bị + action + vòng lặp)."""
         tag = f"[{self.device_key}] " if self.device_key else ""
         it = f"(lần {self.iteration}) " if self.iteration else ""
         if not self.ok:
@@ -82,6 +84,20 @@ class StepResult:
         if self.value is not None:
             return f"{it}{tag}{self.action}: {format_number_vi(self.value)} {self.unit}"
         return f"{it}{tag}{self.action}: {self.text or 'OK'}"
+
+    def result_cell(self) -> str:
+        """Chuỗi cho cột 'Kết quả' trên grid — chỉ hiện thông tin CÓ NGHĨA, không
+        lặp [thiết bị]/action và không trùng cột Trạng thái.
+          - lỗi      → chi tiết lỗi (cột Trạng thái chỉ báo cờ LỖI)
+          - lệnh đọc → giá trị / chuỗi đọc được
+          - lệnh ghi → TRỐNG (thành công đã thể hiện ở cột Trạng thái)."""
+        if not self.ok:
+            return f"LỖI — {self.error}" if self.error else "LỖI"
+        if self.value is not None:                      # query trả về SỐ
+            return f"{format_number_vi(self.value)} {self.unit}".rstrip()
+        if self.is_query:                               # query trả về chuỗi (vd 'INT', 'ON')
+            return self.text
+        return ""                                       # lệnh ghi: để trống
 
 
 ResultCallback = Callable[[StepResult], None]
@@ -209,7 +225,7 @@ def execute_action(action: str, device, params: dict[str, Any]) -> dict:
             cmd_str = template
         if is_query:
             result = device._query(cmd_str)
-            out: dict[str, Any] = {"text": result}
+            out: dict[str, Any] = {"text": result, "is_query": True}
             num = _parse_leading_float(result)
             if num is not None:        # đọc được SỐ → vào cột Giá trị + dùng được cho điều kiện If
                 out["value"] = num
@@ -360,6 +376,7 @@ class ScenarioRunner:
                 info = execute_action(step.action, self._devices[dk], step.params)
                 res.value = info.get("value"); res.unit = info.get("unit", "")
                 res.text = info.get("text", "")
+                res.is_query = bool(info.get("is_query", False))
             except Exception as exc:  # noqa: BLE001
                 res.ok = False; res.error = str(exc)
             self._emit(res)
