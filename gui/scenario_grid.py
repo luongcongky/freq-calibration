@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTreeWidget, QTreeWidgetItem, QPushButton, QLabel, QDialog,
     QListWidget, QListWidgetItem, QComboBox, QLineEdit, QFormLayout,
-    QDialogButtonBox, QHeaderView, QFileDialog, QMessageBox, QCheckBox,
+    QDialogButtonBox, QHeaderView, QFileDialog, QMessageBox,
     QAbstractItemView, QTextEdit, QStyle, QStyleOptionButton, QSpinBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 from gui.theme import Colors, build_global_qss
 
-COLS = ["Bật / Nội dung", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
+COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
 
 # Lưu metadata vào item qua các role riêng. KHÔNG lưu list/dict (PyQt sao chép
 # list/dict -> mất tham chiếu tới scenario thật); chỉ lưu object/str (giữ ref).
@@ -158,6 +158,12 @@ class StepEditorDialog(QDialog):
 
         self.cmd_list = QListWidget()
         self.cmd_list.setMinimumHeight(160)
+        # Giữ NGUYÊN màu nền dòng đang chọn kể cả khi list mất focus (vd khi
+        # bấm sang ô Ghi chú) — tránh cảm giác lệnh bị bỏ chọn.
+        self.cmd_list.setStyleSheet(
+            f"QListWidget::item:selected {{ background:{Colors.ACCENT_CYAN};"
+            f" color:{Colors.BG_WINDOW}; }}"
+        )
         self.cmd_list.currentItemChanged.connect(self._on_cmd_selected)
         root.addWidget(self.cmd_list)
 
@@ -665,10 +671,6 @@ class ScenarioGridWindow(QMainWindow):
         title = QLabel("Scenario Builder")
         title.setStyleSheet("font-size:16pt; font-weight:bold;")
         head.addWidget(title); head.addStretch()
-        self.chk_mock = QCheckBox("Chạy MOCK (không cần phần cứng)")
-        self.chk_mock.setChecked(False)
-        self.chk_mock.setEnabled(False)
-        head.addWidget(self.chk_mock)
         root.addLayout(head)
 
         bar = QHBoxLayout(); bar.setSpacing(6)
@@ -711,8 +713,11 @@ class ScenarioGridWindow(QMainWindow):
         self.header.setSectionResizeMode(0, QHeaderView.Stretch)
         for c in range(1, len(COLS)):
             self.header.setSectionResizeMode(c, QHeaderView.Interactive)
-        self.tree.setColumnWidth(1, 150); self.tree.setColumnWidth(2, 200)
-        self.tree.setColumnWidth(3, 220); self.tree.setColumnWidth(4, 90)
+        self.tree.setColumnWidth(1, 260)   # Mô tả lệnh
+        self.tree.setColumnWidth(2, 120)   # Thiết bị
+        self.tree.setColumnWidth(3, 190)   # Tham số / Điều kiện
+        self.tree.setColumnWidth(4, 200)   # Kết quả
+        self.tree.setColumnWidth(5, 90)    # Trạng thái
         root.addWidget(self.tree, 3)
 
         self.log = QTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(140)
@@ -757,12 +762,13 @@ class ScenarioGridWindow(QMainWindow):
         n = len(self.scenario.nodes)
         self.statusBar().showMessage(f"{n} node cấp ngoài.")
 
-    def _new_item(self, parent, enabled, label, devices="", param="",
+    def _new_item(self, parent, enabled, label, desc="", devices="", param="",
                   kind="step", obj=None, parent_obj=None):
         it = QTreeWidgetItem(parent)
         it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
         it.setCheckState(0, Qt.Checked if enabled else Qt.Unchecked)
-        it.setText(0, label); it.setText(1, devices); it.setText(2, param)
+        it.setText(0, label); it.setText(1, desc)
+        it.setText(2, devices); it.setText(3, param)
         fg = QColor(Colors.TEXT_MAIN) if enabled else QColor(Colors.TEXT_DIM)
         for c in range(len(COLS)):
             it.setForeground(c, fg)
@@ -779,22 +785,25 @@ class ScenarioGridWindow(QMainWindow):
             if node.action == "raw_scpi":
                 step_label = node.params.get("__cmd_original__",
                                              node.params.get("__template__", "lệnh thô"))
+                step_desc = node.params.get("__cmd_desc__", "")
             else:
-                step_label = ACTION_SPECS.get(node.action, {}).get("label", node.action)
+                spec = ACTION_SPECS.get(node.action, {})
+                step_label = spec.get("label", node.action)
+                step_desc = spec.get("desc", "")
             self._new_item(parent_item, node.enabled,
-                           f"Bước: {step_label}",
+                           f"Bước: {step_label}", step_desc,
                            ", ".join(node.devices) if node.devices else "—",
                            node.describe_params(), "step", node, parent_obj)
         elif kind == "loop":
             it = self._new_item(parent_item, node.enabled,
                                 f"🔁 Lặp {node.count} lần" + (f"  — {node.note}" if node.note else ""),
-                                "", f"{node.count} lần", "loop", node, parent_obj)
+                                "", "", f"{node.count} lần", "loop", node, parent_obj)
             for s in node.body:
                 self._add_node_item(s, it, node)
         elif kind == "if":
             it = self._new_item(parent_item, node.enabled,
                                 "❓ Rẽ nhánh (If)" + (f"  — {node.note}" if node.note else ""),
-                                "", f"{len(node.branches)} nhánh", "if", node, parent_obj)
+                                "", "", f"{len(node.branches)} nhánh", "if", node, parent_obj)
             for i, br in enumerate(node.branches):
                 if br.condition is None:
                     lbl = "Ngược lại (ELSE)"
@@ -802,7 +811,7 @@ class ScenarioGridWindow(QMainWindow):
                     lbl = f"Nếu  {br.condition.describe()}"
                 else:
                     lbl = f"Ngược lại nếu  {br.condition.describe()}"
-                bit = self._new_item(it, br.enabled, lbl, "",
+                bit = self._new_item(it, br.enabled, lbl, "", "",
                                      br.condition.describe() if br.condition else "", "branch",
                                      br, node)
                 for s in br.body:
@@ -1012,7 +1021,7 @@ class ScenarioGridWindow(QMainWindow):
         from gui.device_manager import DeviceManagerDialog
         from core.profile import ConnectionProfile
         prof = getattr(self, "_profile", ConnectionProfile())
-        dlg = DeviceManagerDialog(self, mock=self.chk_mock.isChecked(), profile=prof)
+        dlg = DeviceManagerDialog(self, mock=False, profile=prof)
         if dlg.exec_() == QDialog.Accepted:
             self._profile = dlg.get_profile()
             self.address_map = self._profile.address_map()
@@ -1051,21 +1060,20 @@ class ScenarioGridWindow(QMainWindow):
         self.btn_export.setEnabled(False)
         self._loading = True
         for it in self._all_items():
-            it.setText(3, ""); it.setText(4, "")
+            it.setText(4, ""); it.setText(5, "")   # xóa Kết quả + Trạng thái
         self._loading = False
 
-        mock = self.chk_mock.isChecked()
-        if not mock:
-            need = self.scenario.all_device_keys()
-            missing = [d for d in need if d not in self.address_map]
-            if missing:
-                QMessageBox.warning(self, "Thiếu địa chỉ thiết bị",
-                                    "Chế độ REAL cần gán địa chỉ cho:\n  " + ", ".join(missing)
-                                    + "\n\nBấm '🔌 Thiết bị' để quét & gán, hoặc bật MOCK.")
-                return
+        mock = False                       # đã bỏ MOCK — luôn chạy với thiết bị thật
+        need = self.scenario.all_device_keys()
+        missing = [d for d in need if d not in self.address_map]
+        if missing:
+            QMessageBox.warning(self, "Thiếu địa chỉ thiết bị",
+                                "Cần gán địa chỉ cho:\n  " + ", ".join(missing)
+                                + "\n\nBấm '🔌 Thiết bị' để quét & gán.")
+            return
 
         self.btn_run.setEnabled(False); self.btn_stop.setEnabled(True)
-        self._last_mode = "MOCK" if mock else "REAL"
+        self._last_mode = "REAL"
         self._log(f"--- Bắt đầu chạy ({self._last_mode}) ---", Colors.ACCENT_CYAN)
         self.worker = ScenarioWorker(self.scenario, mock=mock, address_map=self.address_map,
                                      cmd_delay_s=self.cmd_delay_s)
@@ -1096,11 +1104,11 @@ class ScenarioGridWindow(QMainWindow):
         self._loading = True
         key = id(item)
         self._item_results.setdefault(key, []).append(res.summary())
-        item.setText(3, " | ".join(self._item_results[key]))
+        item.setText(4, " | ".join(self._item_results[key]))   # cột Kết quả
         if res.kind != "control":
             any_err = any("LỖI" in s for s in self._item_results[key])
-            item.setText(4, "LỖI" if any_err else "OK")
-            item.setForeground(4, QColor(Colors.ACCENT_RED if any_err else Colors.ACCENT_GREEN))
+            item.setText(5, "LỖI" if any_err else "OK")          # cột Trạng thái
+            item.setForeground(5, QColor(Colors.ACCENT_RED if any_err else Colors.ACCENT_GREEN))
         self._loading = False
         self._log(f"B{res.step_index} {res.summary()}",
                   Colors.ACCENT_RED if not res.ok else Colors.ACCENT_GREEN)

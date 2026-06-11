@@ -21,7 +21,7 @@ import logging
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget,
     QTableWidgetItem, QComboBox, QHeaderView, QFileDialog, QMessageBox,
-    QCheckBox, QAbstractItemView, QInputDialog, QSpinBox,
+    QAbstractItemView, QInputDialog, QSpinBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
@@ -90,8 +90,6 @@ class DeviceManagerDialog(QDialog):
         )
         self._build_ui()
 
-        # Mặc định mock theo tham số.
-        self.chk_mock.setChecked(mock)
         self.spn_delay.setValue(int(getattr(self.profile, "cmd_delay_ms", 100)))
         if self.profile.entries:
             self._load_profile_into_table(self.profile)
@@ -123,9 +121,6 @@ class DeviceManagerDialog(QDialog):
         bar.addWidget(self.btn_scan)
         bar.addWidget(self.btn_wizard)
         bar.addStretch()
-        self.chk_mock = QCheckBox("MOCK (demo, không cần phần cứng)")
-        self.chk_mock.setChecked(True)
-        bar.addWidget(self.chk_mock)
         root.addLayout(bar)
 
         # Bảng
@@ -153,8 +148,7 @@ class DeviceManagerDialog(QDialog):
         self.spn_delay.setSingleStep(10)
         self.spn_delay.setValue(100)
         self.spn_delay.setToolTip(
-            "Khoảng nghỉ giữa các lệnh khi chạy MÁY THẬT (0 = tắt).\n"
-            "Không áp dụng ở chế độ MOCK. Lưu kèm profile."
+            "Khoảng nghỉ giữa các lệnh khi gửi tới thiết bị (0 = tắt). Lưu kèm profile."
         )
         bottom.addWidget(self.spn_delay)
         bottom.addStretch()
@@ -228,7 +222,7 @@ class DeviceManagerDialog(QDialog):
     def _scan(self):
         self.btn_scan.setEnabled(False)
         self.lbl_status.setText("Đang quét & nhận diện...")
-        self._scan_worker = ScanWorker(mock=self.chk_mock.isChecked())
+        self._scan_worker = ScanWorker(mock=False)
         self._scan_worker.done.connect(self._on_scan_done)
         self._scan_worker.failed.connect(self._on_scan_failed)
         self._scan_worker.start()
@@ -256,7 +250,7 @@ class DeviceManagerDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _wizard(self):
-        mock = self.chk_mock.isChecked()
+        mock = False
         QMessageBox.information(
             self, "Wizard — Bước 1/2",
             "Hãy đảm bảo thiết bị CẦN THÊM hiện CHƯA được cắm/bật.\n"
@@ -323,7 +317,7 @@ class DeviceManagerDialog(QDialog):
         if not model_key:
             self._set_status(r, "Chưa gán model", Colors.ACCENT_WARN)
             return
-        res = test_connection(model_key, address, mock=self.chk_mock.isChecked())
+        res = test_connection(model_key, address, mock=False)
         if res.ok:
             self._set_status(r, f"✅ OK: {res.model}", Colors.ACCENT_GREEN)
         else:
@@ -409,4 +403,4 @@ class DeviceManagerDialog(QDialog):
         return self.profile
 
     def is_mock(self) -> bool:
-        return self.chk_mock.isChecked()
+        return False
