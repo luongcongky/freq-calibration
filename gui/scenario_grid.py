@@ -823,7 +823,6 @@ class ScenarioGridWindow(QMainWindow):
         mkbtn("➕ Bước", self._add_step)
         mkbtn("🔁 Loop", self._add_loop)
         mkbtn("❓ If", self._add_if)
-        mkbtn("✏ Sửa", self._edit_node)
         mkbtn("⧉ Nhân bản", self._dup_node)
         mkbtn("🗑 Xóa", self._del_node)
         mkbtn("▲", lambda: self._move(-1))
@@ -842,7 +841,7 @@ class ScenarioGridWindow(QMainWindow):
         self.tree.setColumnCount(len(COLS))
         self.tree.setHeaderLabels(COLS)
         self.header.toggled_all.connect(self._toggle_all)
-        self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)  # chọn nhiều dòng (Ctrl/Shift)
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.itemDoubleClicked.connect(lambda *_: self._edit_node())
         # Cột 0 (Nội dung) tự dãn lấp chỗ trống; cột 1–4 kéo rộng/hẹp tự do.
@@ -1132,24 +1131,35 @@ class ScenarioGridWindow(QMainWindow):
         cont.insert(idx + 1, clone)
         self._refresh_tree()
 
+    def _target_items(self) -> list:
+        """Mục để thao tác (di chuyển/xóa): các DÒNG ĐANG CHỌN (highlight).
+        Hỗ trợ chọn nhiều dòng bằng Ctrl/Shift. KHÔNG dùng trạng thái checkbox."""
+        return list(self.tree.selectedItems())
+
     def _del_node(self):
-        checked = [it for it in self._all_items() if it.checkState(0) == Qt.Checked]
-        if not checked:
-            QMessageBox.information(self, "Chưa chọn", "Hãy tick các dòng muốn xóa rồi bấm Xóa.")
+        items = self._target_items()
+        if not items:
+            QMessageBox.information(self, "Chưa chọn",
+                                   "Hãy chọn (bôi đen) 1 hoặc nhiều dòng rồi bấm Xóa.")
             return
-        # Bỏ qua item con nếu item cha cũng đang bị xóa (tránh xóa 2 lần)
-        checked_ids = {id(it) for it in checked}
+        # Bỏ qua item con nếu item cha cũng đang bị xóa (tránh xóa 2 lần).
+        ids = {id(it) for it in items}
         to_delete = []
-        for item in checked:
+        for item in items:
             cur = item.parent()
             shadowed = False
             while cur is not None:
-                if id(cur) in checked_ids:
+                if id(cur) in ids:
                     shadowed = True
                     break
                 cur = cur.parent()
             if not shadowed:
                 to_delete.append(item)
+        if len(to_delete) > 1:
+            if QMessageBox.question(self, "Xóa nhiều mục",
+                                    f"Xóa {len(to_delete)} mục đã chọn?",
+                                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                return
         for item in to_delete:
             obj = self._obj_of(item)
             cont = self._container_of(item)
@@ -1159,16 +1169,36 @@ class ScenarioGridWindow(QMainWindow):
         self._refresh_tree()
 
     def _move(self, delta):
-        item = self._sel()
-        if item is None:
+        items = self._target_items()
+        if not items:
             return
-        obj = self._obj_of(item); cont = self._container_of(item)
-        i = self._index_by_identity(cont, obj) if cont is not None else -1
-        if i < 0:
-            return
-        j = max(0, min(len(cont) - 1, i + delta))
-        if j != i:
-            cont.insert(j, cont.pop(i)); self._refresh_tree()
+        moved = [self._obj_of(it) for it in items if self._obj_of(it) is not None]
+        # Gom các object theo CONTAINER (mỗi container di chuyển độc lập, giữ thứ tự).
+        groups: dict = {}     # id(container) -> (container, set(id(obj)))
+        for it in items:
+            obj = self._obj_of(it); cont = self._container_of(it)
+            if cont is None or obj is None:
+                continue
+            g = groups.setdefault(id(cont), (cont, set()))
+            g[1].add(id(obj))
+        for cont, sel_ids in groups.values():
+            idxs = [i for i, o in enumerate(cont) if id(o) in sel_ids]
+            if delta < 0:                         # lên: duyệt từ trên xuống
+                for i in idxs:
+                    if i > 0 and id(cont[i - 1]) not in sel_ids:
+                        cont[i - 1], cont[i] = cont[i], cont[i - 1]
+            else:                                 # xuống: duyệt từ dưới lên
+                for i in reversed(idxs):
+                    if i < len(cont) - 1 and id(cont[i + 1]) not in sel_ids:
+                        cont[i + 1], cont[i] = cont[i], cont[i + 1]
+        self._refresh_tree()
+        # Giữ highlight các dòng vừa di chuyển (kể cả nhiều dòng).
+        self._loading = True
+        for obj in moved:
+            it = self._id_to_item.get(id(obj))
+            if it is not None:
+                it.setSelected(True)
+        self._loading = False
 
     def _log(self, msg, color=Colors.TEXT_DIM):
         self.log.append(f"<font color='{color}'>{msg}</font>")
