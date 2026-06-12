@@ -179,6 +179,11 @@ class CommandReferenceDialog(QDialog):
         ll.addWidget(QLabel("Chọn dòng máy:"))
         self.dev_list = QListWidget()
         self.dev_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        # Giữ NGUYÊN màu nền dòng máy đang chọn kể cả khi list mất focus (vd khi
+        # bấm sang bảng lệnh) — tránh cảm giác bị bỏ chọn.
+        self.dev_list.setStyleSheet(
+            f"QListWidget::item:selected {{ background:{Colors.ACCENT_CYAN};"
+            f" color:{Colors.BG_WINDOW}; }}")
         self.dev_list.currentRowChanged.connect(self._on_device_changed)
         ll.addWidget(self.dev_list)
         splitter.addWidget(left)

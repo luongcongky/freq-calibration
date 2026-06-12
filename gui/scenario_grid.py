@@ -23,13 +23,13 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox, QHeaderView, QFileDialog, QMessageBox,
     QAbstractItemView, QTextEdit, QStyle, QStyleOptionButton, QSpinBox,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QPointF
+from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF
 
 from drivers import DEVICE_REGISTRY
 from core.scenario import (
     Scenario, ScenarioStep, LoopBlock, IfBlock, Branch, Condition,
-    ACTION_SPECS, OPERATORS, OP_LABELS,
+    ACTION_SPECS, OPERATORS, OP_LABELS, MAX_NEST_DEPTH,
     actions_for_devices, validate_scenario, node_kind, node_from_dict,
 )
 from core.scenario_runner import ScenarioRunner, StepResult
@@ -40,7 +40,7 @@ from core.commands import (
 logger = logging.getLogger(__name__)
 
 from gui.theme import Colors, build_global_qss
-from gui.widgets import ThemeToggle
+from gui.widgets import ThemeToggle, EXPR_HELP
 
 COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
 
@@ -106,6 +106,32 @@ class CheckBoxHeader(QHeaderView):
             self.toggled_all.emit(self._checked)
             return
         super().mousePressEvent(event)
+
+
+# ===========================================================================
+# Tree: luôn hiện icon expand/collapse cho item có con (không chỉ khi hover)
+# ===========================================================================
+
+class ScenarioTree(QTreeWidget):
+    def drawBranches(self, painter, rect, index):
+        # KHÔNG gọi super() để tránh chevron mặc định (chỉ hiện khi hover trên
+        # Windows). Tự vẽ tam giác cho mọi node có con -> luôn hiển thị.
+        if index.isValid() and self.model().hasChildren(index):
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(Colors.TEXT_DIM))
+            cx = rect.right() - 11
+            cy = rect.center().y()
+            s = 4.0
+            if self.isExpanded(index):                         # ▼ đang mở
+                pts = [QPointF(cx - s, cy - s + 1), QPointF(cx + s, cy - s + 1),
+                       QPointF(cx, cy + s - 1)]
+            else:                                              # ▶ đang đóng
+                pts = [QPointF(cx - s + 1, cy - s), QPointF(cx - s + 1, cy + s),
+                       QPointF(cx + s - 1, cy)]
+            painter.drawPolygon(QPolygonF(pts))
+            painter.restore()
 
 
 # ===========================================================================
@@ -200,6 +226,7 @@ class StepEditorDialog(QDialog):
         vform.addRow("Tên biến / list:", self.var_name)
         self.var_expr = QLineEdit()
         self.var_expr.setPlaceholderText("vd: avg(samples) · abs(f_avg-f_set)/f_set · $last")
+        self.var_expr.setToolTip(EXPR_HELP)
         vform.addRow("Biểu thức / nguồn:", self.var_expr)
         hint = QLabel("Hàm: avg, mean, std, min, max, abs, sqrt, count, last · biến đặc biệt: $last, $iter")
         hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;"); hint.setWordWrap(True)
@@ -659,12 +686,11 @@ class IfEditorDialog(QDialog):
         root = QVBoxLayout(self)
         root.addWidget(QLabel("Các nhánh (xét lần lượt từ trên xuống, chạy nhánh đúng đầu tiên):"))
         self.lst = QListWidget()
+        self.lst.itemDoubleClicked.connect(lambda *_: self._edit_cond())   # sửa = double-click
         root.addWidget(self.lst)
 
         bar = QHBoxLayout()
-        for text, slot in [("➕ Nhánh điều kiện", self._add_cond),
-                           ("➕ Ngược lại (ELSE)", self._add_else),
-                           ("✏ Sửa điều kiện", self._edit_cond),
+        for text, slot in [("➕ Thêm điều kiện", self._add_cond),
                            ("🗑 Xóa nhánh", self._del),
                            ("▲", lambda: self._move(-1)), ("▼", lambda: self._move(1))]:
             b = QPushButton(text); b.clicked.connect(slot); bar.addWidget(b)
@@ -835,7 +861,7 @@ class ScenarioGridWindow(QMainWindow):
         self.btn_export = mkbtn("📤 Xuất", self._export_results); self.btn_export.setEnabled(False)
         root.addLayout(bar)
 
-        self.tree = QTreeWidget()
+        self.tree = ScenarioTree()
         self.header = CheckBoxHeader(self.tree, label="Bật / Nội dung")
         self.tree.setHeader(self.header)
         self.tree.setColumnCount(len(COLS))
@@ -851,12 +877,20 @@ class ScenarioGridWindow(QMainWindow):
         self.header.setSectionResizeMode(0, QHeaderView.Stretch)
         for c in range(1, len(COLS)):
             self.header.setSectionResizeMode(c, QHeaderView.Interactive)
-        self.tree.setColumnWidth(1, 360)   # Mô tả lệnh
+        self.tree.setColumnWidth(1, 410)   # Mô tả lệnh (+50; cột Nội dung stretch tự co)
         self.tree.setColumnWidth(2, 120)   # Thiết bị
         self.tree.setColumnWidth(3, 190)   # Tham số / Điều kiện
-        self.tree.setColumnWidth(4, 200)   # Kết quả
+        self.tree.setColumnWidth(4, 250)   # Kết quả (+50)
         self.tree.setColumnWidth(5, 90)    # Trạng thái
         root.addWidget(self.tree, 3)
+
+        log_head = QHBoxLayout()
+        log_head.addWidget(QLabel("Log"))
+        log_head.addStretch()
+        btn_clear_log = QPushButton("🗑 Xóa log")
+        btn_clear_log.clicked.connect(lambda: self.log.clear())
+        log_head.addWidget(btn_clear_log)
+        root.addLayout(log_head)
 
         self.log = QTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(140)
         root.addWidget(self.log, 1)
@@ -924,6 +958,10 @@ class ScenarioGridWindow(QMainWindow):
                 step_label = node.params.get("__cmd_original__",
                                              node.params.get("__template__", "lệnh thô"))
                 step_desc = node.params.get("__cmd_desc__", "")
+            elif node.action in ("set_var", "compute", "collect"):
+                spec = ACTION_SPECS.get(node.action, {})
+                step_label = spec.get("label", node.action)
+                step_desc = node.note          # bước Biến/Tính toán: Mô tả lệnh = Ghi chú
             else:
                 spec = ACTION_SPECS.get(node.action, {})
                 step_label = spec.get("label", node.action)
@@ -1030,22 +1068,48 @@ class ScenarioGridWindow(QMainWindow):
         idx = self._index_by_identity(self.scenario.nodes, obj)
         return idx + 1 if idx >= 0 else len(self.scenario.nodes)
 
-    # ------------------------------------------------------------------
-    # Thêm / sửa / xóa
-    # ------------------------------------------------------------------
-    def _add_step(self):
-        item = self._sel()
+    def _resolve_insert(self, item):
+        """Trả (container, vị_trí) để chèn 1 node theo item đang chọn — chèn vào
+        ĐÚNG cấp (thân Loop / nhánh If / cùng cấp bước). None nếu phải chọn nhánh."""
         container = self._container_for_step(item)
         if container is None:
-            QMessageBox.information(self, "Chọn nhánh",
-                                   "Đang chọn khối If. Hãy chọn một NHÁNH cụ thể để thêm bước vào.")
-            return
-        # Chèn ngay sau bước đang chọn; nếu chọn loop/branch/không chọn → cuối list
+            return None, None
         if item is not None and self._kind_of(item) == "step":
             idx = self._index_by_identity(container, self._obj_of(item))
             insert_at = idx + 1 if idx >= 0 else len(container)
         else:
             insert_at = len(container)
+        return container, insert_at
+
+    def _container_block_depth(self, item) -> int:
+        """Số khối Loop/If bao quanh CONTAINER mà item phân giải tới (để biết độ
+        sâu sẽ chèn). Node chèn vào sẽ ở độ sâu = giá trị này + 1."""
+        kind = self._kind_of(item) if item is not None else None
+        if kind == "loop":
+            start = item                 # chèn vào thân Loop -> Loop tính 1 cấp
+        elif item is not None:
+            start = item.parent()        # bước: cùng cấp; nhánh: lên If
+        else:
+            start = None
+        depth, cur = 0, start
+        while cur is not None:
+            if self._kind_of(cur) in ("loop", "if"):
+                depth += 1
+            cur = cur.parent()
+        return depth
+
+    # ------------------------------------------------------------------
+    # Thêm / sửa / xóa
+    # ------------------------------------------------------------------
+    def _need_branch_msg(self):
+        QMessageBox.information(self, "Chọn nhánh",
+                               "Đang chọn khối If. Hãy chọn một NHÁNH cụ thể để thêm vào.")
+
+    def _add_step(self):
+        item = self._sel()
+        container, insert_at = self._resolve_insert(item)
+        if container is None:
+            self._need_branch_msg(); return
         self._ensure_connected()
         dlg = StepEditorDialog(self, connected_keys=self._connected_keys)
         if dlg.exec_() == QDialog.Accepted:
@@ -1053,19 +1117,34 @@ class ScenarioGridWindow(QMainWindow):
             container.insert(insert_at, step)
             self._refresh_tree()
 
+    def _add_block(self, item, build_block):
+        """Chèn 1 khối Loop/If vào đúng cấp theo item đang chọn (cho phép LỒNG)."""
+        container, insert_at = self._resolve_insert(item)
+        if container is None:
+            self._need_branch_msg(); return False
+        if self._container_block_depth(item) + 1 > MAX_NEST_DEPTH:
+            QMessageBox.warning(self, "Lồng quá sâu",
+                                f"Chỉ cho phép lồng tối đa {MAX_NEST_DEPTH} cấp khối.")
+            return False
+        block = build_block()
+        if block is None:
+            return False
+        block.enabled = False
+        container.insert(insert_at, block)
+        self._refresh_tree()
+        return True
+
     def _add_loop(self):
-        dlg = LoopEditorDialog(self, device_choices=self.scenario.all_device_keys() or None)
-        if dlg.exec_() == QDialog.Accepted:
-            loop = dlg.get_loop(); loop.enabled = False
-            self.scenario.add_node(loop, self._top_level_container_index(self._sel()))
-            self._refresh_tree()
+        def build():
+            dlg = LoopEditorDialog(self, device_choices=self.scenario.all_device_keys() or None)
+            return dlg.get_loop() if dlg.exec_() == QDialog.Accepted else None
+        self._add_block(self._sel(), build)
 
     def _add_if(self):
-        dlg = IfEditorDialog(self, device_choices=self.scenario.all_device_keys() or None)
-        if dlg.exec_() == QDialog.Accepted:
-            ib = dlg.get_ifblock(); ib.enabled = False
-            self.scenario.add_node(ib, self._top_level_container_index(self._sel()))
-            self._refresh_tree()
+        def build():
+            dlg = IfEditorDialog(self, device_choices=self.scenario.all_device_keys() or None)
+            return dlg.get_ifblock() if dlg.exec_() == QDialog.Accepted else None
+        self._add_block(self._sel(), build)
 
     @staticmethod
     def _index_by_identity(lst, obj) -> int:

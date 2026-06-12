@@ -16,8 +16,9 @@ Phiên bản này tập trung tương tác canvas + đồng bộ thuộc tính. 
 from __future__ import annotations
 
 import re
+import math
 
-from PyQt5.QtCore import Qt, QRectF, QPointF, QLineF
+from PyQt5.QtCore import Qt, QRectF, QPointF, QLineF, QTimer
 from PyQt5.QtGui import (
     QColor, QPen, QBrush, QPainter, QPainterPath, QFont,
 )
@@ -28,7 +29,7 @@ from PyQt5.QtWidgets import (
 )
 
 from gui.theme import Colors
-from gui.widgets import ThemeToggle
+from gui.widgets import ThemeToggle, EXPR_HELP
 
 # Thiết bị mẫu (khi mở độc lập). Khi tích hợp sẽ thay bằng ConnectionProfile.
 DEMO_DEVICES = [
@@ -488,6 +489,7 @@ class FlowEditorWindow(QMainWindow):
         vform.addRow("Tên biến / list:", self.ed_var_name)
         self.ed_var_expr = QLineEdit()
         self.ed_var_expr.setPlaceholderText("vd: avg(samples) · abs(f_avg-f_set)/f_set · $last")
+        self.ed_var_expr.setToolTip(EXPR_HELP)
         vform.addRow("Biểu thức / nguồn:", self.ed_var_expr)
         vhint = QLabel("Hàm: avg, std, min, max, abs, sqrt, count, last · biến $last, $iter")
         vhint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;"); vhint.setWordWrap(True)
@@ -525,9 +527,9 @@ class FlowEditorWindow(QMainWindow):
 
     def showEvent(self, ev):
         super().showEvent(ev)
-        if not getattr(self, "_centered", False):
-            self.view.centerOn(self.scene.itemsBoundingRect().center())
-            self._centered = True
+        if not getattr(self, "_fitted", False):
+            QTimer.singleShot(0, self._fit_all)   # fit khi cửa sổ đã có kích thước
+            self._fitted = True
 
     # --- tham số động (node Lệnh) ---
     def _is_command_node(self, node: "NodeItem | None") -> bool:
@@ -673,6 +675,7 @@ class FlowEditorWindow(QMainWindow):
         self.scene.clearSelection()
         n.setSelected(True)
         self._last_added = n
+        self._update_scene_rect()          # mở rộng vùng cuộn nếu node ra ngoài
         return n
 
     def delete_selected(self):
@@ -701,17 +704,42 @@ class FlowEditorWindow(QMainWindow):
         seq: list[NodeItem] = []
         for node in getattr(scn, "nodes", []):
             seq.extend(self._nodes_for(node))
+        # Bố trí dạng LƯỚI RẮN (snake) — xuống hàng thay vì 1 hàng ngang vô tận;
+        # node liên tiếp luôn cạnh nhau (hàng lẻ đảo chiều) nên dây nối gọn.
+        n = len(seq)
+        per_row = max(1, min(8, math.ceil(math.sqrt(n)))) if n else 1
+        col_w, row_h = 240, 130
         prev = None
-        x0 = -((len(seq) - 1) * 240) / 2 if seq else 0
         for i, ni in enumerate(seq):
-            ni.setPos(x0 + i * 240, 0)
+            r, c = divmod(i, per_row)
+            if r % 2 == 1:
+                c = per_row - 1 - c          # hàng lẻ đi ngược -> nối liền mạch
+            ni.setPos(c * col_w, r * row_h)
             self.scene.addItem(ni)
             if prev is not None:
                 EdgeItem(prev, ni)
             prev = ni
-        if seq:
-            self.view.centerOn(self.scene.itemsBoundingRect().center())
+        self._update_scene_rect()
+        QTimer.singleShot(0, self._fit_all)   # fit sau khi view đã có kích thước
         self._on_node_selected(None)
+
+    def _update_scene_rect(self):
+        """Mở rộng vùng cuộn ôm hết node (+lề) để kéo tới mọi node."""
+        rect = self.scene.itemsBoundingRect()
+        if rect.isEmpty():
+            self.scene.setSceneRect(-1000, -1000, 2000, 2000)
+        else:
+            self.scene.setSceneRect(rect.adjusted(-400, -400, 400, 400))
+
+    def _fit_all(self):
+        """Thu phóng để THẤY HẾT các node trong vùng hiển thị (không phóng quá 1:1)."""
+        rect = self.scene.itemsBoundingRect()
+        if rect.isEmpty():
+            return
+        self.view.fitInView(rect.adjusted(-40, -40, 40, 40), Qt.KeepAspectRatio)
+        if self.view.transform().m11() > 1.0:    # ít node -> đừng phóng to
+            self.view.resetTransform()
+            self.view.centerOn(rect.center())
 
     def _node_from_step(self, step) -> NodeItem:
         if step.action == "raw_scpi":
