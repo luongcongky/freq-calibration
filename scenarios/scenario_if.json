@@ -1,0 +1,204 @@
+{
+  "name": "Kịch bản quét tần số 100 MHz – 225 MHz (kênh 2, bước 10 MHz)",
+  "description": "Quét tần số từ 100 MHz đến 225 MHz, bước 10 MHz, đo kênh 2 HP 53131A, 8 digits.",
+  "nodes": [
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "*RST",
+        "__is_query__": false,
+        "__cmd_original__": "*RST",
+        "__cmd_desc__": "Reset thiết bị về cài đặt mặc định nhà máy"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT OFF",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT OFF",
+        "__cmd_desc__": "Tắt RF output",
+        "ch": 1
+      },
+      "note": "Khởi tạo tắt RF",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:MODE CW",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:MODE CW",
+        "__cmd_desc__": "Chế độ CW",
+        "ch": 1
+      },
+      "note": "Đảm bảo ở chế độ CW",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:POW:POW {dBm} dBm",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:POW:POW <dBm> dBm",
+        "__cmd_desc__": "Đặt công suất RF",
+        "ch": 1,
+        "dBm": -5.0
+      },
+      "note": "Cố định công suất -5 dBm",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 100000000.0
+      },
+      "note": "Tần số: 100 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "53131A"
+      ],
+      "params": {
+        "__template__": "*RST",
+        "__is_query__": false,
+        "__cmd_original__": "*RST",
+        "__cmd_desc__": "Reset thiết bị về cài đặt mặc định nhà máy"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "53131A"
+      ],
+      "params": {
+        "__template__": "SENS:FREQ:ARM:STOP:SOUR DIG",
+        "__is_query__": false,
+        "__cmd_original__": "SENS:FREQ:ARM:STOP:SOUR DIG",
+        "__cmd_desc__": "Stop arm = digits"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "53131A"
+      ],
+      "params": {
+        "__template__": "SENS:FREQ:ARM:STOP:DIG 8",
+        "__is_query__": false,
+        "__cmd_original__": "SENS:FREQ:ARM:STOP:DIG 8",
+        "__cmd_desc__": "8 digits"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "53131A"
+      ],
+      "params": {
+        "__template__": "SENS:FUNC:ON \"FREQ {ch}\"",
+        "__is_query__": false,
+        "__cmd_original__": "SENS:FUNC:ON \"FREQ <ch>\"",
+        "__cmd_desc__": "Chọn kênh đo",
+        "ch": 2
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "53131A"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "53131A"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc tần số (Hz) 8 digits"
+      },
+      "note": "Đo tần số tại 100 MHz",
+      "enabled": true,
+      "type": "step"
+    }
+  ]
+}
