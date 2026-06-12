@@ -129,8 +129,21 @@ class StepEditorDialog(QDialog):
         root = QVBoxLayout(self)
         root.setSpacing(6)
 
-        root.addWidget(QLabel("Thiết bị (chọn 1 hoặc nhiều — chạy cùng bước):"))
-        root.addWidget(QLabel("🟢 = đang kết nối   ·   ○ = chưa thấy"))
+        # Chọn loại bước: lệnh thiết bị (SCPI) hoặc biến/tính toán.
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Loại bước:"))
+        self.step_mode = QComboBox()
+        self.step_mode.addItem("Lệnh thiết bị (SCPI)", "device")
+        self.step_mode.addItem("Biến / Tính toán", "var")
+        self.step_mode.currentIndexChanged.connect(self._update_mode)
+        mode_row.addWidget(self.step_mode, 1)
+        root.addLayout(mode_row)
+
+        # ----- Panel lệnh thiết bị -----
+        self.device_panel = QWidget()
+        dp = QVBoxLayout(self.device_panel); dp.setContentsMargins(0, 0, 0, 0); dp.setSpacing(6)
+        dp.addWidget(QLabel("Thiết bị (chọn 1 hoặc nhiều — chạy cùng bước):"))
+        dp.addWidget(QLabel("🟢 = đang kết nối   ·   ○ = chưa thấy"))
         self.dev_list = QListWidget()
         self.dev_list.setSelectionMode(QAbstractItemView.NoSelection)
         self.dev_list.setMaximumHeight(150)
@@ -147,7 +160,7 @@ class StepEditorDialog(QDialog):
             it.setForeground(QColor(Colors.ACCENT_GREEN) if is_conn else QColor(Colors.TEXT_DIM))
             self.dev_list.addItem(it)
         self.dev_list.itemChanged.connect(lambda *_: self._refresh_commands())
-        root.addWidget(self.dev_list)
+        dp.addWidget(self.dev_list)
 
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("Lệnh:"))
@@ -155,26 +168,43 @@ class StepEditorDialog(QDialog):
         self.cmd_search.setPlaceholderText("Tìm lệnh…")
         self.cmd_search.textChanged.connect(self._filter_commands)
         search_row.addWidget(self.cmd_search)
-        root.addLayout(search_row)
+        dp.addLayout(search_row)
 
         self.cmd_list = QListWidget()
         self.cmd_list.setMinimumHeight(160)
-        # Giữ NGUYÊN màu nền dòng đang chọn kể cả khi list mất focus (vd khi
-        # bấm sang ô Ghi chú) — tránh cảm giác lệnh bị bỏ chọn.
         self.cmd_list.setStyleSheet(
             f"QListWidget::item:selected {{ background:{Colors.ACCENT_CYAN};"
             f" color:{Colors.BG_WINDOW}; }}"
         )
         self.cmd_list.currentItemChanged.connect(self._on_cmd_selected)
-        root.addWidget(self.cmd_list)
+        dp.addWidget(self.cmd_list)
 
         self.cmd_info = QLabel("")
         self.cmd_info.setWordWrap(True)
         self.cmd_info.setStyleSheet("color: #a0a5ad; font-size: 11px;")
-        root.addWidget(self.cmd_info)
+        dp.addWidget(self.cmd_info)
 
         self.param_form = QFormLayout()
-        root.addLayout(self.param_form)
+        dp.addLayout(self.param_form)
+        root.addWidget(self.device_panel)
+
+        # ----- Panel biến / tính toán -----
+        self.var_panel = QWidget()
+        vform = QFormLayout(self.var_panel); vform.setContentsMargins(0, 0, 0, 0)
+        self.var_action = QComboBox()
+        self.var_action.addItem("Gán biến (set_var)", "set_var")
+        self.var_action.addItem("Tính toán → biến (compute)", "compute")
+        self.var_action.addItem("Thu thập vào list (collect)", "collect")
+        vform.addRow("Thao tác:", self.var_action)
+        self.var_name = QLineEdit(); self.var_name.setPlaceholderText("vd: error / samples")
+        vform.addRow("Tên biến / list:", self.var_name)
+        self.var_expr = QLineEdit()
+        self.var_expr.setPlaceholderText("vd: avg(samples) · abs(f_avg-f_set)/f_set · $last")
+        vform.addRow("Biểu thức / nguồn:", self.var_expr)
+        hint = QLabel("Hàm: avg, mean, std, min, max, abs, sqrt, count, last · biến đặc biệt: $last, $iter")
+        hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;"); hint.setWordWrap(True)
+        vform.addRow("", hint)
+        root.addWidget(self.var_panel)
 
         note_form = QFormLayout()
         self.note_edit = QLineEdit()
@@ -189,8 +219,14 @@ class StepEditorDialog(QDialog):
         self._refresh_commands()
         if step is not None:
             self._load_step(step)
+        self._update_mode()
 
     # ── helpers ────────────────────────────────────────────────────────────
+
+    def _update_mode(self):
+        is_var = self.step_mode.currentData() == "var"
+        self.device_panel.setVisible(not is_var)
+        self.var_panel.setVisible(is_var)
 
     def _selected_devices(self):
         return [self.dev_list.item(i).data(Qt.UserRole)
@@ -300,6 +336,18 @@ class StepEditorDialog(QDialog):
     # ── load existing step ──────────────────────────────────────────────────
 
     def _load_step(self, step: ScenarioStep):
+        if step.action in ("set_var", "compute", "collect"):
+            self.step_mode.setCurrentIndex(max(0, self.step_mode.findData("var")))
+            self.var_action.setCurrentIndex(max(0, self.var_action.findData(step.action)))
+            if step.action == "collect":
+                self.var_name.setText(step.params.get("var", ""))
+                self.var_expr.setText(step.params.get("source", "$last"))
+            else:
+                self.var_name.setText(step.params.get("name") or step.params.get("target", ""))
+                self.var_expr.setText(step.params.get("expr", ""))
+            self.note_edit.setText(step.note)
+            return
+
         for i in range(self.dev_list.count()):
             it = self.dev_list.item(i)
             it.setCheckState(Qt.Checked if it.data(Qt.UserRole) in step.devices else Qt.Unchecked)
@@ -341,6 +389,25 @@ class StepEditorDialog(QDialog):
     # ── accept ──────────────────────────────────────────────────────────────
 
     def _on_accept(self):
+        note = self.note_edit.text().strip()
+
+        # --- Chế độ Biến / Tính toán ---
+        if self.step_mode.currentData() == "var":
+            act = self.var_action.currentData()
+            name = self.var_name.text().strip()
+            expr = self.var_expr.text().strip()
+            if not name:
+                QMessageBox.warning(self, "Thiếu", "Nhập tên biến / list."); return
+            if act == "collect":
+                params = {"var": name, "source": expr or "$last"}
+            else:
+                if not expr:
+                    QMessageBox.warning(self, "Thiếu", "Nhập biểu thức."); return
+                params = {"name": name, "expr": expr}
+            self._result = ScenarioStep(action=act, devices=[], params=params, note=note)
+            self.accept()
+            return
+
         item = self.cmd_list.currentItem()
         if item is None or item.data(Qt.UserRole) is None:
             QMessageBox.warning(self, "Thiếu", "Chưa chọn lệnh."); return
@@ -403,25 +470,75 @@ class StepEditorDialog(QDialog):
 # ===========================================================================
 
 class LoopEditorDialog(QDialog):
-    def __init__(self, parent=None, loop: LoopBlock | None = None):
+    def __init__(self, parent=None, loop: LoopBlock | None = None,
+                 device_choices: list[str] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Soạn vòng lặp (Loop)")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(420)
+        self._devices = device_choices or list(DEVICE_REGISTRY.keys())
+        self._condition = loop.condition if (loop and loop.condition) else None
         root = QVBoxLayout(self)
         form = QFormLayout()
-        self.spin = QSpinBox(); self.spin.setRange(1, 100000); self.spin.setValue(2)
-        self.note = QLineEdit()
+
+        self.mode = QComboBox()
+        self.mode.addItem("Lặp số lần cố định", "count")
+        self.mode.addItem("Lặp đến khi điều kiện đúng (Until)", "until")
+        self.mode.currentIndexChanged.connect(self._update_visibility)
+        form.addRow("Kiểu lặp:", self.mode)
+
+        self.spin = QSpinBox(); self.spin.setRange(1, 1000000); self.spin.setValue(2)
         form.addRow("Số lần lặp:", self.spin)
+
+        self.max_iter = QSpinBox(); self.max_iter.setRange(1, 1000000); self.max_iter.setValue(50)
+        form.addRow("Tối đa (max_iter):", self.max_iter)
+
+        cond_row = QHBoxLayout()
+        self.cond_lbl = QLabel("(chưa đặt)")
+        self.cond_lbl.setStyleSheet(f"color:{Colors.TEXT_DIM};")
+        btn_cond = QPushButton("Đặt điều kiện dừng…"); btn_cond.clicked.connect(self._edit_cond)
+        cond_row.addWidget(self.cond_lbl, 1); cond_row.addWidget(btn_cond)
+        form.addRow("Điều kiện dừng:", cond_row)
+
+        self.note = QLineEdit()
         form.addRow("Ghi chú:", self.note)
         root.addLayout(form)
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
-        if loop is not None:
-            self.spin.setValue(loop.count); self.note.setText(loop.note)
 
-    def get_values(self):
-        return self.spin.value(), self.note.text().strip()
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._on_accept); bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+        if loop is not None:
+            self.mode.setCurrentIndex(max(0, self.mode.findData(getattr(loop, "mode", "count"))))
+            self.spin.setValue(loop.count); self.note.setText(loop.note)
+            self.max_iter.setValue(getattr(loop, "max_iter", 50))
+        self._refresh_cond(); self._update_visibility()
+
+    def _refresh_cond(self):
+        self.cond_lbl.setText(self._condition.describe() if self._condition else "(chưa đặt)")
+
+    def _edit_cond(self):
+        dlg = ConditionDialog(self, condition=self._condition, device_choices=self._devices)
+        if dlg.exec_() == QDialog.Accepted:
+            self._condition = dlg.get_condition(); self._refresh_cond()
+
+    def _update_visibility(self):
+        until = self.mode.currentData() == "until"
+        self.spin.setEnabled(not until)
+        self.max_iter.setEnabled(until)
+        self.cond_lbl.setEnabled(until)
+
+    def _on_accept(self):
+        if self.mode.currentData() == "until" and self._condition is None:
+            QMessageBox.warning(self, "Thiếu", "Loop 'đến khi' cần điều kiện dừng."); return
+        self.accept()
+
+    def get_loop(self) -> LoopBlock:
+        return LoopBlock(
+            count=self.spin.value(), note=self.note.text().strip(),
+            mode=self.mode.currentData(),
+            condition=self._condition if self.mode.currentData() == "until" else None,
+            max_iter=self.max_iter.value(),
+        )
 
 
 # ===========================================================================
@@ -439,6 +556,7 @@ class ConditionDialog(QDialog):
         form = QFormLayout()
         self.kind = QComboBox()
         self.kind.addItem("So sánh giá trị đo gần nhất", "measure")
+        self.kind.addItem("Biểu thức (vd: error)", "expr")
         self.kind.addItem("Theo trạng thái bước trước (OK/Lỗi)", "status")
         self.kind.currentIndexChanged.connect(self._update_visibility)
         form.addRow("Loại điều kiện:", self.kind)
@@ -448,6 +566,10 @@ class ConditionDialog(QDialog):
         for k in (device_choices or list(DEVICE_REGISTRY.keys())):
             self.device.addItem(k, k)
         form.addRow("Thiết bị nguồn:", self.device)
+
+        self.expr = QLineEdit()
+        self.expr.setPlaceholderText("vd: error  hoặc  abs(f_avg - f_set)/f_set")
+        form.addRow("Biểu thức:", self.expr)
 
         self.op = QComboBox()
         for o in OPERATORS:
@@ -474,28 +596,38 @@ class ConditionDialog(QDialog):
         self._update_visibility()
 
     def _load(self, c: Condition):
-        self.kind.setCurrentIndex(self.kind.findData(c.kind))
+        self.kind.setCurrentIndex(max(0, self.kind.findData(c.kind)))
         self.device.setCurrentIndex(max(0, self.device.findData(c.device)))
+        self.expr.setText(c.expr)
         self.op.setCurrentIndex(max(0, self.op.findData(c.op)))
         self.val.setText(str(c.value)); self.val2.setText(str(c.value2))
         self.status.setCurrentIndex(self.status.findData(c.status))
 
     def _update_visibility(self):
-        is_measure = self.kind.currentData() == "measure"
-        for w in (self.device, self.op, self.val):
-            w.setEnabled(is_measure)
-        self.val2.setEnabled(is_measure and self.op.currentData() in ("between", "outside"))
-        self.status.setEnabled(not is_measure)
+        kind = self.kind.currentData()
+        is_measure = kind == "measure"
+        is_expr = kind == "expr"
+        is_cmp = is_measure or is_expr            # measure & expr đều có op + ngưỡng
+        self.device.setEnabled(is_measure)
+        self.expr.setEnabled(is_expr)
+        self.op.setEnabled(is_cmp)
+        self.val.setEnabled(is_cmp)
+        self.val2.setEnabled(is_cmp and self.op.currentData() in ("between", "outside"))
+        self.status.setEnabled(kind == "status")
 
     def _on_accept(self):
         kind = self.kind.currentData()
-        if kind == "measure":
+        if kind in ("measure", "expr"):
             try:
                 v = float(self.val.text().strip()); v2 = float(self.val2.text().strip() or 0)
             except ValueError:
                 QMessageBox.warning(self, "Sai", "Ngưỡng phải là số."); return
-            self._result = Condition(kind="measure", device=self.device.currentData(),
-                                     op=self.op.currentData(), value=v, value2=v2)
+            if kind == "expr" and not self.expr.text().strip():
+                QMessageBox.warning(self, "Thiếu", "Nhập biểu thức điều kiện."); return
+            self._result = Condition(
+                kind=kind, device=self.device.currentData(),
+                expr=self.expr.text().strip(),
+                op=self.op.currentData(), value=v, value2=v2)
         else:
             self._result = Condition(kind="status", status=self.status.currentData())
         self.accept()
@@ -923,10 +1055,9 @@ class ScenarioGridWindow(QMainWindow):
             self._refresh_tree()
 
     def _add_loop(self):
-        dlg = LoopEditorDialog(self)
+        dlg = LoopEditorDialog(self, device_choices=self.scenario.all_device_keys() or None)
         if dlg.exec_() == QDialog.Accepted:
-            count, note = dlg.get_values()
-            loop = LoopBlock(count=count, note=note, enabled=False, body=[])
+            loop = dlg.get_loop(); loop.enabled = False
             self.scenario.add_node(loop, self._top_level_container_index(self._sel()))
             self._refresh_tree()
 
@@ -960,9 +1091,13 @@ class ScenarioGridWindow(QMainWindow):
                     cont[idx] = new
                 self._refresh_tree()
         elif kind == "loop":
-            dlg = LoopEditorDialog(self, loop=obj)
+            dlg = LoopEditorDialog(self, loop=obj,
+                                   device_choices=self.scenario.all_device_keys() or None)
             if dlg.exec_() == QDialog.Accepted:
-                obj.count, obj.note = dlg.get_values(); self._refresh_tree()
+                nl = dlg.get_loop()
+                obj.count, obj.note = nl.count, nl.note
+                obj.mode, obj.condition, obj.max_iter = nl.mode, nl.condition, nl.max_iter
+                self._refresh_tree()
         elif kind == "if":
             dlg = IfEditorDialog(self, ib=obj, device_choices=self.scenario.all_device_keys() or None)
             if dlg.exec_() == QDialog.Accepted:

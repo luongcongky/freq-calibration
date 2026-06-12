@@ -30,6 +30,7 @@ from core.scenario import (
     Scenario, ScenarioStep, LoopBlock, IfBlock, Branch, Condition,
     ACTION_SPECS,
 )
+from core.expr import evaluate as eval_expr, ExprError
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +94,8 @@ class StepResult:
           - lệnh ghi → TRỐNG (thành công đã thể hiện ở cột Trạng thái)."""
         if not self.ok:
             return f"LỖI — {self.error}" if self.error else "LỖI"
+        if self.action in ("set_var", "compute", "collect"):   # biến: hiện giá trị gán
+            return self.text
         if self.value is not None:                      # query trả về SỐ
             return f"{format_number_vi(self.value)} {self.unit}".rstrip()
         if self.is_query:                               # query trả về chuỗi (vd 'INT', 'ON')
@@ -113,6 +116,8 @@ class _Ctx:
     last_value: Optional[float] = None
     last_by_device: dict[str, float] = field(default_factory=dict)
     last_ok: bool = True
+    variables: dict[str, Any] = field(default_factory=dict)   # biến do set_var/compute/collect tạo
+    iter_stack: list[int] = field(default_factory=list)       # chỉ số vòng lặp lồng nhau
 
     def note_result(self, res: StepResult) -> None:
         if res.value is not None:
@@ -120,6 +125,15 @@ class _Ctx:
             if res.device_key:
                 self.last_by_device[res.device_key] = res.value
         self.last_ok = res.ok
+
+    def eval_env(self) -> dict:
+        """Môi trường cho biểu thức: biến + $last (giá trị đo gần nhất) + $iter
+        (chỉ số vòng lặp trong cùng đang chạy)."""
+        env = dict(self.variables)
+        env["$last"] = self.last_value if self.last_value is not None else 0.0
+        if self.iter_stack:
+            env["$iter"] = self.iter_stack[-1]
+        return env
 
 
 def _compare(v: float, op: str, a: float, b: float) -> bool:
@@ -146,6 +160,12 @@ def evaluate_condition(cond: Condition, ctx: _Ctx) -> tuple[bool, str]:
     if cond.kind == "status":
         ok = (ctx.last_ok and cond.status == "ok") or (not ctx.last_ok and cond.status == "error")
         return ok, f"trạng thái trước={'OK' if ctx.last_ok else 'LỖI'}"
+    if cond.kind == "expr":
+        try:
+            v = eval_expr(cond.expr, ctx.eval_env())
+        except ExprError as e:
+            return False, f"lỗi biểu thức: {e}"
+        return _compare(v, cond.op, cond.value, cond.value2), f"{cond.expr}={format_number_vi(v)}"
     # measure
     v = ctx.last_by_device.get(cond.device) if cond.device else ctx.last_value
     if v is None:
@@ -312,17 +332,64 @@ class ScenarioRunner:
 
     # ------------------------------------------------------------------
 
-    def _run_loop(self, idx: int, loop: LoopBlock) -> None:
-        self._emit(StepResult(step_index=idx, action="loop", kind="control",
-                              node_id=id(loop), text=f"Lặp {loop.count} lần"))
-        for i in range(1, loop.count + 1):
+    def _run_body(self, idx: int, body, iteration: int) -> None:
+        """Chạy thân khối — dispatch bước/loop/if (cho phép LỒNG NHAU)."""
+        for node in body:
             if self._stop_flag():
                 break
-            for step in loop.body:
+            if not getattr(node, "enabled", True):
+                continue
+            if isinstance(node, ScenarioStep):
+                self._run_step(idx, node, iteration=iteration)
+            else:
+                self._run_node(idx, node)        # loop/if lồng -> đệ quy
+
+    def _run_loop(self, idx: int, loop: LoopBlock) -> None:
+        if getattr(loop, "mode", "count") == "until":
+            self._run_loop_until(idx, loop)
+            return
+        self._emit(StepResult(step_index=idx, action="loop", kind="control",
+                              node_id=id(loop), text=f"Lặp {loop.count} lần"))
+        self._ctx.iter_stack.append(0)
+        try:
+            for i in range(1, loop.count + 1):
                 if self._stop_flag():
                     break
-                if step.enabled:
-                    self._run_step(idx, step, iteration=i)
+                self._ctx.iter_stack[-1] = i
+                self._run_body(idx, loop.body, iteration=i)
+        finally:
+            self._ctx.iter_stack.pop()
+
+    def _run_loop_until(self, idx: int, loop: LoopBlock) -> None:
+        max_iter = max(1, int(getattr(loop, "max_iter", 50)))
+        self._emit(StepResult(step_index=idx, action="loop", kind="control",
+                              node_id=id(loop),
+                              text=f"Lặp đến khi: {loop.condition.describe() if loop.condition else '?'} "
+                                   f"(tối đa {max_iter})"))
+        self._ctx.iter_stack.append(0)
+        reached = False
+        i = 0
+        try:
+            while i < max_iter:
+                if self._stop_flag():
+                    break
+                i += 1
+                self._ctx.iter_stack[-1] = i
+                self._run_body(idx, loop.body, iteration=i)
+                if loop.condition is not None:
+                    ok, why = evaluate_condition(loop.condition, self._ctx)
+                    if ok:
+                        reached = True
+                        self._emit(StepResult(step_index=idx, action="loop", kind="control",
+                                              node_id=id(loop),
+                                              text=f"→ đạt sau {i} vòng ({why})"))
+                        break
+        finally:
+            self._ctx.iter_stack.pop()
+        if not reached and not self._stop_flag():
+            self._emit(StepResult(step_index=idx, action="loop", kind="control",
+                                  node_id=id(loop), ok=False,
+                                  error=f"chưa đạt điều kiện sau {i} vòng (max_iter={max_iter})"))
 
     def _run_if(self, idx: int, ib: IfBlock) -> None:
         chosen: Optional[Branch] = None
@@ -345,14 +412,47 @@ class ScenarioRunner:
 
         self._emit(StepResult(step_index=idx, action="if", kind="control",
                               node_id=id(ib), text=f"→ {chosen_desc}"))
-        for step in chosen.body:
-            if self._stop_flag():
-                break
-            if step.enabled:
-                self._run_step(idx, step, iteration=0)
+        self._run_body(idx, chosen.body, iteration=0)   # nhánh có thể chứa loop/if lồng
+
+    def _resolve_params(self, params: dict) -> dict:
+        """Đánh giá tham số dạng '=biểu_thức' theo biến hiện tại; còn lại giữ nguyên."""
+        out = {}
+        for k, v in params.items():
+            if isinstance(v, str) and v.startswith("="):
+                out[k] = eval_expr(v[1:], self._ctx.eval_env())
+            else:
+                out[k] = v
+        return out
+
+    def _run_var_action(self, idx: int, step: ScenarioStep, iteration: int) -> None:
+        """set_var / compute / collect — thao tác trên biến, không gọi thiết bị."""
+        res = StepResult(step_index=idx, action=step.action,
+                         node_id=id(step), iteration=iteration)
+        try:
+            if step.action in ("set_var", "compute"):
+                name = step.params.get("name") or step.params.get("target")
+                val = eval_expr(step.params.get("expr", ""), self._ctx.eval_env())
+                self._ctx.variables[name] = val
+                res.text = f"{name} = {val:g}" if isinstance(val, (int, float)) else f"{name} = {val}"
+            else:  # collect
+                var = step.params.get("var")
+                val = eval_expr(step.params.get("source", "$last"), self._ctx.eval_env())
+                lst = self._ctx.variables.get(var)
+                if not isinstance(lst, list):
+                    lst = []
+                lst.append(val)
+                self._ctx.variables[var] = lst
+                res.text = f"{var}[{len(lst)}] ← {val:g}" if isinstance(val, (int, float)) else f"{var} ← {val}"
+        except Exception as exc:  # noqa: BLE001
+            res.ok = False; res.error = str(exc)
+        self._emit(res)
 
     def _run_step(self, idx: int, step: ScenarioStep, iteration: int) -> None:
         spec = ACTION_SPECS.get(step.action, {})
+
+        if step.action in ("set_var", "compute", "collect"):
+            self._run_var_action(idx, step, iteration)
+            return
 
         if not spec.get("needs_device", True):       # wait
             res = StepResult(step_index=idx, action=step.action,
@@ -361,6 +461,7 @@ class ScenarioRunner:
                 params = dict(step.params)
                 if step.action == "wait" and not self._settle_wait:
                     params["seconds"] = 0
+                params = self._resolve_params(params)
                 info = execute_action(step.action, None, params)
                 res.value = info.get("value"); res.unit = info.get("unit", "")
                 res.text = info.get("text", "")
@@ -373,7 +474,8 @@ class ScenarioRunner:
             res = StepResult(step_index=idx, action=step.action, device_key=dk,
                              node_id=id(step), iteration=iteration)
             try:
-                info = execute_action(step.action, self._devices[dk], step.params)
+                info = execute_action(step.action, self._devices[dk],
+                                      self._resolve_params(step.params))
                 res.value = info.get("value"); res.unit = info.get("unit", "")
                 res.text = info.get("text", "")
                 res.is_query = bool(info.get("is_query", False))

@@ -43,6 +43,10 @@ NODE_TYPES = {
     "timer":  ("⏳", "Timer Node"),
     "output": ("🚀", "Output Node"),
     "command": ("📡", "Command Node"),
+    # biến / tính toán (Phase 5)
+    "set_var": ("🔢", "Set Var"),
+    "compute": ("🧮", "Compute"),
+    "collect": ("📥", "Collect"),
     # marker điều khiển (mở rộng Loop/If thành chuỗi)
     "loop_start": ("🔁", "Loop Start"),
     "loop_end":   ("⏹", "Loop End"),
@@ -407,6 +411,8 @@ class FlowEditorWindow(QMainWindow):
         tbtn("⏳ + Timer", lambda: self.add_node("timer", "Delay: 1000ms", action="wait",
                                                  params={"seconds": 1.0}))
         tbtn("📡 + Lệnh", lambda: self.add_node("command", "Lệnh mới", action="raw_scpi"))
+        tbtn("🧮 + Biến", lambda: self.add_node("compute", "x = 0", action="compute",
+                                                params={"name": "x", "expr": "0"}))
         tbtn("🗑 Xóa node", self.delete_selected, Colors.ACCENT_RED)
         tb.addSpacing(12)
         tbtn("↥ Xuất kịch bản", self._do_export, Colors.ACCENT_GREEN)
@@ -467,6 +473,27 @@ class FlowEditorWindow(QMainWindow):
         lay.addWidget(self.param_host)
         self._param_widgets: dict[str, object] = {}
 
+        # Khu BIẾN / TÍNH TOÁN (cho node set_var/compute/collect).
+        self.lbl_var = lbl("BIẾN / TÍNH TOÁN")
+        lay.addWidget(self.lbl_var)
+        self.var_host = QWidget()
+        vform = QFormLayout(self.var_host)
+        vform.setContentsMargins(0, 2, 0, 2); vform.setSpacing(5)
+        self.cb_var_action = QComboBox()
+        self.cb_var_action.addItem("Gán biến (set_var)", "set_var")
+        self.cb_var_action.addItem("Tính toán (compute)", "compute")
+        self.cb_var_action.addItem("Thu thập (collect)", "collect")
+        vform.addRow("Thao tác:", self.cb_var_action)
+        self.ed_var_name = QLineEdit(); self.ed_var_name.setPlaceholderText("vd: error / samples")
+        vform.addRow("Tên biến / list:", self.ed_var_name)
+        self.ed_var_expr = QLineEdit()
+        self.ed_var_expr.setPlaceholderText("vd: avg(samples) · abs(f_avg-f_set)/f_set · $last")
+        vform.addRow("Biểu thức / nguồn:", self.ed_var_expr)
+        vhint = QLabel("Hàm: avg, std, min, max, abs, sqrt, count, last · biến $last, $iter")
+        vhint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;"); vhint.setWordWrap(True)
+        vform.addRow("", vhint)
+        lay.addWidget(self.var_host)
+
         self.btn_save = QPushButton("Lưu cấu hình Node")
         self.btn_save.setStyleSheet(
             f"background:{Colors.ACCENT_CYAN}; color:{Colors.BG_WINDOW}; font-weight:bold;"
@@ -475,6 +502,7 @@ class FlowEditorWindow(QMainWindow):
         lay.addSpacing(6); lay.addWidget(self.btn_save)
         lay.addStretch()
         self._set_props_enabled(False)
+        self._show_var_section(False)
         return panel
 
     def _set_props_enabled(self, on: bool):
@@ -505,6 +533,13 @@ class FlowEditorWindow(QMainWindow):
     def _is_command_node(self, node: "NodeItem | None") -> bool:
         return node is not None and (node.action == "raw_scpi"
                                      or node.node_type in ("command", "output"))
+
+    def _is_var_node(self, node: "NodeItem | None") -> bool:
+        return node is not None and node.node_type in ("set_var", "compute", "collect")
+
+    def _show_var_section(self, on: bool):
+        self.lbl_var.setVisible(on)
+        self.var_host.setVisible(on)
 
     def _clear_param_form(self):
         while self.param_form.rowCount():
@@ -559,6 +594,7 @@ class FlowEditorWindow(QMainWindow):
             self.cb_device.setCurrentIndex(0)
             self._clear_param_form()
             self.lbl_params.setVisible(False); self.param_host.setVisible(False)
+            self._show_var_section(False)
             return
         self._set_props_enabled(True)
         self.ed_name.setText(node.subtitle)
@@ -566,7 +602,20 @@ class FlowEditorWindow(QMainWindow):
         self.ed_desc.setPlainText(node.desc)
         idx = self.cb_device.findData(node.device)
         self.cb_device.setCurrentIndex(idx if idx >= 0 else 0)
-        if self._is_command_node(node):
+        # Khu lệnh / khu biến tuỳ loại node.
+        is_var = self._is_var_node(node)
+        self._show_var_section(is_var)
+        if is_var:
+            self._clear_param_form()
+            self.lbl_params.setVisible(False); self.param_host.setVisible(False)
+            self.cb_var_action.setCurrentIndex(max(0, self.cb_var_action.findData(node.node_type)))
+            if node.node_type == "collect":
+                self.ed_var_name.setText(node.params.get("var", ""))
+                self.ed_var_expr.setText(node.params.get("source", "$last"))
+            else:
+                self.ed_var_name.setText(node.params.get("name") or node.params.get("target", ""))
+                self.ed_var_expr.setText(node.params.get("expr", ""))
+        elif self._is_command_node(node):
             self._refresh_params(node.subtitle, node.params)
         else:
             self._clear_param_form()
@@ -576,9 +625,23 @@ class FlowEditorWindow(QMainWindow):
         if self._current_node is None:
             return
         n = self._current_node
-        n.subtitle = self.ed_name.text().strip() or n.subtitle
         n.ident = self.ed_id.text().strip()
         n.desc = self.ed_desc.toPlainText().strip()
+        if self._is_var_node(n):
+            # Node biến: dựng params + subtitle từ khu BIẾN.
+            act = self.cb_var_action.currentData()
+            name = self.ed_var_name.text().strip()
+            expr = self.ed_var_expr.text().strip()
+            n.node_type = act; n.action = act
+            if act == "collect":
+                n.params = {"var": name, "source": expr or "$last"}
+                n.subtitle = f"{name} ← {expr or '$last'}"
+            else:
+                n.params = {"name": name, "expr": expr}
+                n.subtitle = f"{name} = {expr}"
+            n.update()
+            return
+        n.subtitle = self.ed_name.text().strip() or n.subtitle
         n.device = self.cb_device.currentData()
         if self._is_command_node(n):
             # Dựng lại params đầy đủ từ lệnh (tên node) + giá trị tham số nhập tay.
@@ -660,16 +723,34 @@ class FlowEditorWindow(QMainWindow):
         if step.action == "wait":
             s = step.params.get("seconds", 0)
             return NodeItem("timer", f"Delay: {s}s", action="wait", params=dict(step.params))
+        if step.action in ("set_var", "compute"):
+            name = step.params.get("name") or step.params.get("target", "")
+            return NodeItem(step.action, f"{name} = {step.params.get('expr', '')}",
+                            action=step.action, params=dict(step.params))
+        if step.action == "collect":
+            return NodeItem("collect",
+                            f"{step.params.get('var', '')} ← {step.params.get('source', '$last')}",
+                            action="collect", params=dict(step.params))
         return NodeItem("action", step.action, action=step.action, params=dict(step.params))
 
     def _nodes_for(self, node) -> list[NodeItem]:
-        """Một node Scenario -> danh sách NodeItem (container mở rộng start/body/end)."""
+        """Một node Scenario -> danh sách NodeItem. Container (Loop/If) mở rộng
+        start/body/end; body ĐỆ QUY nên Loop/If LỒNG NHAU vẫn dựng được."""
         from core.scenario import ScenarioStep, LoopBlock, IfBlock
         if isinstance(node, ScenarioStep):
             return [self._node_from_step(node)]
         if isinstance(node, LoopBlock):
-            out = [NodeItem("loop_start", f"Lặp {node.count} lần", params={"count": node.count})]
-            out += [self._node_from_step(s) for s in node.body]
+            if getattr(node, "mode", "count") == "until":
+                sub = f"Đến khi: {node.condition.describe() if node.condition else '?'}"
+            else:
+                sub = f"Lặp {node.count} lần"
+            start = NodeItem("loop_start", sub, params={
+                "mode": getattr(node, "mode", "count"), "count": node.count,
+                "max_iter": getattr(node, "max_iter", 50),
+                "__condition__": getattr(node, "condition", None)})
+            out = [start]
+            for child in node.body:
+                out += self._nodes_for(child)            # đệ quy -> lồng
             out.append(NodeItem("loop_end", "Kết thúc lặp"))
             return out
         if isinstance(node, IfBlock):
@@ -680,7 +761,8 @@ class FlowEditorWindow(QMainWindow):
                 else:
                     blbl = ("Nếu " if i == 0 else "Ngược lại nếu ") + br.condition.describe()
                 out.append(NodeItem("branch", blbl, params={"__condition__": br.condition}))
-                out += [self._node_from_step(s) for s in br.body]
+                for child in br.body:
+                    out += self._nodes_for(child)        # đệ quy -> lồng
             out.append(NodeItem("if_end", "Kết thúc rẽ nhánh"))
             return out
         return [NodeItem("action", "Node")]
@@ -715,6 +797,9 @@ class FlowEditorWindow(QMainWindow):
         from core.commands import Cmd, parse_cmd
         if n.node_type in MARKER_TYPES:               # marker điều khiển -> không là bước
             return None
+        # Node Biến / Tính toán -> giữ nguyên action + params
+        if n.action in ("set_var", "compute", "collect"):
+            return ScenarioStep(action=n.action, devices=[], params=dict(n.params))
         # Node Lệnh -> raw_scpi
         if n.action == "raw_scpi" or n.node_type in ("command", "output"):
             if n.params.get("__template__"):          # node nạp từ kịch bản: giữ params gốc
@@ -744,48 +829,59 @@ class FlowEditorWindow(QMainWindow):
         return None      # node 'Action'/marker -> không xuất
 
     def export_scenario(self):
-        """Dựng Scenario từ chuỗi node. Marker Loop/If được ghép lại bằng máy
-        trạng thái (Scenario không lồng nhau nên đủ dùng 1 cấp)."""
+        """Dựng Scenario từ chuỗi node bằng STACK -> tái tạo Loop/If LỒNG NHAU
+        và Loop-until (giữ mode/điều kiện/max_iter)."""
         from core.scenario import Scenario, LoopBlock, IfBlock, Branch
-        top = []
-        mode = None                       # None | "loop" | "if"
-        loop_count, loop_body = 1, []
-        if_branches, cur_branch = [], None
+        root: list = []
+        stack = [{"kind": "root", "list": root}]
+
+        def add(item):
+            fr = stack[-1]
+            if fr["kind"] == "root":
+                fr["list"].append(item)
+            elif fr["kind"] == "loop":
+                fr["body"].append(item)
+            elif fr["kind"] == "if" and fr["cur"] is not None:
+                fr["cur"].body.append(item)
+
+        def close_loop(fr):
+            p = fr["node"].params
+            add(LoopBlock(count=int(p.get("count", 2) or 2), body=fr["body"],
+                          mode=p.get("mode", "count"),
+                          condition=p.get("__condition__"),
+                          max_iter=int(p.get("max_iter", 50) or 50)))
+
         for n in self._ordered_nodes():
             t = n.node_type
             if t == "loop_start":
-                mode, loop_body = "loop", []
-                loop_count = int(n.params.get("count", 1) or 1)
+                stack.append({"kind": "loop", "body": [], "node": n})
             elif t == "loop_end":
-                if mode == "loop":
-                    top.append(LoopBlock(count=loop_count, body=loop_body))
-                mode = None
+                if stack[-1]["kind"] == "loop":
+                    close_loop(stack.pop())
             elif t == "if_start":
-                mode, if_branches, cur_branch = "if", [], None
+                stack.append({"kind": "if", "branches": [], "cur": None})
             elif t == "branch":
-                cur_branch = Branch(condition=n.params.get("__condition__"), body=[])
-                if_branches.append(cur_branch)
+                if stack[-1]["kind"] == "if":
+                    br = Branch(condition=n.params.get("__condition__"), body=[])
+                    stack[-1]["branches"].append(br)
+                    stack[-1]["cur"] = br
             elif t == "if_end":
-                if mode == "if" and if_branches:
-                    top.append(IfBlock(branches=if_branches))
-                mode = None
+                if stack[-1]["kind"] == "if":
+                    fr = stack.pop()
+                    add(IfBlock(branches=fr["branches"]))
             else:
                 step = self._scenario_from_node(n)
-                if step is None:
-                    continue
-                if mode == "loop":
-                    loop_body.append(step)
-                elif mode == "if" and cur_branch is not None:
-                    cur_branch.body.append(step)
-                else:
-                    top.append(step)
-        # đóng marker còn dở (thiếu loop_end/if_end)
-        if mode == "loop":
-            top.append(LoopBlock(count=loop_count, body=loop_body))
-        elif mode == "if" and if_branches:
-            top.append(IfBlock(branches=if_branches))
+                if step is not None:
+                    add(step)
+        # đóng các frame còn dở (marker thiếu end) — best effort
+        while len(stack) > 1:
+            fr = stack.pop()
+            if fr["kind"] == "loop":
+                close_loop(fr)
+            elif fr["kind"] == "if":
+                add(IfBlock(branches=fr["branches"]))
         scn = Scenario(name="Sơ đồ luồng")
-        scn.nodes = top
+        scn.nodes = root
         return scn
 
     def _do_export(self):

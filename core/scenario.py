@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from drivers import DEVICE_REGISTRY
+from core.expr import validate as _expr_validate, ExprError
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +98,23 @@ ACTION_SPECS: dict[str, dict] = {
         "categories": (), "needs_device": False,
         "params": [ParamSpec("seconds", "Thời gian", "time_s", 0.5, "s")],
     },
+    # --- Biến / Tính toán (Phase 2) — params tự do (name/expr), không dùng ParamSpec ---
+    "set_var": {
+        "label": "Gán biến (= biểu thức)",
+        "categories": (), "needs_device": False, "params": [],
+    },
+    "compute": {
+        "label": "Tính toán → biến",
+        "categories": (), "needs_device": False, "params": [],
+    },
+    "collect": {
+        "label": "Thu thập vào list",
+        "categories": (), "needs_device": False, "params": [],
+    },
 }
+
+# Action thao tác trên biến (không gọi thiết bị, không cần ParamSpec).
+VAR_ACTIONS = ("set_var", "compute", "collect")
 
 # Action sinh ra giá trị đo (dùng cho điều kiện "measure").
 MEASURE_ACTIONS = ("measure_frequency", "measure_power")
@@ -184,7 +201,7 @@ OP_LABELS = {
 @dataclass
 class Condition:
     """Điều kiện của một nhánh IF/ELIF."""
-    kind: str = "measure"          # "measure" | "status"
+    kind: str = "measure"          # "measure" | "status" | "expr"
     # --- measure ---
     device: str = ""               # model_key; "" = giá trị đo gần nhất bất kỳ
     op: str = ">"
@@ -192,11 +209,13 @@ class Condition:
     value2: float = 0.0            # cho between/outside
     # --- status ---
     status: str = "ok"             # "ok" | "error"
+    # --- expr (Phase 2): so sánh kết quả biểu thức (trên biến) với value ---
+    expr: str = ""                 # vd "error"  -> so eval(expr) với value/value2
 
     def describe(self) -> str:
         if self.kind == "status":
             return f"bước trước = {'OK' if self.status == 'ok' else 'LỖI'}"
-        src = self.device or "đo gần nhất"
+        src = self.expr if self.kind == "expr" else (self.device or "đo gần nhất")
         if self.op in ("between", "outside"):
             return f"{src} {OP_LABELS[self.op]} [{self.value}, {self.value2}]"
         return f"{src} {OP_LABELS.get(self.op, self.op)} {self.value}"
@@ -213,6 +232,7 @@ class Condition:
             value=float(d.get("value", 0.0)),
             value2=float(d.get("value2", 0.0)),
             status=d.get("status", "ok"),
+            expr=d.get("expr", ""),
         )
 
 
@@ -238,7 +258,7 @@ class Branch:
     def from_dict(cls, d: dict) -> "Branch":
         cond = d.get("condition")
         return cls(
-            body=[ScenarioStep.from_dict(s) for s in d.get("body", [])],
+            body=[node_from_dict(s) for s in d.get("body", [])],   # nhánh lồng được Loop/If
             condition=Condition.from_dict(cond) if cond else None,
             enabled=bool(d.get("enabled", True)),
         )
@@ -250,25 +270,35 @@ class Branch:
 
 @dataclass
 class LoopBlock:
-    """Lặp thân (chỉ gồm bước đơn) N lần."""
+    """Lặp thân. mode='count': lặp N lần. mode='until': lặp tới khi điều kiện
+    dừng đúng (do-until), chặn bởi max_iter. Thân CÓ THỂ chứa Loop/If lồng nhau."""
     count: int = 2
-    body: list[ScenarioStep] = field(default_factory=list)
+    body: list = field(default_factory=list)            # list[Node]
     note: str = ""
     enabled: bool = True
+    mode: str = "count"                                 # "count" | "until"
+    condition: Optional["Condition"] = None             # điều kiện DỪNG khi mode="until"
+    max_iter: int = 50                                  # trần an toàn cho until
 
     def to_dict(self) -> dict:
         return {
             "type": "loop", "count": self.count, "note": self.note,
-            "enabled": self.enabled, "body": [s.to_dict() for s in self.body],
+            "enabled": self.enabled, "mode": self.mode, "max_iter": self.max_iter,
+            "condition": self.condition.to_dict() if self.condition else None,
+            "body": [n.to_dict() for n in self.body],
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "LoopBlock":
+        cond = d.get("condition")
         return cls(
             count=int(d.get("count", 2)),
-            body=[ScenarioStep.from_dict(s) for s in d.get("body", [])],
+            body=[node_from_dict(s) for s in d.get("body", [])],   # node_from_dict -> lồng được
             note=d.get("note", ""),
             enabled=bool(d.get("enabled", True)),
+            mode=d.get("mode", "count"),
+            condition=Condition.from_dict(cond) if cond else None,
+            max_iter=int(d.get("max_iter", 50)),
         )
 
 
@@ -343,15 +373,17 @@ class Scenario:
 
     # --- tiện ích ---
     def iter_steps(self):
-        """Duyệt mọi ScenarioStep (kể cả trong loop/if) — dùng để gom thiết bị."""
-        for n in self.nodes:
-            if isinstance(n, ScenarioStep):
-                yield n
-            elif isinstance(n, LoopBlock):
-                yield from n.body
-            elif isinstance(n, IfBlock):
-                for b in n.branches:
-                    yield from b.body
+        """Duyệt mọi ScenarioStep (kể cả trong loop/if LỒNG NHAU) — gom thiết bị."""
+        def walk(nodes):
+            for n in nodes:
+                if isinstance(n, ScenarioStep):
+                    yield n
+                elif isinstance(n, LoopBlock):
+                    yield from walk(n.body)
+                elif isinstance(n, IfBlock):
+                    for b in n.branches:
+                        yield from walk(b.body)
+        yield from walk(self.nodes)
 
     def all_device_keys(self) -> list[str]:
         seen: list[str] = []
@@ -395,13 +427,39 @@ class Scenario:
 # Validate
 # ---------------------------------------------------------------------------
 
+def _check_expr(expr: str, where: str, problems: list[str]) -> None:
+    try:
+        _expr_validate(expr)
+    except ExprError as e:
+        problems.append(f"{where}: biểu thức lỗi — {e}")
+
+
 def _validate_step(step: ScenarioStep, where: str, problems: list[str]) -> None:
+    if step.action in ("set_var", "compute"):
+        if not (step.params.get("name") or step.params.get("target")):
+            problems.append(f"{where}: {step.action} thiếu tên biến (name).")
+        expr = step.params.get("expr", "")
+        if not expr:
+            problems.append(f"{where}: {step.action} thiếu biểu thức (expr).")
+        else:
+            _check_expr(expr, where, problems)
+        return
+    if step.action == "collect":
+        if not step.params.get("var"):
+            problems.append(f"{where}: collect thiếu tên list (var).")
+        _check_expr(step.params.get("source", "$last"), where, problems)
+        return
+
     if step.action == "raw_scpi":
         if not step.devices:
             problems.append(f"{where}: lệnh SCPI cần ít nhất 1 thiết bị.")
         for dk in step.devices:
             if dk not in DEVICE_REGISTRY:
                 problems.append(f"{where}: thiết bị không có trong registry '{dk}'.")
+        # tham số dạng '=biểu_thức' phải parse được.
+        for k, v in step.params.items():
+            if isinstance(v, str) and v.startswith("=") and not k.startswith("__"):
+                _check_expr(v[1:], f"{where} (tham số '{k}')", problems)
         template = step.params.get("__template__", "")
         # #4: mọi placeholder {name} trong lệnh phải có giá trị tương ứng trong params.
         provided = {k for k in step.params if not k.startswith("__")}
@@ -449,7 +507,55 @@ def _validate_condition(cond: Condition, where: str, problems: list[str]) -> Non
         if cond.op in ("between", "outside") and cond.value2 == cond.value:
             problems.append(f"{where}: khoảng [{cond.value}, {cond.value2}] không hợp lệ.")
         return
+    if cond.kind == "expr":
+        if cond.op not in OPERATORS:
+            problems.append(f"{where}: toán tử không hợp lệ '{cond.op}'.")
+        if not cond.expr:
+            problems.append(f"{where}: điều kiện biểu thức thiếu expr.")
+        else:
+            _check_expr(cond.expr, where, problems)
+        if cond.op in ("between", "outside") and cond.value2 == cond.value:
+            problems.append(f"{where}: khoảng [{cond.value}, {cond.value2}] không hợp lệ.")
+        return
     problems.append(f"{where}: loại điều kiện không hợp lệ '{cond.kind}'.")
+
+
+MAX_NEST_DEPTH = 4      # độ sâu lồng khối tối đa (an toàn / tránh rối)
+
+
+def _validate_node(node, where: str, problems: list[str], depth: int) -> None:
+    if isinstance(node, ScenarioStep):
+        _validate_step(node, where, problems)
+        return
+    if depth > MAX_NEST_DEPTH:
+        problems.append(f"{where}: lồng khối quá sâu (> {MAX_NEST_DEPTH} cấp).")
+        return
+    if isinstance(node, LoopBlock):
+        if node.mode == "until":
+            if node.condition is None:
+                problems.append(f"{where}: Loop 'đến khi' cần điều kiện dừng.")
+            else:
+                _validate_condition(node.condition, f"{where} (điều kiện dừng)", problems)
+            if node.max_iter < 1:
+                problems.append(f"{where}: max_iter phải ≥ 1.")
+        elif node.count < 1:
+            problems.append(f"{where}: số lần lặp phải ≥ 1.")
+        if not node.body:
+            problems.append(f"{where}: chưa có bước con.")
+        for j, s in enumerate(node.body, start=1):
+            _validate_node(s, f"{where}.{j}", problems, depth + 1)
+    elif isinstance(node, IfBlock):
+        if not node.branches:
+            problems.append(f"{where}: chưa có nhánh.")
+        if sum(1 for b in node.branches if b.is_else) > 1:
+            problems.append(f"{where}: chỉ được tối đa 1 nhánh 'ngược lại' (ELSE).")
+        for k, b in enumerate(node.branches, start=1):
+            if b.condition is not None:
+                _validate_condition(b.condition, f"{where} nhánh {k}", problems)
+            if not b.body:
+                problems.append(f"{where} nhánh {k}: chưa có bước con.")
+            for j, s in enumerate(b.body, start=1):
+                _validate_node(s, f"{where} nhánh {k}.{j}", problems, depth + 1)
 
 
 def validate_scenario(scn: Scenario) -> list[str]:
@@ -457,28 +563,7 @@ def validate_scenario(scn: Scenario) -> list[str]:
     enabled_nodes = [n for n in scn.nodes if getattr(n, "enabled", True)]
     if not enabled_nodes:
         problems.append("Kịch bản chưa có node nào được bật.")
-
     for i, node in enumerate(scn.nodes, start=1):
-        if isinstance(node, ScenarioStep):
-            _validate_step(node, f"Bước {i}", problems)
-        elif isinstance(node, LoopBlock):
-            if node.count < 1:
-                problems.append(f"Loop {i}: số lần lặp phải ≥ 1.")
-            if not node.body:
-                problems.append(f"Loop {i}: chưa có bước con.")
-            for j, s in enumerate(node.body, start=1):
-                _validate_step(s, f"Loop {i}.{j}", problems)
-        elif isinstance(node, IfBlock):
-            if not node.branches:
-                problems.append(f"If {i}: chưa có nhánh.")
-            n_else = sum(1 for b in node.branches if b.is_else)
-            if n_else > 1:
-                problems.append(f"If {i}: chỉ được tối đa 1 nhánh 'ngược lại' (ELSE).")
-            for k, b in enumerate(node.branches, start=1):
-                if b.condition is not None:
-                    _validate_condition(b.condition, f"If {i} nhánh {k}", problems)
-                if not b.body:
-                    problems.append(f"If {i} nhánh {k}: chưa có bước con.")
-                for j, s in enumerate(b.body, start=1):
-                    _validate_step(s, f"If {i} nhánh {k}.{j}", problems)
+        label = {"step": "Bước", "loop": "Loop", "if": "If"}[node_kind(node)]
+        _validate_node(node, f"{label} {i}", problems, depth=1)
     return problems
