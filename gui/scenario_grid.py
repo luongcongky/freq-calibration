@@ -720,7 +720,7 @@ class ScenarioGridWindow(QMainWindow):
         self.header.setSectionResizeMode(0, QHeaderView.Stretch)
         for c in range(1, len(COLS)):
             self.header.setSectionResizeMode(c, QHeaderView.Interactive)
-        self.tree.setColumnWidth(1, 260)   # Mô tả lệnh
+        self.tree.setColumnWidth(1, 360)   # Mô tả lệnh
         self.tree.setColumnWidth(2, 120)   # Thiết bị
         self.tree.setColumnWidth(3, 190)   # Tham số / Điều kiện
         self.tree.setColumnWidth(4, 200)   # Kết quả
@@ -903,16 +903,23 @@ class ScenarioGridWindow(QMainWindow):
     # Thêm / sửa / xóa
     # ------------------------------------------------------------------
     def _add_step(self):
-        container = self._container_for_step(self._sel())
+        item = self._sel()
+        container = self._container_for_step(item)
         if container is None:
             QMessageBox.information(self, "Chọn nhánh",
                                    "Đang chọn khối If. Hãy chọn một NHÁNH cụ thể để thêm bước vào.")
             return
+        # Chèn ngay sau bước đang chọn; nếu chọn loop/branch/không chọn → cuối list
+        if item is not None and self._kind_of(item) == "step":
+            idx = self._index_by_identity(container, self._obj_of(item))
+            insert_at = idx + 1 if idx >= 0 else len(container)
+        else:
+            insert_at = len(container)
         self._ensure_connected()
         dlg = StepEditorDialog(self, connected_keys=self._connected_keys)
         if dlg.exec_() == QDialog.Accepted:
             step = dlg.get_step(); step.enabled = False
-            container.append(step)
+            container.insert(insert_at, step)
             self._refresh_tree()
 
     def _add_loop(self):
@@ -991,14 +998,29 @@ class ScenarioGridWindow(QMainWindow):
         self._refresh_tree()
 
     def _del_node(self):
-        item = self._sel()
-        if item is None:
-            QMessageBox.information(self, "Chưa chọn", "Hãy chọn một dòng để xóa."); return
-        obj = self._obj_of(item); cont = self._container_of(item)
-        idx = self._index_by_identity(cont, obj) if cont is not None else -1
-        if idx < 0:
+        checked = [it for it in self._all_items() if it.checkState(0) == Qt.Checked]
+        if not checked:
+            QMessageBox.information(self, "Chưa chọn", "Hãy tick các dòng muốn xóa rồi bấm Xóa.")
             return
-        cont.pop(idx)
+        # Bỏ qua item con nếu item cha cũng đang bị xóa (tránh xóa 2 lần)
+        checked_ids = {id(it) for it in checked}
+        to_delete = []
+        for item in checked:
+            cur = item.parent()
+            shadowed = False
+            while cur is not None:
+                if id(cur) in checked_ids:
+                    shadowed = True
+                    break
+                cur = cur.parent()
+            if not shadowed:
+                to_delete.append(item)
+        for item in to_delete:
+            obj = self._obj_of(item)
+            cont = self._container_of(item)
+            idx = self._index_by_identity(cont, obj) if cont is not None else -1
+            if idx >= 0:
+                cont.pop(idx)
         self._refresh_tree()
 
     def _move(self, delta):
@@ -1143,6 +1165,8 @@ class ScenarioGridWindow(QMainWindow):
             self._log(f"B{res.step_index} {res.summary()}",
                       Colors.ACCENT_RED if not res.ok else Colors.TEXT_DIM)
             return
+        self.tree.setCurrentItem(item)
+        self.tree.scrollToItem(item, QAbstractItemView.EnsureVisible)
         self._loading = True
         key = id(item)
         self._item_results.setdefault(key, []).append(res.result_cell())

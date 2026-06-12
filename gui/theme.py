@@ -48,6 +48,12 @@ def build_global_qss() -> str:
                    border: 1px solid {C.BORDER};
                    selection-background-color: {C.ACCENT_CYAN};
                    selection-color: {C.BG_WINDOW}; }}
+        QTreeWidget::item:selected {{
+                   background-color: #0e6080; color: {C.TEXT_MAIN}; }}
+        QTreeWidget::item:selected:!active {{
+                   background-color: #0a3f52; color: {C.TEXT_DIM}; }}
+        QTreeWidget::item:hover:!selected {{
+                   background-color: #1a2830; }}
         QPushButton {{ background-color: {C.BG_CARD}; color: {C.TEXT_MAIN};
                    border: 1px solid {C.BORDER}; border-radius: 6px; padding: 6px 12px; }}
         QPushButton:hover {{ border-color: {C.ACCENT_CYAN}; }}
