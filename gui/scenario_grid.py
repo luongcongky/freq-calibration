@@ -40,6 +40,7 @@ from core.commands import (
 logger = logging.getLogger(__name__)
 
 from gui.theme import Colors, build_global_qss
+from gui.widgets import ThemeToggle
 
 COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
 
@@ -645,6 +646,7 @@ class ScenarioGridWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("FREQ-CAL PRO :: Scenario Builder")
+        self.resize(1600, 900)
         self.setMinimumSize(1150, 680)
         self.scenario = Scenario(name="Kịch bản mới")
         self.worker: ScenarioWorker | None = None
@@ -671,6 +673,11 @@ class ScenarioGridWindow(QMainWindow):
         title = QLabel("Scenario Builder")
         title.setStyleSheet("font-size:16pt; font-weight:bold;")
         head.addWidget(title); head.addStretch()
+        # Switch chuyển theme ở góc trên phải.
+        self.theme_toggle = ThemeToggle(left="Classic", right="Digital", checked=False)
+        self.theme_toggle.toggled.connect(
+            lambda checked: self._switch_to_digital() if checked else None)
+        head.addWidget(self.theme_toggle)
         root.addLayout(head)
 
         bar = QHBoxLayout(); bar.setSpacing(6)
@@ -1016,6 +1023,41 @@ class ScenarioGridWindow(QMainWindow):
         from gui.command_reference import CommandReferenceDialog
         dlg = CommandReferenceDialog(self)
         dlg.exec_()
+
+    def _devices_for_flow(self):
+        """Đổi ConnectionProfile -> danh sách thiết bị cho Flow Editor (None = demo)."""
+        prof = getattr(self, "_profile", None)
+        if not prof or not prof.entries:
+            return None
+        return [{"name": e.label or e.model_key, "key": e.model_key,
+                 "sub": e.address or e.model_key, "icon": "🔌"} for e in prof.entries]
+
+    def _switch_to_digital(self):
+        """Chuyển sang theme Digital (node-flow), mang theo kịch bản hiện tại."""
+        from gui.flow_editor import FlowEditorWindow
+        # parent=None: cửa sổ top-level độc lập -> có icon taskbar riêng khi ẩn Classic.
+        self._flow_win = FlowEditorWindow(devices=self._devices_for_flow(),
+                                          parent=None, demo=False,
+                                          on_export=self._apply_flow_scenario,
+                                          on_switch=self._switch_from_digital)
+        self._flow_win.load_scenario(self.scenario)
+        self._flow_win.show()
+        self.hide()                       # ẩn Classic — chỉ hiện 1 theme tại 1 thời điểm
+
+    def _switch_from_digital(self, scn):
+        """Quay lại theme Classic từ Digital, mang theo kịch bản đã dựng."""
+        if scn is not None:
+            self.scenario = scn
+            self._refresh_tree()
+            self._log(f"Đã nhận {len(scn.nodes)} mục từ theme Digital.", Colors.ACCENT_GREEN)
+        self.theme_toggle.setChecked(False, emit=False)   # về trạng thái Classic
+        self.show()
+
+    def _apply_flow_scenario(self, scn):
+        """Nhận kịch bản từ Flow Editor (nút Xuất) -> thay kịch bản hiện tại."""
+        self.scenario = scn
+        self._refresh_tree()
+        self._log(f"Đã nhập {len(scn.nodes)} mục từ theme Digital.", Colors.ACCENT_GREEN)
 
     def _open_device_manager(self):
         from gui.device_manager import DeviceManagerDialog
