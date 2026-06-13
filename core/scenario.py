@@ -111,6 +111,11 @@ ACTION_SPECS: dict[str, dict] = {
         "label": "Thu thập vào list",
         "categories": (), "needs_device": False, "params": [],
     },
+    "break": {
+        "label": "⛔ Thoát vòng lặp (break)",
+        "categories": (), "needs_device": False, "params": [],
+        "desc": "Dừng vòng lặp Loop đang chạy ngay lập tức",
+    },
 }
 
 # Action thao tác trên biến (không gọi thiết bị, không cần ParamSpec).

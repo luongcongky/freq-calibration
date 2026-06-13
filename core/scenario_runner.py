@@ -35,6 +35,10 @@ from core.expr import evaluate as eval_expr, ExprError
 log = logging.getLogger(__name__)
 
 
+class _BreakLoop(Exception):
+    """Tín hiệu nội bộ: bước 'break' yêu cầu thoát vòng lặp gần nhất."""
+
+
 # ---------------------------------------------------------------------------
 # Định dạng số kiểu Việt Nam (nhóm nghìn '.', thập phân ',') — KHÔNG dùng ký
 # pháp khoa học. Ví dụ: 1e11 -> "100.000.000.000", -10.5 -> "-10,5".
@@ -313,7 +317,10 @@ class ScenarioRunner:
                     break
                 if not getattr(node, "enabled", True):
                     continue
-                self._run_node(idx, node)
+                try:
+                    self._run_node(idx, node)
+                except _BreakLoop:
+                    pass   # 'break' ngoài loop — bỏ qua
         finally:
             for dev in self._devices.values():
                 try:
@@ -356,7 +363,10 @@ class ScenarioRunner:
                 if self._stop_flag():
                     break
                 self._ctx.iter_stack[-1] = i
-                self._run_body(idx, loop.body, iteration=i)
+                try:
+                    self._run_body(idx, loop.body, iteration=i)
+                except _BreakLoop:
+                    break
         finally:
             self._ctx.iter_stack.pop()
 
@@ -368,6 +378,7 @@ class ScenarioRunner:
                                    f"(tối đa {max_iter})"))
         self._ctx.iter_stack.append(0)
         reached = False
+        broke_early = False
         i = 0
         try:
             while i < max_iter:
@@ -375,7 +386,11 @@ class ScenarioRunner:
                     break
                 i += 1
                 self._ctx.iter_stack[-1] = i
-                self._run_body(idx, loop.body, iteration=i)
+                try:
+                    self._run_body(idx, loop.body, iteration=i)
+                except _BreakLoop:
+                    broke_early = True
+                    break
                 if loop.condition is not None:
                     ok, why = evaluate_condition(loop.condition, self._ctx)
                     if ok:
@@ -386,7 +401,7 @@ class ScenarioRunner:
                         break
         finally:
             self._ctx.iter_stack.pop()
-        if not reached and not self._stop_flag():
+        if not reached and not broke_early and not self._stop_flag():
             self._emit(StepResult(step_index=idx, action="loop", kind="control",
                                   node_id=id(loop), ok=False,
                                   error=f"chưa đạt điều kiện sau {i} vòng (max_iter={max_iter})"))
@@ -433,7 +448,7 @@ class ScenarioRunner:
                 name = step.params.get("name") or step.params.get("target")
                 val = eval_expr(step.params.get("expr", ""), self._ctx.eval_env())
                 self._ctx.variables[name] = val
-                res.text = f"{name} = {val:g}" if isinstance(val, (int, float)) else f"{name} = {val}"
+                res.text = f"{name} = {format_number_vi(val)}" if isinstance(val, (int, float)) else f"{name} = {val}"
             else:  # collect
                 var = step.params.get("var")
                 val = eval_expr(step.params.get("source", "$last"), self._ctx.eval_env())
@@ -442,13 +457,19 @@ class ScenarioRunner:
                     lst = []
                 lst.append(val)
                 self._ctx.variables[var] = lst
-                res.text = f"{var}[{len(lst)}] ← {val:g}" if isinstance(val, (int, float)) else f"{var} ← {val}"
+                res.text = f"{var}[{len(lst)}] ← {format_number_vi(val)}" if isinstance(val, (int, float)) else f"{var} ← {val}"
         except Exception as exc:  # noqa: BLE001
             res.ok = False; res.error = str(exc)
         self._emit(res)
 
     def _run_step(self, idx: int, step: ScenarioStep, iteration: int) -> None:
         spec = ACTION_SPECS.get(step.action, {})
+
+        if step.action == "break":
+            self._emit(StepResult(step_index=idx, action="break", kind="control",
+                                  node_id=id(step), iteration=iteration,
+                                  text="⛔ break — thoát vòng lặp"))
+            raise _BreakLoop()
 
         if step.action in ("set_var", "compute", "collect"):
             self._run_var_action(idx, step, iteration)

@@ -10,6 +10,8 @@ phụ thuộc lẫn nhau. Áp stylesheet này lên QApplication để MỌI popu
 
 from __future__ import annotations
 
+import pathlib
+
 
 class Colors:
     """Bảng màu kỹ thuật (engineering dashboard)."""
@@ -28,6 +30,8 @@ class Colors:
 def build_global_qss() -> str:
     """Stylesheet toàn cục đặt trên QApplication (theme tối cho mọi popup/dropdown)."""
     C = Colors
+    # Đường dẫn tuyệt đối tới file SVG mũi tên, dùng forward-slash cho Qt
+    _arrow_path = str(pathlib.Path(__file__).with_name("arrow_down.svg")).replace("\\", "/")
     return f"""
         QWidget {{ background-color: {C.BG_WINDOW}; color: {C.TEXT_MAIN};
                    font-family: 'Segoe UI', sans-serif; }}
@@ -37,7 +41,9 @@ def build_global_qss() -> str:
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
                    background-color: {C.BG_INPUT}; color: {C.TEXT_MAIN};
                    border: 1px solid {C.BORDER}; border-radius: 4px; padding: 5px; }}
-        QComboBox::drop-down {{ border: none; width: 22px; }}
+        QComboBox::drop-down {{ border: none; border-left: 1px solid {C.BORDER};
+                   width: 24px; background: transparent; }}
+        QComboBox::down-arrow {{ image: url("{_arrow_path}"); width: 10px; height: 6px; }}
         QComboBox QAbstractItemView {{
                    background-color: {C.BG_CARD}; color: {C.TEXT_MAIN};
                    selection-background-color: {C.ACCENT_CYAN};

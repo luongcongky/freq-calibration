@@ -1,0 +1,328 @@
+{
+  "name": "Kịch bản quét tần số từ 0.3 GHz đến 44 GHz",
+  "description": "Tự động tăng tần số từ 300MHz đến 44GHz với bước nhảy 1GHz, bật/tắt RF và đo tần số phản hồi.",
+  "nodes": [
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT OFF",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT OFF",
+        "__cmd_desc__": "Tắt RF output kênh chỉ định",
+        "ch": 1
+      },
+      "note": "Khởi tạo tắt RF",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:MODE CW",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:MODE CW",
+        "__cmd_desc__": "Chuyển về chế độ CW (thoát khỏi sweep)",
+        "ch": 1
+      },
+      "note": "Đảm bảo ở chế độ CW",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "cong_suat",
+        "expr": "-5"
+      },
+      "note": "Khởi tạo công suất mặc định -5.0 dBm",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:POW:POW {dBm} dBm",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:POW:POW <dBm> dBm",
+        "__cmd_desc__": "Đặt mức công suất RF output",
+        "ch": 1,
+        "dBm": "=cong_suat"
+      },
+      "note": "Cố định công suất -5 dBm",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "tan_so_df",
+        "expr": "8000000000"
+      },
+      "note": "Khởi tạo tần số mặc định 8 GHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW kênh chỉ định",
+        "ch": 1,
+        "Hz": "=tan_so_df"
+      },
+      "note": "Tần số: 8 GHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output kênh chỉ định",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "tan_so",
+        "expr": "[]"
+      },
+      "note": "Khởi tạo biến tan_so cho thiết bị máy đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "type": "loop",
+      "count": 5,
+      "note": "",
+      "enabled": true,
+      "mode": "count",
+      "max_iter": 50,
+      "condition": null,
+      "body": [
+        {
+          "type": "if",
+          "note": "",
+          "enabled": true,
+          "branches": [
+            {
+              "condition": {
+                "kind": "expr",
+                "device": "",
+                "op": ">",
+                "value": 3.0,
+                "value2": 0.0,
+                "status": "ok",
+                "expr": "$iter"
+              },
+              "enabled": true,
+              "body": [
+                {
+                  "action": "break",
+                  "devices": [],
+                  "params": {},
+                  "note": "",
+                  "enabled": true,
+                  "type": "step"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "action": "raw_scpi",
+          "devices": [
+            "CNT90"
+          ],
+          "params": {
+            "__template__": "MEAS:FREQ? (@{ch})",
+            "__is_query__": true,
+            "__cmd_original__": "MEAS:FREQ? (@<ch>)",
+            "__cmd_desc__": "Trigger & đọc tần số kênh chỉ định (Hz)",
+            "ch": 3
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "action": "collect",
+          "devices": [],
+          "params": {
+            "var": "tan_so",
+            "source": "$last"
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "action": "wait",
+          "devices": [],
+          "params": {
+            "seconds": 0.5
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "sai_so",
+        "expr": "avg(tan_so) / 8000000000"
+      },
+      "note": "Khởi tạo biến tan_so cho thiết bị máy đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "type": "if",
+      "note": "",
+      "enabled": true,
+      "branches": [
+        {
+          "condition": {
+            "kind": "expr",
+            "device": "",
+            "op": ">",
+            "value": 1e-08,
+            "value2": 0.0,
+            "status": "ok",
+            "expr": "sai_so"
+          },
+          "enabled": true,
+          "body": [
+            {
+              "action": "set_var",
+              "devices": [],
+              "params": {
+                "name": "cong_suat",
+                "expr": "cong_suat + 0.5"
+              },
+              "note": "Tăng công suất hiện tại lên 0.5 dBm",
+              "enabled": true,
+              "type": "step"
+            }
+          ]
+        },
+        {
+          "condition": null,
+          "enabled": true,
+          "body": [
+            {
+              "action": "set_var",
+              "devices": [],
+              "params": {
+                "name": "tan_so_df",
+                "expr": "tan_so_df+1000000000"
+              },
+              "note": "Tăng tần số hiện tại lên +1Ghz nữa",
+              "enabled": true,
+              "type": "step"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:POW:POW {dBm} dBm",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:POW:POW <dBm> dBm",
+        "__cmd_desc__": "Đặt mức công suất RF output",
+        "ch": 1,
+        "dBm": "=cong_suat"
+      },
+      "note": "Cố định công suất -5 dBm",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW kênh chỉ định",
+        "ch": 1,
+        "Hz": "=tan_so_df"
+      },
+      "note": "Tần số: 8 GHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "MEAS:FREQ? (@{ch})",
+        "__is_query__": true,
+        "__cmd_original__": "MEAS:FREQ? (@<ch>)",
+        "__cmd_desc__": "Trigger & đọc tần số kênh chỉ định (Hz)",
+        "ch": 3
+      },
+      "note": "Đo tần số tại 8 GHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 3.0
+      },
+      "note": "Chờ sau khi đo tần số",
+      "enabled": true,
+      "type": "step"
+    }
+  ]
+}

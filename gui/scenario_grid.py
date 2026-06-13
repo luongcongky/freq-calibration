@@ -34,7 +34,7 @@ from core.scenario import (
 )
 from core.scenario_runner import ScenarioRunner, StepResult
 from core.commands import (
-    parse_cmd, get_commands_for, get_common_commands, load_custom, WAIT_CMD,
+    parse_cmd, get_commands_for, get_common_commands, load_custom, WAIT_CMD, BREAK_CMD,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,26 @@ class CheckBoxHeader(QHeaderView):
 # ===========================================================================
 
 class ScenarioTree(QTreeWidget):
+    items_dropped = pyqtSignal(list, object, int)   # dragged_items, target_or_None, indicator
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDropIndicatorShown(True)
+        self.setDefaultDropAction(Qt.MoveAction)
+
+    def dropEvent(self, event):
+        target = self.itemAt(event.pos())
+        indicator = int(self.dropIndicatorPosition())
+        dragged = list(self.selectedItems())
+        if dragged:
+            event.accept()
+            self.items_dropped.emit(dragged, target, indicator)
+        else:
+            event.ignore()
+
     def drawBranches(self, painter, rect, index):
         # KHÔNG gọi super() để tránh chevron mặc định (chỉ hiện khi hover trên
         # Windows). Tự vẽ tam giác cho mọi node có con -> luôn hiển thị.
@@ -285,6 +305,7 @@ class StepEditorDialog(QDialog):
 
         self._add_header_item("── Điều khiển kịch bản ──")
         self._add_cmd_item(WAIT_CMD, "__wait__")
+        self._add_cmd_item(BREAK_CMD, "__break__")
 
         self._add_header_item("── Lệnh chung (IEEE 488.2) ──")
         for cmd in get_common_commands(custom):
@@ -356,6 +377,8 @@ class StepEditorDialog(QDialog):
                     w.addItem(c, c)
             else:
                 w = QLineEdit(str(p.default))
+                w.setPlaceholderText("số hoặc =biến")
+                w.setToolTip("Nhập số cố định (vd: 1000) hoặc =tên_biến / =biểu_thức (vd: =freq_start, =freq_start*2)")
             label = p.label + (f" ({p.unit})" if p.unit else "") + ":"
             self.param_form.addRow(label, w)
             self._param_widgets[p.name] = w
@@ -385,6 +408,8 @@ class StepEditorDialog(QDialog):
             w = self._param_widgets.get("seconds")
             if isinstance(w, QLineEdit):
                 w.setText(str(step.params.get("seconds", 0.5)))
+        elif step.action == "break":
+            self._select_by_model_key("__break__")
         elif step.action == "raw_scpi":
             self._select_cmd_by_original(step.params.get("__cmd_original__", ""))
             for name, w in self._param_widgets.items():
@@ -453,6 +478,11 @@ class StepEditorDialog(QDialog):
             self.accept()
             return
 
+        if model_key == "__break__":
+            self._result = ScenarioStep(action="break", devices=[], params={}, note=note)
+            self.accept()
+            return
+
         devices = self._selected_devices()
         if not devices:
             QMessageBox.warning(self, "Thiếu thiết bị", "Chọn ít nhất 1 thiết bị cho lệnh này."); return
@@ -472,18 +502,20 @@ class StepEditorDialog(QDialog):
                 params[p.name] = w.currentData()
             else:
                 raw = w.text().strip()
-                if p.ptype == "int":
+                if raw.startswith("="):
+                    params[p.name] = raw  # runtime sẽ eval qua _resolve_params
+                elif p.ptype == "int":
                     try:
                         params[p.name] = int(float(raw))
                     except ValueError:
                         QMessageBox.warning(self, "Sai tham số",
-                                            f"'{p.label}' phải là số nguyên."); return
+                                            f"'{p.label}' phải là số nguyên hoặc =biểu_thức."); return
                 else:
                     try:
                         params[p.name] = float(raw)
                     except ValueError:
                         QMessageBox.warning(self, "Sai tham số",
-                                            f"'{p.label}' phải là số."); return
+                                            f"'{p.label}' phải là số hoặc =biểu_thức."); return
 
         self._result = ScenarioStep(action="raw_scpi", devices=devices, params=params, note=note)
         self.accept()
@@ -580,39 +612,39 @@ class ConditionDialog(QDialog):
         self.setMinimumWidth(420)
         root = QVBoxLayout(self)
 
-        form = QFormLayout()
+        self._form = QFormLayout()
         self.kind = QComboBox()
         self.kind.addItem("So sánh giá trị đo gần nhất", "measure")
         self.kind.addItem("Biểu thức (vd: error)", "expr")
         self.kind.addItem("Theo trạng thái bước trước (OK/Lỗi)", "status")
         self.kind.currentIndexChanged.connect(self._update_visibility)
-        form.addRow("Loại điều kiện:", self.kind)
+        self._form.addRow("Loại điều kiện:", self.kind)
 
         self.device = QComboBox()
         self.device.addItem("(đo gần nhất — bất kỳ)", "")
         for k in (device_choices or list(DEVICE_REGISTRY.keys())):
             self.device.addItem(k, k)
-        form.addRow("Thiết bị nguồn:", self.device)
+        self._form.addRow("Thiết bị nguồn:", self.device)
 
         self.expr = QLineEdit()
         self.expr.setPlaceholderText("vd: error  hoặc  abs(f_avg - f_set)/f_set")
-        form.addRow("Biểu thức:", self.expr)
+        self._form.addRow("Biểu thức:", self.expr)
 
         self.op = QComboBox()
         for o in OPERATORS:
             self.op.addItem(f"{o}  ({OP_LABELS[o]})", o)
         self.op.currentIndexChanged.connect(self._update_visibility)
-        form.addRow("Toán tử:", self.op)
+        self._form.addRow("Toán tử:", self.op)
 
         self.val = QLineEdit("0")
-        form.addRow("Ngưỡng:", self.val)
+        self._form.addRow("Ngưỡng:", self.val)
         self.val2 = QLineEdit("0")
-        form.addRow("Ngưỡng 2 (khoảng):", self.val2)
+        self._form.addRow("Ngưỡng 2 (khoảng):", self.val2)
 
         self.status = QComboBox()
         self.status.addItem("OK", "ok"); self.status.addItem("LỖI", "error")
-        form.addRow("Trạng thái:", self.status)
-        root.addLayout(form)
+        self._form.addRow("Trạng thái:", self.status)
+        root.addLayout(self._form)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self._on_accept); bb.rejected.connect(self.reject)
@@ -630,17 +662,24 @@ class ConditionDialog(QDialog):
         self.val.setText(str(c.value)); self.val2.setText(str(c.value2))
         self.status.setCurrentIndex(self.status.findData(c.status))
 
+    def _show_row(self, widget, visible: bool):
+        widget.setVisible(visible)
+        lbl = self._form.labelForField(widget)
+        if lbl:
+            lbl.setVisible(visible)
+
     def _update_visibility(self):
         kind = self.kind.currentData()
         is_measure = kind == "measure"
         is_expr = kind == "expr"
-        is_cmp = is_measure or is_expr            # measure & expr đều có op + ngưỡng
-        self.device.setEnabled(is_measure)
-        self.expr.setEnabled(is_expr)
-        self.op.setEnabled(is_cmp)
-        self.val.setEnabled(is_cmp)
-        self.val2.setEnabled(is_cmp and self.op.currentData() in ("between", "outside"))
-        self.status.setEnabled(kind == "status")
+        is_cmp = is_measure or is_expr
+        self._show_row(self.device, is_measure)
+        self._show_row(self.expr, is_expr)
+        self._show_row(self.op, is_cmp)
+        self._show_row(self.val, is_cmp)
+        self._show_row(self.val2, is_cmp and self.op.currentData() in ("between", "outside"))
+        self._show_row(self.status, kind == "status")
+        self.adjustSize()
 
     def _on_accept(self):
         kind = self.kind.currentData()
@@ -870,6 +909,7 @@ class ScenarioGridWindow(QMainWindow):
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)  # chọn nhiều dòng (Ctrl/Shift)
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.itemDoubleClicked.connect(lambda *_: self._edit_node())
+        self.tree.items_dropped.connect(self._on_items_dropped)
         # Cột 0 (Nội dung) tự dãn lấp chỗ trống; cột 1–4 kéo rộng/hẹp tự do.
         # Tắt "dãn cột cuối" để tránh tranh chấp với cột 0 Stretch -> kéo mượt hơn.
         self.header.setStretchLastSection(False)
@@ -937,7 +977,12 @@ class ScenarioGridWindow(QMainWindow):
     def _new_item(self, parent, enabled, label, desc="", devices="", param="",
                   kind="step", obj=None, parent_obj=None):
         it = QTreeWidgetItem(parent)
-        it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+        flags = it.flags() | Qt.ItemIsUserCheckable
+        if kind in ("step", "loop", "if"):
+            flags |= Qt.ItemIsDragEnabled
+        if kind in ("loop", "branch"):
+            flags |= Qt.ItemIsDropEnabled   # cho phép thả VÀO bên trong
+        it.setFlags(flags)
         it.setCheckState(0, Qt.Checked if enabled else Qt.Unchecked)
         it.setText(0, label); it.setText(1, desc)
         it.setText(2, devices); it.setText(3, param)
@@ -1008,8 +1053,23 @@ class ScenarioGridWindow(QMainWindow):
         fg = QColor(Colors.TEXT_MAIN) if enabled else QColor(Colors.TEXT_DIM)
         for c in range(len(COLS)):
             item.setForeground(c, fg)
+        if self._kind_of(item) in ("loop", "if"):
+            self._cascade_check(item, enabled)
         self._loading = False
         self._update_header_check()
+
+    def _cascade_check(self, parent_item, enabled):
+        state = Qt.Checked if enabled else Qt.Unchecked
+        fg = QColor(Colors.TEXT_MAIN) if enabled else QColor(Colors.TEXT_DIM)
+        for i in range(parent_item.childCount()):
+            child = parent_item.child(i)
+            child.setCheckState(0, state)
+            child_obj = self._obj_of(child)
+            if child_obj is not None:
+                child_obj.enabled = enabled
+            for c in range(len(COLS)):
+                child.setForeground(c, fg)
+            self._cascade_check(child, enabled)
 
     def _set_all_enabled(self, enabled: bool):
         for node in self.scenario.nodes:
@@ -1146,6 +1206,199 @@ class ScenarioGridWindow(QMainWindow):
             return dlg.get_ifblock() if dlg.exec_() == QDialog.Accepted else None
         self._add_block(self._sel(), build)
 
+    # ------------------------------------------------------------------
+    # Bọc nhóm lệnh đang chọn vào Loop / If
+    # ------------------------------------------------------------------
+    def _wrap_selected(self, build_wrapper):
+        """Bọc các item đang chọn (phải cùng container) vào một khối mới.
+        build_wrapper(body_nodes) -> khối hoặc None nếu hủy."""
+        items = self._target_items()
+        if not items:
+            QMessageBox.information(self, "Chưa chọn",
+                                    "Hãy chọn (bôi đen) ít nhất 1 bước để bọc.")
+            return
+        # Bỏ qua con nếu cha cũng được chọn (con sẽ bị bọc cùng cha).
+        ids = {id(it) for it in items}
+        top_items = []
+        for item in items:
+            cur = item.parent()
+            shadowed = False
+            while cur is not None:
+                if id(cur) in ids:
+                    shadowed = True; break
+                cur = cur.parent()
+            if not shadowed:
+                top_items.append(item)
+        if not top_items:
+            return
+        # Không cho bọc nhánh branch (If/Else) vào block khác.
+        if any(self._kind_of(it) == "branch" for it in top_items):
+            QMessageBox.warning(self, "Không hỗ trợ",
+                                "Không thể bọc nhánh If/Else vào khối Loop hoặc If.")
+            return
+        # Tất cả phải cùng container.
+        first_cont = self._container_of(top_items[0])
+        if first_cont is None or any(self._container_of(it) is not first_cont
+                                     for it in top_items):
+            QMessageBox.warning(self, "Khác cấp",
+                                "Các bước được chọn phải cùng một cấp (cùng container).")
+            return
+        # Kiểm tra độ sâu lồng.
+        if self._container_block_depth(top_items[0]) + 1 > MAX_NEST_DEPTH:
+            QMessageBox.warning(self, "Lồng quá sâu",
+                                f"Chỉ cho phép lồng tối đa {MAX_NEST_DEPTH} cấp khối.")
+            return
+        # Lấy (index, obj) rồi sắp theo index tăng dần.
+        items_indexed = []
+        for it in top_items:
+            obj = self._obj_of(it)
+            idx = self._index_by_identity(first_cont, obj)
+            if idx >= 0:
+                items_indexed.append((idx, obj))
+        if not items_indexed:
+            return
+        items_indexed.sort(key=lambda x: x[0])
+        body_nodes = [obj for _, obj in items_indexed]
+        insert_at = items_indexed[0][0]
+        # Hiện dialog và tạo block.
+        block = build_wrapper(body_nodes)
+        if block is None:
+            return
+        # Xóa các node gốc (giảm dần để không lệch index).
+        for idx, _ in sorted(items_indexed, key=lambda x: x[0], reverse=True):
+            first_cont.pop(idx)
+        first_cont.insert(insert_at, block)
+        self._refresh_tree()
+
+    def _wrap_loop(self):
+        def build(body_nodes):
+            dlg = LoopEditorDialog(self,
+                                   device_choices=self.scenario.all_device_keys() or None)
+            if dlg.exec_() != QDialog.Accepted:
+                return None
+            loop = dlg.get_loop()
+            loop.body = body_nodes
+            return loop
+        self._wrap_selected(build)
+
+    def _wrap_if(self):
+        def build(body_nodes):
+            dlg = IfEditorDialog(self,
+                                 device_choices=self.scenario.all_device_keys() or None)
+            if dlg.exec_() != QDialog.Accepted:
+                return None
+            ib = dlg.get_ifblock()
+            # Đưa các bước được chọn vào nhánh đầu tiên (IF).
+            if ib.branches:
+                ib.branches[0].body = body_nodes
+            return ib
+        self._wrap_selected(build)
+
+    # ------------------------------------------------------------------
+    # Kéo – thả (drag & drop)
+    # ------------------------------------------------------------------
+    def _on_items_dropped(self, dragged_qt_items, target_qt_item, indicator):
+        AboveItem, BelowItem, OnItem, OnViewport = 0, 1, 2, 3
+
+        # Bỏ con nếu cha cũng được kéo; bỏ branch (không cho kéo nhánh).
+        ids = {id(it) for it in dragged_qt_items}
+        top_items = []
+        for item in dragged_qt_items:
+            if self._kind_of(item) == "branch":
+                continue
+            cur = item.parent()
+            shadowed = False
+            while cur is not None:
+                if id(cur) in ids:
+                    shadowed = True; break
+                cur = cur.parent()
+            if not shadowed:
+                top_items.append(item)
+
+        if not top_items:
+            self._refresh_tree(); return
+
+        # Xác định container đích và vị trí chèn.
+        if indicator == OnViewport or target_qt_item is None:
+            dest_cont = self.scenario.nodes
+            dest_idx = len(dest_cont)
+        elif indicator == OnItem:
+            target_kind = self._kind_of(target_qt_item)
+            if target_kind == "loop":
+                dest_cont = self._obj_of(target_qt_item).body
+                dest_idx = len(dest_cont)
+            elif target_kind == "branch":
+                dest_cont = self._obj_of(target_qt_item).body
+                dest_idx = len(dest_cont)
+            else:
+                self._refresh_tree(); return
+        else:  # AboveItem / BelowItem
+            target_kind = self._kind_of(target_qt_item)
+            if target_kind == "branch":
+                self._refresh_tree(); return      # không cho sắp xếp lại nhánh kiểu này
+            dest_cont = self._container_of(target_qt_item)
+            if dest_cont is None:
+                self._refresh_tree(); return
+            target_obj = self._obj_of(target_qt_item)
+            target_idx = self._index_by_identity(dest_cont, target_obj)
+            if target_idx < 0:
+                self._refresh_tree(); return
+            dest_idx = target_idx if indicator == AboveItem else target_idx + 1
+
+        # Thu thập (container_nguồn, index, obj) theo thứ tự của top_items.
+        sources = []
+        for it in top_items:
+            obj = self._obj_of(it); cont = self._container_of(it)
+            if obj is None or cont is None:
+                continue
+            idx = self._index_by_identity(cont, obj)
+            if idx >= 0:
+                sources.append((cont, idx, obj))
+
+        if not sources:
+            self._refresh_tree(); return
+
+        # Chặn thả vào chính hậu duệ của mình.
+        for _, _, obj in sources:
+            if self._cont_is_inside(dest_cont, obj):
+                self._refresh_tree(); return
+
+        # Điều chỉnh dest_idx nếu xóa item trước nó trong cùng container.
+        removed_before = sum(1 for cont, idx, _ in sources
+                             if cont is dest_cont and idx < dest_idx)
+        dest_idx = max(0, dest_idx - removed_before)
+
+        # Xóa nguồn (nhóm theo container, giảm dần).
+        by_cont: dict = {}
+        for cont, idx, obj in sources:
+            by_cont.setdefault(id(cont), []).append((idx, obj, cont))
+        for group in by_cont.values():
+            group.sort(key=lambda x: x[0], reverse=True)
+            for idx, _, cont in group:
+                cont.pop(idx)
+
+        # Chèn vào đích theo thứ tự gốc.
+        for i, (_, _, obj) in enumerate(sources):
+            dest_cont.insert(dest_idx + i, obj)
+
+        self._refresh_tree()
+
+    def _cont_is_inside(self, cont, node) -> bool:
+        """True nếu cont là một container lồng bên trong cây con của node."""
+        if isinstance(node, LoopBlock):
+            if node.body is cont:
+                return True
+            return any(self._cont_is_inside(cont, c) for c in node.body
+                       if isinstance(c, (LoopBlock, IfBlock)))
+        if isinstance(node, IfBlock):
+            for br in node.branches:
+                if br.body is cont:
+                    return True
+                if any(self._cont_is_inside(cont, c) for c in br.body
+                       if isinstance(c, (LoopBlock, IfBlock))):
+                    return True
+        return False
+
     @staticmethod
     def _index_by_identity(lst, obj) -> int:
         for i, x in enumerate(lst):
@@ -1194,20 +1447,44 @@ class ScenarioGridWindow(QMainWindow):
                 obj.condition = dlg.get_condition(); self._refresh_tree()
 
     def _dup_node(self):
-        item = self._sel()
-        if item is None:
+        items = self._target_items()
+        if not items:
             return
-        obj = self._obj_of(item); cont = self._container_of(item); kind = self._kind_of(item)
-        idx = self._index_by_identity(cont, obj) if cont is not None else -1
-        if idx < 0:
+        # Bỏ qua item con nếu item cha cũng đang được nhân bản (con sẽ được clone cùng cha).
+        ids = {id(it) for it in items}
+        to_dup = []
+        for item in items:
+            cur = item.parent()
+            shadowed = False
+            while cur is not None:
+                if id(cur) in ids:
+                    shadowed = True
+                    break
+                cur = cur.parent()
+            if not shadowed:
+                to_dup.append(item)
+        if not to_dup:
             return
-        if kind == "branch":
-            clone = Branch.from_dict(obj.to_dict())
-        elif kind in ("loop", "if"):
-            clone = node_from_dict(obj.to_dict())
-        else:
-            clone = ScenarioStep.from_dict(obj.to_dict())
-        cont.insert(idx + 1, clone)
+        # Gom theo container, sắp xếp index giảm dần để insert không làm lệch chỉ số.
+        groups: dict = {}
+        for item in to_dup:
+            obj = self._obj_of(item); cont = self._container_of(item); kind = self._kind_of(item)
+            if cont is None or obj is None:
+                continue
+            idx = self._index_by_identity(cont, obj)
+            if idx < 0:
+                continue
+            groups.setdefault(id(cont), []).append((idx, obj, kind, cont))
+        for group in groups.values():
+            group.sort(key=lambda x: x[0], reverse=True)
+            for idx, obj, kind, cont in group:
+                if kind == "branch":
+                    clone = Branch.from_dict(obj.to_dict())
+                elif kind in ("loop", "if"):
+                    clone = node_from_dict(obj.to_dict())
+                else:
+                    clone = ScenarioStep.from_dict(obj.to_dict())
+                cont.insert(idx + 1, clone)
         self._refresh_tree()
 
     def _target_items(self) -> list:

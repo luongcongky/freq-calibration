@@ -61,6 +61,10 @@ COMMON_COMMANDS: list[Cmd] = [
 WAIT_CMD = Cmd("WAIT <seconds>", "Chờ ổn định",
                "Tạm dừng kịch bản  |  Ví dụ: WAIT 0.5")
 
+# Pseudo-command để tạo bước "break" (thoát Loop)
+BREAK_CMD = Cmd("BREAK", "⛔ Thoát vòng lặp (break)",
+                "Dừng vòng lặp Loop đang chạy ngay lập tức")
+
 # ---------------------------------------------------------------------------
 # Tập lệnh riêng theo nhóm driver
 # ---------------------------------------------------------------------------
