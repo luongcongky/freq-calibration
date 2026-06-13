@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 import math
 
-from PyQt5.QtCore import Qt, QRectF, QPointF, QLineF, QTimer
+from PyQt5.QtCore import Qt, QRectF, QPointF, QLineF, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import (
     QColor, QPen, QBrush, QPainter, QPainterPath, QFont,
 )
@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
     QTextEdit, QComboBox, QPushButton, QFrame, QGraphicsView, QGraphicsScene,
     QGraphicsItem, QGraphicsPathItem, QSizePolicy,
+    QDialog, QListWidget, QListWidgetItem, QFileDialog, QMessageBox,
 )
 
 from gui.theme import Colors
@@ -107,6 +108,11 @@ class NodeItem(QGraphicsItem):
         self.action = action               # map Scenario: "raw_scpi" | "wait" | ...
         self.params = params or {}         # giữ params gốc để export lại
         self.edges: list[EdgeItem] = []
+        self._run_state: str | None = None   # None | "running" | "ok" | "error"
+        self._run_error: str = ""
+        self._run_pulse: bool = False
+        self._last_result_text: str = ""
+        self._last_result_ok: bool | None = None
         self.setFlags(
             QGraphicsItem.ItemIsMovable
             | QGraphicsItem.ItemIsSelectable
@@ -152,11 +158,40 @@ class NodeItem(QGraphicsItem):
         p.drawEllipse(QPointF(0, NODE_H / 2), PORT_R, PORT_R)
         p.drawEllipse(QPointF(NODE_W, NODE_H / 2), PORT_R, PORT_R)
 
+        # badge trạng thái chạy (góc trên phải)
+        if self._run_state == "ok":
+            bc = QColor(Colors.ACCENT_GREEN); sym = "✓"
+        elif self._run_state == "error":
+            bc = QColor(Colors.ACCENT_RED); sym = "✕"
+        elif self._run_state == "running":
+            bc = QColor(Colors.ACCENT_CYAN)
+            bc.setAlphaF(0.85 if self._run_pulse else 0.35)
+            sym = "…"
+        else:
+            bc = None; sym = ""
+        if bc is not None:
+            br = 9
+            bx, by = NODE_W - br - 2, br + 2
+            p.setBrush(QBrush(bc)); p.setPen(Qt.NoPen)
+            p.drawEllipse(QPointF(bx, by), br, br)
+            p.setPen(QColor(Colors.BG_WINDOW))
+            f2 = QFont("Segoe UI", 7); f2.setBold(True); p.setFont(f2)
+            p.drawText(QRectF(bx - br, by - br, 2 * br, 2 * br), Qt.AlignCenter, sym)
+
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged:
             for e in self.edges:
                 e.adjust()
         return super().itemChange(change, value)
+
+    def set_run_state(self, state: str | None, error: str = ""):
+        self._run_state = state
+        self._run_error = error
+        if state == "error" and error:
+            self.setToolTip(f"Lỗi: {error}")
+        else:
+            self.setToolTip("")
+        self.update()
 
 
 # ===========================================================================
@@ -260,52 +295,231 @@ class FlowView(QGraphicsView):
 
 
 # ===========================================================================
-# Stepper trên cùng
+# Worker chạy kịch bản trong thread nền
+# ===========================================================================
+
+class FlowRunWorker(QThread):
+    result_ready = pyqtSignal(object)   # StepResult
+    finished_all = pyqtSignal(int)      # tổng kết quả
+    failed = pyqtSignal(str)            # thông báo lỗi nghiêm trọng
+
+    def __init__(self, scenario, address_map: dict | None = None, cmd_delay_s: float = 0.1):
+        super().__init__()
+        self._scn = scenario
+        self._addr = address_map or {}
+        self._cmd_delay_s = cmd_delay_s
+        self._stop = False
+
+    def request_stop(self):
+        self._stop = True
+
+    def run(self):
+        try:
+            from core.scenario_runner import ScenarioRunner
+            mock = not bool(self._addr)   # không có địa chỉ thật -> chạy mock
+            runner = ScenarioRunner(
+                mock=mock,
+                address_map=self._addr,
+                on_result=self.result_ready.emit,
+                stop_flag=lambda: self._stop,
+                cmd_delay_s=self._cmd_delay_s,
+            )
+            results = runner.run(self._scn)
+            self.finished_all.emit(len(results))
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
+# ===========================================================================
+# Stepper trên cùng — clickable, step 2-3 bị khóa khi chưa kết nối
 # ===========================================================================
 
 class Stepper(QWidget):
-    def __init__(self, steps, current=2, parent=None):
+    def __init__(self, steps, current=0, connected=False, on_step_click=None, parent=None):
         super().__init__(parent)
         self._steps = steps
-        self._current = current      # index 0-based; <current = xong (xanh lá)
+        self._current = current      # 0-based; < current = xong (xanh lá)
+        self._connected = connected  # False = step 2-3 bị xám + khóa
+        self._on_step_click = on_step_click
         self.setFixedHeight(90)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_connected(self, val: bool):
+        self._connected = val
+        self.update()
+
+    def set_current(self, val: int):
+        self._current = val
+        self.update()
+
+    def _step_enabled(self, i: int) -> bool:
+        return i == 0 or self._connected
+
+    def _xs(self) -> list:
+        n = len(self._steps)
+        w = self.width() or 800
+        margin = 90
+        gap = (w - 2 * margin) / (n - 1) if n > 1 else 0
+        return [int(margin + i * gap) for i in range(n)]
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            cy, r = 34, 20
+            for i, x in enumerate(self._xs()):
+                if (ev.x() - x) ** 2 + (ev.y() - cy) ** 2 <= (r + 14) ** 2:
+                    if self._step_enabled(i) and self._on_step_click:
+                        self._on_step_click(i)
+                    break
+        super().mousePressEvent(ev)
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        n = len(self._steps)
-        w = self.width()
         cy = 34
-        margin = 90
-        gap = (w - 2 * margin) / (n - 1) if n > 1 else 0
-        xs = [int(margin + i * gap) for i in range(n)]
+        xs = self._xs()
         r = 20
+        n = len(self._steps)
+
         # đường nối
         for i in range(n - 1):
             done = i < self._current
-            col = QColor(Colors.ACCENT_GREEN) if done else QColor(Colors.BORDER)
+            ena = self._step_enabled(i + 1)
+            if not ena:
+                col = QColor(Colors.BORDER); col.setAlphaF(0.3)
+            elif done:
+                col = QColor(Colors.ACCENT_GREEN)
+            else:
+                col = QColor(Colors.BORDER)
             p.setPen(QPen(col, 4))
             p.drawLine(xs[i] + r, cy, xs[i + 1] - r, cy)
+
         # vòng tròn + nhãn
         for i, (x, label) in enumerate(zip(xs, self._steps)):
+            ena = self._step_enabled(i)
             done = i < self._current
             cur = i == self._current
-            if done:
+
+            if not ena:
+                ring = QColor(Colors.BORDER); ring.setAlphaF(0.3)
+                num_col = ring
+                lbl_col = QColor(Colors.TEXT_DIM); lbl_col.setAlphaF(0.35)
+            elif done:
                 ring = QColor(Colors.ACCENT_GREEN)
+                num_col = ring; lbl_col = ring
             elif cur:
                 ring = QColor(Colors.ACCENT_CYAN)
+                num_col = ring; lbl_col = ring
+                glow = QColor(Colors.ACCENT_CYAN); glow.setAlphaF(0.12)
+                p.setBrush(QBrush(glow)); p.setPen(Qt.NoPen)
+                p.drawEllipse(QPointF(x, cy), r + 8, r + 8)
             else:
                 ring = QColor(Colors.BORDER)
+                num_col = ring; lbl_col = QColor(Colors.TEXT_DIM)
+
             p.setBrush(QBrush(QColor(Colors.BG_WINDOW)))
             p.setPen(QPen(ring, 3))
             p.drawEllipse(QPointF(x, cy), r, r)
-            p.setPen(ring)
+            p.setPen(num_col)
             f = QFont("Segoe UI", 11); f.setBold(True); p.setFont(f)
-            p.drawText(QRectF(x - r, cy - r, 2 * r, 2 * r),
-                       Qt.AlignCenter, str(i + 1))
-            p.setPen(QColor(Colors.ACCENT_GREEN) if (done or cur) else QColor(Colors.TEXT_DIM))
+            p.drawText(QRectF(x - r, cy - r, 2 * r, 2 * r), Qt.AlignCenter, str(i + 1))
+            p.setPen(lbl_col)
             p.setFont(QFont("Segoe UI", 9))
             p.drawText(QRectF(x - 90, cy + r + 6, 180, 18), Qt.AlignCenter, label)
+            if not ena:
+                lock_col = QColor(Colors.TEXT_DIM); lock_col.setAlphaF(0.4)
+                p.setPen(lock_col)
+                p.setFont(QFont("Segoe UI", 8))
+                p.drawText(QRectF(x - 90, cy + r + 22, 180, 14), Qt.AlignCenter, "🔒 Cần kết nối")
+
+
+# ===========================================================================
+# Dialog chọn kịch bản (Step 2)
+# ===========================================================================
+
+class ScenarioPickerDialog(QDialog):
+    """Dialog chọn file kịch bản để nạp vào Flow Editor."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Chọn Kịch Bản")
+        self.setMinimumSize(480, 360)
+        self._path: str | None = None
+        self._build_ui()
+
+    def _build_ui(self):
+        import os
+        lay = QVBoxLayout(self); lay.setSpacing(10); lay.setContentsMargins(14, 14, 14, 14)
+
+        title = QLabel("Chọn kịch bản để nạp vào luồng")
+        title.setStyleSheet(
+            f"color:{Colors.TEXT_MAIN}; font-size:13px; font-weight:bold;")
+        lay.addWidget(title)
+
+        sub = QLabel("Kịch bản có sẵn (double-click để nạp):")
+        sub.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;")
+        lay.addWidget(sub)
+
+        self._list = QListWidget()
+        self._list.setStyleSheet(
+            f"QListWidget {{ background:{Colors.BG_INPUT}; color:{Colors.TEXT_MAIN};"
+            f" border:1px solid {Colors.BORDER}; border-radius:6px; }}"
+            f"QListWidget::item {{ padding:6px 10px; }}"
+            f"QListWidget::item:selected {{ background:{Colors.ACCENT_CYAN};"
+            f" color:{Colors.BG_WINDOW}; }}")
+        self._list.itemDoubleClicked.connect(self._accept_item)
+        lay.addWidget(self._list, 1)
+
+        scenarios_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scenarios")
+        if os.path.isdir(scenarios_dir):
+            for fn in sorted(os.listdir(scenarios_dir)):
+                if fn.endswith(".json"):
+                    item = QListWidgetItem(fn[:-5])
+                    item.setData(Qt.UserRole, os.path.join(scenarios_dir, fn))
+                    self._list.addItem(item)
+        if self._list.count() == 0:
+            self._list.addItem("(Chưa có kịch bản mẫu trong thư mục scenarios/)")
+
+        btns = QHBoxLayout()
+        browse = QPushButton("📂 Duyệt file khác…")
+        browse.setStyleSheet(
+            f"background:{Colors.BG_CARD}; color:{Colors.TEXT_MAIN};"
+            f" border:1px solid {Colors.BORDER}; border-radius:6px; padding:7px 14px;")
+        browse.clicked.connect(self._browse)
+        ok_btn = QPushButton("✓ Nạp kịch bản")
+        ok_btn.setStyleSheet(
+            f"background:{Colors.ACCENT_CYAN}; color:{Colors.BG_WINDOW};"
+            f" font-weight:bold; border:none; border-radius:6px; padding:7px 16px;")
+        ok_btn.clicked.connect(self._accept_selected)
+        cancel = QPushButton("Hủy")
+        cancel.setStyleSheet(
+            f"background:{Colors.BG_CARD}; color:{Colors.TEXT_MAIN};"
+            f" border:1px solid {Colors.BORDER}; border-radius:6px; padding:7px 12px;")
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(browse); btns.addStretch()
+        btns.addWidget(cancel); btns.addWidget(ok_btn)
+        lay.addLayout(btns)
+
+    def _browse(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn kịch bản", "", "JSON (*.json)")
+        if path:
+            self._path = path
+            self.accept()
+
+    def _accept_item(self, item: QListWidgetItem):
+        if item.data(Qt.UserRole):
+            self._path = item.data(Qt.UserRole)
+            self.accept()
+
+    def _accept_selected(self):
+        item = self._list.currentItem()
+        if item and item.data(Qt.UserRole):
+            self._path = item.data(Qt.UserRole)
+            self.accept()
+
+    def get_path(self) -> str | None:
+        return self._path
 
 
 # ===========================================================================
@@ -337,14 +551,25 @@ def _device_card(dev: dict) -> QFrame:
 # ===========================================================================
 
 class FlowEditorWindow(QMainWindow):
-    def __init__(self, devices=None, parent=None, demo=True, on_export=None, on_switch=None):
+    def __init__(self, devices=None, parent=None, demo=True, on_export=None,
+                 on_switch=None, on_scan_device=None):
         super().__init__(parent)
         self.setWindowTitle("FREQ-CAL :: Flow Editor (Theme Digital)")
         self.resize(1600, 900)
-        self.devices = devices or DEMO_DEVICES
+        self.devices = devices or (DEMO_DEVICES if demo else [])
         self._on_export = on_export          # callback(scn) khi mở từ app; None = lưu .json
         self._on_switch = on_switch          # callback(scn) để quay lại theme Classic
+        self._on_scan_device = on_scan_device  # callback() -> dict | None
+        self._connected = bool(devices)
+        self._address_map: dict = {}
+        self._cmd_delay_s: float = 0.1
         self._current_node: NodeItem | None = None
+        self._build_map: dict | None = None   # tạm dùng khi _export_for_run()
+        self._run_node_map: dict = {}         # id(step) -> NodeItem
+        self.worker: FlowRunWorker | None = None
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(450)
+        self._pulse_timer.timeout.connect(self._pulse_running_nodes)
         self._build_ui()
         if demo:
             self._load_demo_nodes()
@@ -355,7 +580,13 @@ class FlowEditorWindow(QMainWindow):
 
         # Hàng trên: stepper + switch chuyển theme ở góc trên phải.
         top = QHBoxLayout(); top.setContentsMargins(0, 0, 0, 0); top.setSpacing(8)
-        top.addWidget(Stepper(["Scan Thiết Bị", "Nhập Kịch Bản", "Xuất Kịch Bản"], current=2), 1)
+        self._stepper = Stepper(
+            ["Scan Thiết Bị", "Nhập Kịch Bản", "Xuất Kịch Bản"],
+            current=1 if self._connected else 0,
+            connected=self._connected,
+            on_step_click=self._on_step_click,
+        )
+        top.addWidget(self._stepper, 1)
         if self._on_switch is not None:
             self.theme_toggle = ThemeToggle(left="Classic", right="Digital", checked=True)
             self.theme_toggle.toggled.connect(
@@ -373,54 +604,78 @@ class FlowEditorWindow(QMainWindow):
 
     # --- trái ---
     def _build_left(self) -> QWidget:
-        panel = QFrame(); panel.setFixedWidth(300)
-        panel.setStyleSheet(f"QFrame {{ background:{Colors.BG_WINDOW}; border:none; }}")
-        lay = QVBoxLayout(panel); lay.setContentsMargins(4, 4, 4, 4); lay.setSpacing(8)
+        self._left_panel = QFrame(); self._left_panel.setFixedWidth(300)
+        self._left_panel.setStyleSheet(f"QFrame {{ background:{Colors.BG_WINDOW}; border:none; }}")
+        lay = QVBoxLayout(self._left_panel); lay.setContentsMargins(4, 4, 4, 4); lay.setSpacing(8)
         head = QHBoxLayout()
-        title = QLabel("CONNECTED NODES (STEP 1)")
+        title = QLabel("CONNECTED NODES")
         title.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-weight:bold; font-size:11px;")
-        badge = QLabel(f"{len(self.devices)} Nodes")
-        badge.setStyleSheet(
+        self._left_badge = QLabel("0 Nodes")
+        self._left_badge.setStyleSheet(
             f"color:{Colors.ACCENT_CYAN}; background:{Colors.BG_CARD};"
             f" border:1px solid {Colors.BORDER}; border-radius:9px; padding:2px 8px; font-size:10px;")
-        head.addWidget(title); head.addStretch(); head.addWidget(badge)
+        head.addWidget(title); head.addStretch(); head.addWidget(self._left_badge)
         lay.addLayout(head)
         line = QFrame(); line.setFrameShape(QFrame.HLine)
         line.setStyleSheet(f"color:{Colors.BORDER};")
         lay.addWidget(line)
-        for dev in self.devices:
-            lay.addWidget(_device_card(dev))
+        # Vùng device cards — được refresh khi trạng thái kết nối thay đổi
+        self._left_devices_widget = QWidget()
+        self._left_devices_lay = QVBoxLayout(self._left_devices_widget)
+        self._left_devices_lay.setContentsMargins(0, 0, 0, 0)
+        self._left_devices_lay.setSpacing(8)
+        lay.addWidget(self._left_devices_widget)
         lay.addStretch()
-        return panel
+        self._refresh_left_devices()
+        return self._left_panel
+
+    def _refresh_left_devices(self):
+        """Xóa và dựng lại vùng device cards theo trạng thái kết nối hiện tại."""
+        while self._left_devices_lay.count():
+            item = self._left_devices_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not self.devices:
+            ph = QLabel("Chưa kết nối thiết bị\n\nNhấn  Step 1  để scan\nthiết bị đo lường")
+            ph.setAlignment(Qt.AlignCenter)
+            ph.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:11px; padding:24px 8px;")
+            self._left_devices_lay.addWidget(ph)
+            self._left_badge.setText("0 Nodes")
+        else:
+            for dev in self.devices:
+                self._left_devices_lay.addWidget(_device_card(dev))
+            self._left_badge.setText(f"{len(self.devices)} Nodes")
 
     # --- giữa ---
     def _build_center(self) -> QWidget:
         wrap = QWidget()
         lay = QVBoxLayout(wrap); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(6)
 
-        # toolbar canvas: thêm/xóa node
-        tb = QHBoxLayout(); tb.setSpacing(6)
-
-        def tbtn(text, slot, color=None):
-            b = QPushButton(text); b.clicked.connect(slot)
-            style = (f"background:{color}; color:{Colors.BG_WINDOW}; font-weight:bold;"
-                     if color else f"background:{Colors.BG_CARD}; color:{Colors.TEXT_MAIN};")
-            b.setStyleSheet(style + f" border:1px solid {Colors.BORDER}; border-radius:6px; padding:6px 12px;")
-            tb.addWidget(b); return b
-
-        tbtn("🟢 + Action", lambda: self.add_node("action", "Bước hành động"))
-        tbtn("⏳ + Timer", lambda: self.add_node("timer", "Delay: 1000ms", action="wait",
-                                                 params={"seconds": 1.0}))
-        tbtn("📡 + Lệnh", lambda: self.add_node("command", "Lệnh mới", action="raw_scpi"))
-        tbtn("🧮 + Biến", lambda: self.add_node("compute", "x = 0", action="compute",
-                                                params={"name": "x", "expr": "0"}))
-        tbtn("🗑 Xóa node", self.delete_selected, Colors.ACCENT_RED)
-        tb.addSpacing(12)
-        tbtn("↥ Xuất kịch bản", self._do_export, Colors.ACCENT_GREEN)
+        # toolbar canvas: chỉ 2 nút Chạy / Dừng
+        tb = QHBoxLayout(); tb.setSpacing(10)
         tb.addStretch()
-        hint = QLabel("Kéo node để di chuyển · kéo từ chấm phải → chấm trái để nối · Delete để xóa")
-        hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;")
-        tb.addWidget(hint)
+
+        self.btn_run = QPushButton("▶  Chạy")
+        self.btn_run.setFixedHeight(36)
+        self.btn_run.setStyleSheet(
+            f"background:{Colors.ACCENT_GREEN}; color:{Colors.BG_WINDOW};"
+            f" font-weight:bold; font-size:13px; border:none;"
+            f" border-radius:8px; padding:0 28px;")
+        self.btn_run.clicked.connect(self._do_run)
+        tb.addWidget(self.btn_run)
+
+        self.btn_stop = QPushButton("■  Dừng")
+        self.btn_stop.setFixedHeight(36)
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setStyleSheet(
+            f"background:{Colors.ACCENT_RED}; color:{Colors.BG_WINDOW};"
+            f" font-weight:bold; font-size:13px; border:none;"
+            f" border-radius:8px; padding:0 28px;"
+            f" QPushButton:disabled {{ opacity:0.4; }}")
+        self.btn_stop.clicked.connect(self._do_stop)
+        tb.addWidget(self.btn_stop)
+
+        tb.addStretch()
         lay.addLayout(tb)
 
         self.scene = FlowScene(on_selection=self._on_node_selected)
@@ -448,8 +703,6 @@ class FlowEditorWindow(QMainWindow):
         self.ed_name = QLineEdit()
         self.ed_name.editingFinished.connect(self._on_cmd_text_changed)
         lay.addWidget(self.ed_name)
-        lay.addWidget(lbl("MÃ ĐỊNH DANH (ID)"))
-        self.ed_id = QLineEdit(); lay.addWidget(self.ed_id)
         lay.addWidget(lbl("MÔ TẢ CHỨC NĂNG"))
         self.ed_desc = QTextEdit(); self.ed_desc.setFixedHeight(70)
         self.ed_desc.setStyleSheet(
@@ -496,6 +749,17 @@ class FlowEditorWindow(QMainWindow):
         vform.addRow("", vhint)
         lay.addWidget(self.var_host)
 
+        # Kết quả chạy — cập nhật real-time khi runner emit kết quả
+        lay.addWidget(lbl("KẾT QUẢ"))
+        self.lbl_result = QLabel("—")
+        self.lbl_result.setWordWrap(True)
+        self.lbl_result.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.lbl_result.setMinimumHeight(48)
+        self.lbl_result.setStyleSheet(
+            f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_DIM};"
+            f" border:1px solid {Colors.BORDER}; border-radius:4px; padding:6px;")
+        lay.addWidget(self.lbl_result)
+
         self.btn_save = QPushButton("Lưu cấu hình Node")
         self.btn_save.setStyleSheet(
             f"background:{Colors.ACCENT_CYAN}; color:{Colors.BG_WINDOW}; font-weight:bold;"
@@ -507,8 +771,153 @@ class FlowEditorWindow(QMainWindow):
         self._show_var_section(False)
         return panel
 
+    # --- xử lý click step 1/2/3 ---
+    def _on_step_click(self, step: int):
+        if step == 0:
+            self._do_scan_device()
+        elif step == 1 and self._connected:
+            self._do_pick_scenario()
+        elif step == 2 and self._connected:
+            self._do_export_report()
+
+    def _do_scan_device(self):
+        if self._on_scan_device is not None:
+            result = self._on_scan_device()   # trả dict {"devices":…,"address_map":…,"cmd_delay_s":…} hoặc None
+            if result is not None:
+                self.devices = result.get("devices") or []
+                self._address_map = result.get("address_map") or {}
+                self._cmd_delay_s = result.get("cmd_delay_s", 0.1)
+                self._connected = True
+                self._refresh_left_devices()
+                self._stepper.set_connected(True)
+                if self._stepper._current < 1:
+                    self._stepper.set_current(1)
+        else:
+            QMessageBox.information(
+                self, "Scan Thiết Bị",
+                "Chức năng scan thiết bị chỉ khả dụng khi mở từ ứng dụng chính.")
+
+    def _do_pick_scenario(self):
+        dlg = ScenarioPickerDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            path = dlg.get_path()
+            if path:
+                try:
+                    from core.scenario import Scenario
+                    scn = Scenario.load_json(path)
+                    self.load_scenario(scn)
+                    if self._stepper._current < 2:
+                        self._stepper.set_current(2)
+                except Exception as exc:
+                    QMessageBox.warning(self, "Lỗi", f"Không đọc được kịch bản:\n{exc}")
+
+    def _do_export_report(self):
+        QMessageBox.information(
+            self, "Xuất Báo Cáo",
+            "Chức năng xuất báo cáo sẽ được thiết kế và bổ sung sau.")
+
+    def _do_run(self):
+        if not self._connected:
+            QMessageBox.warning(self, "Chưa kết nối",
+                                "Vui lòng scan thiết bị (Step 1) trước khi chạy.")
+            return
+        scn, node_map = self._export_for_run()
+        if not scn.nodes:
+            QMessageBox.warning(self, "Kịch bản trống",
+                                "Chưa có bước nào trong luồng để chạy.")
+            return
+        self._run_node_map = node_map
+        self._reset_node_states()
+        self.btn_run.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self._pulse_timer.start()
+        self.worker = FlowRunWorker(scn, address_map=self._address_map,
+                                    cmd_delay_s=self._cmd_delay_s)
+        self.worker.result_ready.connect(self._on_run_result)
+        self.worker.finished_all.connect(self._on_run_finished)
+        self.worker.failed.connect(self._on_run_failed)
+        self.worker.start()
+
+    def _do_stop(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.request_stop()
+        self._pulse_timer.stop()
+        self.btn_run.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+
+    # --- export kèm node_map để ánh xạ kết quả ---
+    def _export_for_run(self):
+        self._build_map = {}
+        scn = self.export_scenario()
+        node_map = self._build_map
+        self._build_map = None
+        return scn, node_map
+
+    # --- reset badge + kết quả tất cả node trước mỗi lần chạy ---
+    def _reset_node_states(self):
+        for it in self.scene.items():
+            if isinstance(it, NodeItem):
+                it._last_result_text = ""
+                it._last_result_ok = None
+                it.set_run_state(None)
+        self._update_result_display(self._current_node)
+
+    # --- nhấp nháy node đang chạy ---
+    def _pulse_running_nodes(self):
+        for it in self.scene.items():
+            if isinstance(it, NodeItem) and it._run_state == "running":
+                it._run_pulse = not it._run_pulse
+                it.update()
+
+    # --- cập nhật ô Kết quả trong panel phải ---
+    def _update_result_display(self, node: "NodeItem | None"):
+        if node is None or node._last_result_ok is None:
+            self.lbl_result.setText("—")
+            self.lbl_result.setStyleSheet(
+                f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_DIM};"
+                f" border:1px solid {Colors.BORDER}; border-radius:4px; padding:6px;")
+        elif node._last_result_ok:
+            self.lbl_result.setText(node._last_result_text or "OK")
+            self.lbl_result.setStyleSheet(
+                f"background:{Colors.BG_INPUT}; color:{Colors.ACCENT_GREEN};"
+                f" border:1px solid {Colors.ACCENT_GREEN}; border-radius:4px; padding:6px;")
+        else:
+            self.lbl_result.setText(node._last_result_text or "Lỗi")
+            self.lbl_result.setStyleSheet(
+                f"background:{Colors.BG_INPUT}; color:{Colors.ACCENT_RED};"
+                f" border:1px solid {Colors.ACCENT_RED}; border-radius:4px; padding:6px;")
+
+    # --- nhận kết quả từng bước ---
+    def _on_run_result(self, res):
+        node = self._run_node_map.get(res.node_id)
+        if node is None:
+            return
+        result_text = res.result_cell() or (res.text if res.text else ("OK" if res.ok else res.error))
+        node._last_result_text = result_text
+        node._last_result_ok = res.ok
+        if res.ok:
+            node.set_run_state("ok")
+        else:
+            node.set_run_state("error", res.error or "Lỗi không xác định")
+        # Nếu node này đang được chọn -> cập nhật panel kết quả ngay
+        if node is self._current_node:
+            self._update_result_display(node)
+
+    # --- hoàn thành toàn bộ kịch bản ---
+    def _on_run_finished(self, total: int):
+        self._pulse_timer.stop()
+        self.btn_run.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+
+    # --- lỗi nghiêm trọng trong worker ---
+    def _on_run_failed(self, msg: str):
+        self._pulse_timer.stop()
+        self.btn_run.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        QMessageBox.critical(self, "Lỗi chạy kịch bản", msg)
+
     def _set_props_enabled(self, on: bool):
-        for w in (self.ed_name, self.ed_id, self.ed_desc, self.cb_device, self.btn_save):
+        for w in (self.ed_name, self.ed_desc, self.cb_device, self.btn_save):
             w.setEnabled(on)
 
     # --- node demo ---
@@ -592,16 +1001,17 @@ class FlowEditorWindow(QMainWindow):
         self._current_node = node
         if node is None:
             self._set_props_enabled(False)
-            self.ed_name.clear(); self.ed_id.clear(); self.ed_desc.clear()
+            self.ed_name.clear(); self.ed_desc.clear()
             self.cb_device.setCurrentIndex(0)
             self._clear_param_form()
             self.lbl_params.setVisible(False); self.param_host.setVisible(False)
             self._show_var_section(False)
+            self._update_result_display(None)
             return
         self._set_props_enabled(True)
         self.ed_name.setText(node.subtitle)
-        self.ed_id.setText(node.ident)
         self.ed_desc.setPlainText(node.desc)
+        self._update_result_display(node)
         idx = self.cb_device.findData(node.device)
         self.cb_device.setCurrentIndex(idx if idx >= 0 else 0)
         # Khu lệnh / khu biến tuỳ loại node.
@@ -627,7 +1037,6 @@ class FlowEditorWindow(QMainWindow):
         if self._current_node is None:
             return
         n = self._current_node
-        n.ident = self.ed_id.text().strip()
         n.desc = self.ed_desc.toPlainText().strip()
         if self._is_var_node(n):
             # Node biến: dựng params + subtitle từ khu BIẾN.
@@ -825,36 +1234,35 @@ class FlowEditorWindow(QMainWindow):
         from core.commands import Cmd, parse_cmd
         if n.node_type in MARKER_TYPES:               # marker điều khiển -> không là bước
             return None
-        # Node Biến / Tính toán -> giữ nguyên action + params
+        step = None
         if n.action in ("set_var", "compute", "collect"):
-            return ScenarioStep(action=n.action, devices=[], params=dict(n.params))
-        # Node Lệnh -> raw_scpi
-        if n.action == "raw_scpi" or n.node_type in ("command", "output"):
-            if n.params.get("__template__"):          # node nạp từ kịch bản: giữ params gốc
+            step = ScenarioStep(action=n.action, devices=[], params=dict(n.params))
+        elif n.action == "raw_scpi" or n.node_type in ("command", "output"):
+            if n.params.get("__template__"):
                 params = dict(n.params)
-            else:                                     # node tạo tay: tên node = lệnh SCPI
+            else:
                 template, parsed, is_query = parse_cmd(Cmd(n.subtitle, n.desc))
                 params = {"__template__": template, "__is_query__": is_query,
                           "__cmd_original__": n.subtitle, "__cmd_desc__": n.desc}
                 for p in parsed:
                     params[p.name] = p.default
             devices = [n.device] if n.device else []
-            return ScenarioStep(action="raw_scpi", devices=devices,
+            step = ScenarioStep(action="raw_scpi", devices=devices,
                                 params=params, note=n.desc)
-        # Node Timer -> wait (đọc số giây từ tên 'Delay: Xms/Xs' nếu có)
-        if n.action == "wait" or n.node_type == "timer":
+        elif n.action == "wait" or n.node_type == "timer":
             seconds = float(n.params.get("seconds", 0) or 0)
             m = re.search(r"([\d.]+)\s*(ms|s)?", n.subtitle)
             if m:
                 v = float(m.group(1))
                 seconds = v / 1000.0 if m.group(2) == "ms" else v
-            return ScenarioStep(action="wait", devices=[], params={"seconds": seconds})
-        # Action có sẵn khác (identify, set_frequency…) -> giữ nguyên
-        if n.action and n.action != "action":
-            return ScenarioStep(action=n.action,
+            step = ScenarioStep(action="wait", devices=[], params={"seconds": seconds})
+        elif n.action and n.action != "action":
+            step = ScenarioStep(action=n.action,
                                 devices=[n.device] if n.device else [],
                                 params=dict(n.params), note=n.desc)
-        return None      # node 'Action'/marker -> không xuất
+        if step is not None and self._build_map is not None:
+            self._build_map[id(step)] = n
+        return step
 
     def export_scenario(self):
         """Dựng Scenario từ chuỗi node bằng STACK -> tái tạo Loop/If LỒNG NHAU

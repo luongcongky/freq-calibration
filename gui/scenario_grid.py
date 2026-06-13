@@ -1582,8 +1582,35 @@ class ScenarioGridWindow(QMainWindow):
         self._flow_win = FlowEditorWindow(devices=self._devices_for_flow(),
                                           parent=None, demo=False,
                                           on_export=self._apply_flow_scenario,
-                                          on_switch=self._switch_from_digital)
+                                          on_switch=self._switch_from_digital,
+                                          on_scan_device=self._scan_for_flow)
         self._flow_win.load_scenario(self.scenario)
+        self._flow_win.show()
+        self.hide()                       # ẩn Classic — chỉ hiện 1 theme tại 1 thời điểm
+
+    def _scan_for_flow(self):
+        """Callback cho FlowEditorWindow khi user click Step 1: mở dialog scan,
+        trả về dict {"devices", "address_map", "cmd_delay_s"} hoặc None nếu hủy."""
+        from gui.device_manager import DeviceManagerDialog
+        from core.profile import ConnectionProfile
+        prof = getattr(self, "_profile", ConnectionProfile())
+        dlg = DeviceManagerDialog(self._flow_win, mock=False, profile=prof)
+        if dlg.exec_() == QDialog.Accepted:
+            self._profile = dlg.get_profile()
+            self.address_map = self._profile.address_map()
+            self._connected_keys = set(self.address_map.keys())
+            self.cmd_delay_s = self._profile.cmd_delay_ms / 1000.0
+            self._log(
+                f"Đã cấu hình {len(self.address_map)} thiết bị: "
+                f"{', '.join(self.address_map) or '(trống)'} "
+                f"| delay: {self._profile.cmd_delay_ms}ms",
+                Colors.ACCENT_GREEN)
+            return {
+                "devices": self._devices_for_flow() or [],
+                "address_map": self.address_map,
+                "cmd_delay_s": self.cmd_delay_s,
+            }
+        return None
         self._flow_win.show()
         self.hide()                       # ẩn Classic — chỉ hiện 1 theme tại 1 thời điểm
 
