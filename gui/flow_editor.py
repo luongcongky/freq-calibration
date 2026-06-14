@@ -136,16 +136,29 @@ class NodeItem(QGraphicsItem):
     def paint(self, p: QPainter, opt, widget=None):
         p.setRenderHint(QPainter.Antialiasing)
         body = QRectF(0, 0, NODE_W, NODE_H)
-        # nền
-        p.setBrush(QBrush(QColor(Colors.BG_CARD)))
-        border = QColor(Colors.ACCENT_GREEN) if self.isSelected() else QColor(Colors.BORDER)
-        p.setPen(QPen(border, 2 if self.isSelected() else 1))
+
+        is_goto = self.node_type in ("goto", "label")
+
+        # nền — goto có tint amber nhẹ
+        if is_goto:
+            tint = QColor(Colors.ACCENT_WARN); tint.setAlphaF(0.10)
+            p.setBrush(QBrush(tint))
+            border = QColor(Colors.ACCENT_GREEN) if self.isSelected() else QColor(Colors.ACCENT_WARN)
+            p.setPen(QPen(border, 2))
+        else:
+            p.setBrush(QBrush(QColor(Colors.BG_CARD)))
+            border = QColor(Colors.ACCENT_GREEN) if self.isSelected() else QColor(Colors.BORDER)
+            p.setPen(QPen(border, 2 if self.isSelected() else 1))
         p.drawRoundedRect(body, 8, 8)
 
         icon, type_label = NODE_TYPES[self.node_type]
-        # dòng loại (nhỏ, mờ)
-        p.setPen(QColor(Colors.TEXT_DIM))
-        p.setFont(QFont("Segoe UI", 8))
+        # dòng loại — goto dùng màu amber nổi bật
+        type_color = QColor(Colors.ACCENT_WARN) if is_goto else QColor(Colors.TEXT_DIM)
+        p.setPen(type_color)
+        f_type = QFont("Segoe UI", 8)
+        if is_goto:
+            f_type.setBold(True)
+        p.setFont(f_type)
         p.drawText(QRectF(12, 8, NODE_W - 16, 18),
                    Qt.AlignVCenter | Qt.AlignLeft, f"{icon}  {type_label}")
         # dòng tên (đậm, trắng)
