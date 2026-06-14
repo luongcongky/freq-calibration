@@ -1055,10 +1055,14 @@ class ScenarioGridWindow(QMainWindow):
                 spec = ACTION_SPECS.get(node.action, {})
                 step_label = spec.get("label", node.action)
                 step_desc = spec.get("desc", "")
-            self._new_item(parent_item, node.enabled,
+            it = self._new_item(parent_item, node.enabled,
                            f"Bước: {step_label}", step_desc,
                            ", ".join(node.devices) if node.devices else "—",
                            node.describe_params(), "step", node, parent_obj)
+            if node.action in ("goto", "label"):
+                warn = QColor(Colors.ACCENT_WARN)
+                for c in range(len(COLS)):
+                    it.setForeground(c, warn)
         elif kind == "loop":
             it = self._new_item(parent_item, node.enabled,
                                 f"🔁 Lặp {node.count} lần" + (f"  — {node.note}" if node.note else ""),
@@ -1094,7 +1098,10 @@ class ScenarioGridWindow(QMainWindow):
         enabled = item.checkState(0) == Qt.Checked
         obj.enabled = enabled
         self._loading = True
-        fg = QColor(Colors.TEXT_MAIN) if enabled else QColor(Colors.TEXT_DIM)
+        if isinstance(obj, ScenarioStep) and obj.action in ("goto", "label"):
+            fg = QColor(Colors.ACCENT_WARN) if enabled else QColor(Colors.TEXT_DIM)
+        else:
+            fg = QColor(Colors.TEXT_MAIN) if enabled else QColor(Colors.TEXT_DIM)
         for c in range(len(COLS)):
             item.setForeground(c, fg)
         if self._kind_of(item) in ("loop", "if"):
@@ -1104,13 +1111,16 @@ class ScenarioGridWindow(QMainWindow):
 
     def _cascade_check(self, parent_item, enabled):
         state = Qt.Checked if enabled else Qt.Unchecked
-        fg = QColor(Colors.TEXT_MAIN) if enabled else QColor(Colors.TEXT_DIM)
         for i in range(parent_item.childCount()):
             child = parent_item.child(i)
             child.setCheckState(0, state)
             child_obj = self._obj_of(child)
             if child_obj is not None:
                 child_obj.enabled = enabled
+            if isinstance(child_obj, ScenarioStep) and child_obj.action in ("goto", "label"):
+                fg = QColor(Colors.ACCENT_WARN) if enabled else QColor(Colors.TEXT_DIM)
+            else:
+                fg = QColor(Colors.TEXT_MAIN) if enabled else QColor(Colors.TEXT_DIM)
             for c in range(len(COLS)):
                 child.setForeground(c, fg)
             self._cascade_check(child, enabled)
