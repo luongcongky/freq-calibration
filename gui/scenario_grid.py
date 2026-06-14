@@ -160,9 +160,10 @@ class ScenarioTree(QTreeWidget):
 
 class StepEditorDialog(QDialog):
     def __init__(self, parent=None, step: ScenarioStep | None = None,
-                 connected_keys: set | None = None):
+                 connected_keys: set | None = None, labels: list | None = None):
         super().__init__(parent)
         self._connected = connected_keys or set()
+        self._labels = labels or []          # tên các điểm thao tác (label) cấp ngoài cùng
         self.setWindowTitle("Soạn bước")
         self.setMinimumWidth(560)
         self.setMinimumHeight(520)
@@ -181,6 +182,7 @@ class StepEditorDialog(QDialog):
         self.step_mode = QComboBox()
         self.step_mode.addItem("Lệnh thiết bị (SCPI)", "device")
         self.step_mode.addItem("Biến / Tính toán", "var")
+        self.step_mode.addItem("Nhãn / Goto", "ctrl")
         self.step_mode.currentIndexChanged.connect(self._update_mode)
         mode_row.addWidget(self.step_mode, 1)
         root.addLayout(mode_row)
@@ -253,6 +255,24 @@ class StepEditorDialog(QDialog):
         vform.addRow("", hint)
         root.addWidget(self.var_panel)
 
+        # ----- Panel Nhãn / Goto -----
+        self.ctrl_panel = QWidget()
+        cform = QFormLayout(self.ctrl_panel); cform.setContentsMargins(0, 0, 0, 0)
+        self.ctrl_action = QComboBox()
+        self.ctrl_action.addItem("◆ Điểm thao tác (label)", "label")
+        self.ctrl_action.addItem("→ Nhảy tới điểm (goto)", "goto")
+        self.ctrl_action.currentIndexChanged.connect(self._update_ctrl_labels)
+        cform.addRow("Loại:", self.ctrl_action)
+        self.ctrl_name = QComboBox(); self.ctrl_name.setEditable(True)
+        self.ctrl_name.addItems(self._labels)
+        self.ctrl_name.setCurrentText("")
+        cform.addRow("Tên điểm:", self.ctrl_name)
+        chint = QLabel("Label: đặt 1 điểm thao tác (cấp ngoài cùng). Goto: nhảy tới điểm cùng tên "
+                       "(đặt được trong If để lặp/retry).")
+        chint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;"); chint.setWordWrap(True)
+        cform.addRow("", chint)
+        root.addWidget(self.ctrl_panel)
+
         note_form = QFormLayout()
         self.note_edit = QLineEdit()
         note_form.addRow("Ghi chú:", self.note_edit)
@@ -270,10 +290,14 @@ class StepEditorDialog(QDialog):
 
     # ── helpers ────────────────────────────────────────────────────────────
 
+    def _update_ctrl_labels(self):
+        self.ctrl_name.setEditable(self.ctrl_action.currentData() == "label")
+
     def _update_mode(self):
-        is_var = self.step_mode.currentData() == "var"
-        self.device_panel.setVisible(not is_var)
-        self.var_panel.setVisible(is_var)
+        mode = self.step_mode.currentData()
+        self.device_panel.setVisible(mode == "device")
+        self.var_panel.setVisible(mode == "var")
+        self.ctrl_panel.setVisible(mode == "ctrl")
 
     def _selected_devices(self):
         return [self.dev_list.item(i).data(Qt.UserRole)
@@ -398,6 +422,13 @@ class StepEditorDialog(QDialog):
             self.note_edit.setText(step.note)
             return
 
+        if step.action in ("label", "goto"):
+            self.step_mode.setCurrentIndex(max(0, self.step_mode.findData("ctrl")))
+            self.ctrl_action.setCurrentIndex(max(0, self.ctrl_action.findData(step.action)))
+            self.ctrl_name.setCurrentText(step.params.get("name") or step.params.get("target", ""))
+            self.note_edit.setText(step.note)
+            return
+
         for i in range(self.dev_list.count()):
             it = self.dev_list.item(i)
             it.setCheckState(Qt.Checked if it.data(Qt.UserRole) in step.devices else Qt.Unchecked)
@@ -457,6 +488,19 @@ class StepEditorDialog(QDialog):
                     QMessageBox.warning(self, "Thiếu", "Nhập biểu thức."); return
                 params = {"name": name, "expr": expr}
             self._result = ScenarioStep(action=act, devices=[], params=params, note=note)
+            self.accept()
+            return
+
+        # --- Chế độ Nhãn / Goto ---
+        if self.step_mode.currentData() == "ctrl":
+            act = self.ctrl_action.currentData()
+            name = self.ctrl_name.currentText().strip()
+            if not name:
+                QMessageBox.warning(self, "Thiếu",
+                                    "Nhập tên điểm thao tác." if act == "label"
+                                    else "Chọn điểm thao tác đích."); return
+            key = "name" if act == "label" else "target"
+            self._result = ScenarioStep(action=act, devices=[], params={key: name}, note=note)
             self.accept()
             return
 
@@ -1161,6 +1205,11 @@ class ScenarioGridWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Thêm / sửa / xóa
     # ------------------------------------------------------------------
+    def _top_label_names(self) -> list:
+        """Tên các điểm thao tác (label) ở cấp ngoài cùng — cho goto chọn đích."""
+        return [n.params.get("name", "") for n in self.scenario.nodes
+                if isinstance(n, ScenarioStep) and n.action == "label" and n.params.get("name")]
+
     def _need_branch_msg(self):
         QMessageBox.information(self, "Chọn nhánh",
                                "Đang chọn khối If. Hãy chọn một NHÁNH cụ thể để thêm vào.")
@@ -1171,7 +1220,8 @@ class ScenarioGridWindow(QMainWindow):
         if container is None:
             self._need_branch_msg(); return
         self._ensure_connected()
-        dlg = StepEditorDialog(self, connected_keys=self._connected_keys)
+        dlg = StepEditorDialog(self, connected_keys=self._connected_keys,
+                               labels=self._top_label_names())
         if dlg.exec_() == QDialog.Accepted:
             step = dlg.get_step(); step.enabled = False
             container.insert(insert_at, step)
@@ -1414,7 +1464,8 @@ class ScenarioGridWindow(QMainWindow):
         cont = self._container_of(item)
         if kind == "step":
             self._ensure_connected()
-            dlg = StepEditorDialog(self, step=obj, connected_keys=self._connected_keys)
+            dlg = StepEditorDialog(self, step=obj, connected_keys=self._connected_keys,
+                                   labels=self._top_label_names())
             if dlg.exec_() == QDialog.Accepted:
                 new = dlg.get_step(); new.enabled = obj.enabled
                 idx = self._index_by_identity(cont, obj)

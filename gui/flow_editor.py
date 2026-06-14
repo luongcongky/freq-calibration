@@ -49,6 +49,8 @@ NODE_TYPES = {
     "set_var": ("🔢", "Set Var"),
     "compute": ("🧮", "Compute"),
     "collect": ("📥", "Collect"),
+    "label": ("◆", "Label"),
+    "goto": ("↪", "Goto"),
     # marker điều khiển (mở rộng Loop/If thành chuỗi)
     "loop_start": ("🔁", "Loop Start"),
     "loop_end":   ("⏹", "Loop End"),
@@ -1168,6 +1170,12 @@ class FlowEditorWindow(QMainWindow):
             return NodeItem("collect",
                             f"{step.params.get('var', '')} ← {step.params.get('source', '$last')}",
                             action="collect", params=dict(step.params))
+        if step.action == "label":
+            return NodeItem("label", f"◆ {step.params.get('name', '')}",
+                            action="label", params=dict(step.params))
+        if step.action == "goto":
+            return NodeItem("goto", f"↪ {step.params.get('target', '')}",
+                            action="goto", params=dict(step.params))
         return NodeItem("action", step.action, action=step.action, params=dict(step.params))
 
     def _nodes_for(self, node) -> list[NodeItem]:

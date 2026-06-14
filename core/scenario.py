@@ -116,6 +116,16 @@ ACTION_SPECS: dict[str, dict] = {
         "categories": (), "needs_device": False, "params": [],
         "desc": "Dừng vòng lặp Loop đang chạy ngay lập tức",
     },
+    "label": {
+        "label": "◆ Điểm thao tác (label)",
+        "categories": (), "needs_device": False, "params": [],
+        "desc": "Đánh dấu một điểm để goto nhảy tới",
+    },
+    "goto": {
+        "label": "→ Nhảy tới điểm (goto)",
+        "categories": (), "needs_device": False, "params": [],
+        "desc": "Nhảy tới điểm thao tác (label) cùng tên",
+    },
 }
 
 # Action thao tác trên biến (không gọi thiết bị, không cần ParamSpec).
@@ -571,4 +581,23 @@ def validate_scenario(scn: Scenario) -> list[str]:
     for i, node in enumerate(scn.nodes, start=1):
         label = {"step": "Bước", "loop": "Loop", "if": "If"}[node_kind(node)]
         _validate_node(node, f"{label} {i}", problems, depth=1)
+
+    # --- Nhãn (label) cấp ngoài cùng + đích goto ---
+    top_labels: dict[str, int] = {}
+    for n in scn.nodes:
+        if isinstance(n, ScenarioStep) and n.action == "label":
+            nm = n.params.get("name", "")
+            if not nm:
+                problems.append("Label: thiếu tên điểm thao tác.")
+            elif nm in top_labels:
+                problems.append(f"Label: tên '{nm}' bị trùng (mỗi điểm phải duy nhất).")
+            else:
+                top_labels[nm] = 1
+    for step in scn.iter_steps():        # goto có thể nằm trong Loop/If -> duyệt đệ quy
+        if step.action == "goto":
+            tgt = step.params.get("target", "")
+            if not tgt:
+                problems.append("Goto: chưa chọn điểm thao tác đích.")
+            elif tgt not in top_labels:
+                problems.append(f"Goto: điểm thao tác '{tgt}' không tồn tại ở cấp ngoài cùng.")
     return problems

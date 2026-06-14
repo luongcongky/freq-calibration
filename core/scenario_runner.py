@@ -39,6 +39,16 @@ class _BreakLoop(Exception):
     """Tín hiệu nội bộ: bước 'break' yêu cầu thoát vòng lặp gần nhất."""
 
 
+class _Goto(Exception):
+    """Tín hiệu nội bộ: bước 'goto' yêu cầu nhảy tới nhãn (label) cấp ngoài cùng."""
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.name = name
+
+
+MAX_GOTO = 10000      # trần số lần nhảy goto (chặn vòng lặp vô hạn)
+
+
 # ---------------------------------------------------------------------------
 # Định dạng số kiểu Việt Nam (nhóm nghìn '.', thập phân ',') — KHÔNG dùng ký
 # pháp khoa học. Ví dụ: 1e11 -> "100.000.000.000", -10.5 -> "-10,5".
@@ -307,20 +317,42 @@ class ScenarioRunner:
         self._results = []
         self._ctx = _Ctx()
         self._devices = {}
+        nodes = scn.nodes
+        # Nhãn (label) cấp ngoài cùng -> chỉ số node, làm đích cho goto.
+        labels = {n.params.get("name"): i for i, n in enumerate(nodes)
+                  if isinstance(n, ScenarioStep) and n.action == "label" and n.params.get("name")}
         try:
             for dk in scn.all_device_keys():
                 self._devices[dk] = self._open_device(dk)
 
-            for idx, node in enumerate(scn.nodes, start=1):
+            pc, jumps = 0, 0
+            while pc < len(nodes):
                 if self._stop_flag():
-                    log.warning("ScenarioRunner: dừng theo yêu cầu tại node %d", idx)
+                    log.warning("ScenarioRunner: dừng theo yêu cầu tại node %d", pc + 1)
                     break
+                node = nodes[pc]
                 if not getattr(node, "enabled", True):
+                    pc += 1
                     continue
                 try:
-                    self._run_node(idx, node)
+                    self._run_node(pc + 1, node)
                 except _BreakLoop:
                     pass   # 'break' ngoài loop — bỏ qua
+                except _Goto as g:
+                    tgt = labels.get(g.name)
+                    if tgt is None:
+                        self._emit(StepResult(action="goto", kind="control", ok=False,
+                                              error=f"goto: không thấy nhãn '{g.name}'"))
+                        break
+                    jumps += 1
+                    if jumps > MAX_GOTO:
+                        self._emit(StepResult(action="goto", kind="control", ok=False,
+                                              error=f"goto: vượt {MAX_GOTO} lần nhảy "
+                                                    f"(nghi vòng lặp vô hạn)"))
+                        break
+                    pc = tgt
+                    continue
+                pc += 1
         finally:
             for dev in self._devices.values():
                 try:
@@ -470,6 +502,18 @@ class ScenarioRunner:
                                   node_id=id(step), iteration=iteration,
                                   text="⛔ break — thoát vòng lặp"))
             raise _BreakLoop()
+
+        if step.action == "label":
+            self._emit(StepResult(step_index=idx, action="label", kind="control",
+                                  node_id=id(step), iteration=iteration,
+                                  text=f"◆ Nhãn: {step.params.get('name', '')}"))
+            return
+
+        if step.action == "goto":
+            self._emit(StepResult(step_index=idx, action="goto", kind="control",
+                                  node_id=id(step), iteration=iteration,
+                                  text=f"→ Goto: {step.params.get('target', '')}"))
+            raise _Goto(step.params.get("target", ""))
 
         if step.action in ("set_var", "compute", "collect"):
             self._run_var_action(idx, step, iteration)
