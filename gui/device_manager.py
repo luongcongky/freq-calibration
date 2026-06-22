@@ -234,7 +234,9 @@ class DeviceManagerDialog(QDialog):
 
     def _scan(self):
         self.btn_scan.setEnabled(False)
-        self.lbl_status.setText("Đang quét & nhận diện (subprocess-safe)...")
+        self.lbl_status.setStyleSheet(
+            f"color:{Colors.ACCENT_WARN}; font-weight:bold;")
+        self.lbl_status.setText("⏳ Đang quét thiết bị...")
         self._scan_worker = ScanWorker(mock=False, existing_profile=self.profile)
         self._scan_worker.done.connect(self._on_scan_done)
         self._scan_worker.failed.connect(self._on_scan_failed)
@@ -255,11 +257,6 @@ class DeviceManagerDialog(QDialog):
 
         # --- Tự động cập nhật & lưu profile ---
         new_prof = self._build_profile_from_table()
-        # Giữ lại thiết bị không có *IDN? từ profile cũ (đã thêm qua Wizard)
-        for entry in self.profile.entries:
-            if not self._has_idn(entry.idn):
-                new_prof.set_entry(entry)
-
         if new_prof.entries:
             import os
             save_path = os.path.join(
@@ -277,15 +274,15 @@ class DeviceManagerDialog(QDialog):
         else:
             auto_msg = ""
 
-        hidden_msg = f" | {hidden} ẩn (không *IDN?)" if hidden else ""
-        self.lbl_status.setText(
-            f"Tìm thấy {len(devices)} địa chỉ, hiển thị {self.table.rowCount()} (có *IDN?), "
-            f"nhận diện {matched}.{auto_msg}{hidden_msg}"
-        )
+        self.lbl_status.setStyleSheet(
+            f"color:{Colors.ACCENT_GREEN}; font-weight:bold;")
+        self.lbl_status.setText("✅ Scan hoàn tất.")
 
     def _on_scan_failed(self, msg: str):
         self.btn_scan.setEnabled(True)
-        self.lbl_status.setText("Quét lỗi.")
+        self.lbl_status.setStyleSheet(
+            f"color:{Colors.ACCENT_RED}; font-weight:bold;")
+        self.lbl_status.setText("❌ Quét thất bại.")
         QMessageBox.critical(self, "Lỗi quét", msg)
 
     # ------------------------------------------------------------------
@@ -330,6 +327,13 @@ class DeviceManagerDialog(QDialog):
 
         # Nhận diện địa chỉ mới.
         idn = identify_resource(addr, mock=mock)
+        if not self._has_idn(idn):
+            QMessageBox.warning(
+                self, "Thiết bị không hợp lệ",
+                f"Địa chỉ {addr} không trả lời lệnh *IDN?.\n"
+                "Chỉ thiết bị có phản hồi *IDN? mới được thêm vào danh sách.",
+            )
+            return
         dev = DiscoveredDevice(address=addr, idn=idn, matched_key=match_driver(idn),
                                serial=(idn.split(",")[2].strip() if idn.count(",") >= 2 else ""))
 
@@ -437,10 +441,6 @@ class DeviceManagerDialog(QDialog):
 
     def _on_accept(self):
         prof = self._build_profile_from_table()
-        # Giữ lại thiết bị không có *IDN? từ profile (đã thêm qua Wizard, bị ẩn khỏi bảng)
-        for entry in self.profile.entries:
-            if not self._has_idn(entry.idn):
-                prof.set_entry(entry)
         warns = prof.warnings()
         if warns:
             ret = QMessageBox.question(

@@ -15,20 +15,6 @@
       "label": "",
       "serial": "1412.0000K02/111417",
       "idn": "Rohde&Schwarz,SMW200A,1412.0000K02/111417,5.10.035.29"
-    },
-    {
-      "model_key": "E4418A",
-      "address": "GPIB0::13::INSTR",
-      "label": "",
-      "serial": "US38261676",
-      "idn": "—"
-    },
-    {
-      "model_key": "NRVD",
-      "address": "GPIB0::21::INSTR",
-      "label": "",
-      "serial": "101692.002",
-      "idn": "—"
     }
   ]
 }
