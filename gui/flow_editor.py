@@ -20,7 +20,7 @@ import math
 
 from PyQt5.QtCore import Qt, QRectF, QPointF, QLineF, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import (
-    QColor, QPen, QBrush, QPainter, QPainterPath, QFont,
+    QColor, QPen, QBrush, QPainter, QPainterPath, QFont, QIcon, QPixmap,
 )
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
@@ -570,6 +570,7 @@ class FlowEditorWindow(QMainWindow):
                  on_switch=None, on_scan_device=None):
         super().__init__(parent)
         self.setWindowTitle("FREQ-CAL :: Flow Editor (Theme Digital)")
+        self.setWindowIcon(QIcon("gui/logo.png"))
         self.resize(1600, 900)
         self.devices = devices or (DEMO_DEVICES if demo else [])
         self._on_export = on_export          # callback(scn) khi mở từ app; None = lưu .json
@@ -1378,10 +1379,12 @@ def run_flow_editor(devices=None):
     app đang chạy (chỉ show, không tạo vòng lặp lồng)."""
     import sys
     from PyQt5.QtWidgets import QApplication
+    from PyQt5.QtGui import QIcon
     from gui.theme import build_global_qss
     existing = QApplication.instance()
     app = existing or QApplication(sys.argv)
     if existing is None:
+        app.setWindowIcon(QIcon("gui/logo.png"))
         app.setStyleSheet(build_global_qss())
     win = FlowEditorWindow(devices=devices)
     win.show()

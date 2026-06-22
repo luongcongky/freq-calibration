@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView, QTextEdit, QStyle, QStyleOptionButton, QSpinBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QPointF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF
+from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF, QPixmap, QIcon
 
 from drivers import DEVICE_REGISTRY
 from core.scenario import (
@@ -887,6 +887,7 @@ class ScenarioGridWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("FREQ-CAL PRO :: Scenario Builder")
+        self.setWindowIcon(QIcon("gui/logo.png"))
         self.resize(1600, 900)
         self.setMinimumSize(1150, 680)
         self.scenario = Scenario(name="Kịch bản mới")
@@ -911,6 +912,10 @@ class ScenarioGridWindow(QMainWindow):
         root = QVBoxLayout(central); root.setContentsMargins(12, 12, 12, 12); root.setSpacing(10)
 
         head = QHBoxLayout()
+        logo_lbl = QLabel()
+        logo_pix = QPixmap("gui/logo.png").scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        logo_lbl.setPixmap(logo_pix)
+        head.addWidget(logo_lbl)
         title = QLabel("Scenario Builder")
         title.setStyleSheet("font-size:16pt; font-weight:bold;")
         head.addWidget(title); head.addStretch()
@@ -1826,6 +1831,7 @@ def run_scenario_builder():
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setWindowIcon(QIcon("gui/logo.png"))
     app.setStyleSheet(build_global_qss())
     win = ScenarioGridWindow()
     win.show()
