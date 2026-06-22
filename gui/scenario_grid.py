@@ -905,6 +905,7 @@ class ScenarioGridWindow(QMainWindow):
 
         self._build_ui()
         self._refresh_tree()
+        self._auto_load_profile()
 
     # ------------------------------------------------------------------
     def _build_ui(self):
@@ -1160,6 +1161,30 @@ class ScenarioGridWindow(QMainWindow):
     def _ensure_connected(self):
         # Dùng address_map đã cấu hình từ Device Manager — không scan lại VISA bus.
         self._connected_keys = set(self.address_map.keys())
+
+    def _auto_load_profile(self):
+        """Tự động nạp connection_profile.json khi khởi động (nếu tồn tại)."""
+        import os
+        from core.profile import ConnectionProfile
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "connection_profile.json")
+        if not os.path.exists(path):
+            return
+        try:
+            prof = ConnectionProfile.load_json(path)
+            if not prof.entries:
+                return
+            self._profile = prof
+            self.address_map = prof.address_map()
+            self._connected_keys = set(self.address_map.keys())
+            self.cmd_delay_s = prof.cmd_delay_ms / 1000.0
+            self._log(
+                f"Tự động nạp profile: {', '.join(self.address_map)} "
+                f"| delay {prof.cmd_delay_ms}ms",
+                Colors.ACCENT_GREEN,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"Không nạp được connection_profile.json: {exc}", Colors.ACCENT_WARN)
 
     def _container_for_step(self, item):
         """Trả list để chèn 1 BƯỚC dựa trên item đang chọn (None nếu phải chọn nhánh)."""

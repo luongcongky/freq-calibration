@@ -1,26 +1,34 @@
 {
   "name": "Cấu hình kết nối",
+  "cmd_delay_ms": 100,
   "entries": [
+    {
+      "model_key": "CNT90",
+      "address": "GPIB1::10::INSTR",
+      "label": "",
+      "serial": "331438",
+      "idn": "PENDULUM, CNT-90, 331438, V1.30 24 May 2013 08:30"
+    },
+    {
+      "model_key": "SMW200A",
+      "address": "GPIB1::28::INSTR",
+      "label": "",
+      "serial": "1412.0000K02/111417",
+      "idn": "Rohde&Schwarz,SMW200A,1412.0000K02/111417,5.10.035.29"
+    },
     {
       "model_key": "E4418A",
       "address": "GPIB0::13::INSTR",
       "label": "",
       "serial": "US38261676",
-      "idn": "HEWLETT-PACKARD,EPM-441A,US38261676,A1.02.00"
+      "idn": "—"
     },
     {
       "model_key": "NRVD",
       "address": "GPIB0::21::INSTR",
       "label": "",
       "serial": "101692.002",
-      "idn": "ROHDE&SCHWARZ,NRVD, 101692.002,V1.52  V1.40"
-    },
-    {
-      "model_key": "SMW200A",
-      "address": "GPIB0::28::INSTR",
-      "label": "",
-      "serial": "1412.0000K02/111417",
-      "idn": "Rohde&Schwarz,SMW200A,1412.0000K02/111417,5.10.035.29"
+      "idn": "—"
     }
   ]
 }

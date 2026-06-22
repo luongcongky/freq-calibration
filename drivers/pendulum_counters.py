@@ -120,6 +120,8 @@ class CNT85(_PendulumCounter):
     """
     IDN_KEYWORDS = ("CNT-85", "CNT85")
     MODEL_NAME = "Pendulum CNT-85"
+    PROBE_CMD = "SENS:ACQ:APER?"
+    PROBE_SYNTHETIC_IDN = "Pendulum Instruments,CNT-85,unknown,0.0"
 
     def _mock_idn(self) -> str:
         return "Pendulum Instruments,CNT-85,123456,V1.20"
@@ -129,6 +131,10 @@ class CNT90(_PendulumCounter):
     """Pendulum CNT-90 — máy đếm tần số cao tần (≈ CNT-90XL), SCPI đầy đủ."""
     IDN_KEYWORDS = ("CNT-90", "CNT90")
     MODEL_NAME = "Pendulum CNT-90"
+    # Dùng khi *IDN? không phản hồi (vd. thiết bị ở chế độ local/locked).
+    # SENS:ACQ:APER? trả gate time (float) — đặc trưng riêng dòng Pendulum CNT.
+    PROBE_CMD = "SENS:ACQ:APER?"
+    PROBE_SYNTHETIC_IDN = "Pendulum Instruments,CNT-90,unknown,0.0"
 
     def _mock_idn(self) -> str:
         return "Pendulum Instruments,CNT-90,654321,V2.10"
@@ -138,6 +144,8 @@ class CNT91(_PendulumCounter):
     """Pendulum CNT-91 — máy đếm tần số throughput cao, SCPI đầy đủ."""
     IDN_KEYWORDS = ("CNT-91", "CNT91")
     MODEL_NAME = "Pendulum CNT-91"
+    PROBE_CMD = "SENS:ACQ:APER?"
+    PROBE_SYNTHETIC_IDN = "Pendulum Instruments,CNT-91,unknown,0.0"
 
     def _mock_idn(self) -> str:
         return "Pendulum Instruments,CNT-91,789012,V2.10"

@@ -27,7 +27,8 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 from drivers import DEVICE_REGISTRY
 from core.discovery import (
-    scan_and_identify, snapshot_resources, diff_new_resources,
+    scan_and_identify, scan_and_identify_safe,
+    snapshot_resources, diff_new_resources,
     scan_and_identify as _scan, identify_resource, match_driver,
     test_connection, DiscoveredDevice,
 )
@@ -48,17 +49,24 @@ _MODEL_ITEMS = [("", "— (không gán) —")] + [
 
 
 class ScanWorker(QThread):
-    """Quét + nhận diện ở nền (tránh treo UI khi scan GPIB/LAN thật)."""
+    """Quét + nhận diện ở nền — mỗi địa chỉ chạy trong subprocess riêng
+    để cách ly crash NI-VISA (access violation) không làm chết app."""
     done = pyqtSignal(list)     # list[DiscoveredDevice]
     failed = pyqtSignal(str)
 
-    def __init__(self, mock: bool):
+    def __init__(self, mock: bool, existing_profile: ConnectionProfile | None = None):
         super().__init__()
         self._mock = mock
+        self._profile = existing_profile
 
     def run(self):
         try:
-            self.done.emit(scan_and_identify(mock=self._mock))
+            if self._mock:
+                self.done.emit(scan_and_identify(mock=True))
+            else:
+                self.done.emit(
+                    scan_and_identify_safe(existing_profile=self._profile)
+                )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Scan failed")
             self.failed.emit(str(exc))
@@ -170,6 +178,11 @@ class DeviceManagerDialog(QDialog):
     # Thêm dòng
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _has_idn(idn: str) -> bool:
+        """Trả True nếu idn là chuỗi *IDN? thực sự (không rỗng, không phải placeholder '—')."""
+        return bool(idn) and idn.strip() not in ("", "—")
+
     def _add_row(self, dev: DiscoveredDevice, label: str = "", assign: str | None = None):
         r = self.table.rowCount()
         self.table.insertRow(r)
@@ -221,8 +234,8 @@ class DeviceManagerDialog(QDialog):
 
     def _scan(self):
         self.btn_scan.setEnabled(False)
-        self.lbl_status.setText("Đang quét & nhận diện...")
-        self._scan_worker = ScanWorker(mock=False)
+        self.lbl_status.setText("Đang quét & nhận diện (subprocess-safe)...")
+        self._scan_worker = ScanWorker(mock=False, existing_profile=self.profile)
         self._scan_worker.done.connect(self._on_scan_done)
         self._scan_worker.failed.connect(self._on_scan_failed)
         self._scan_worker.start()
@@ -231,13 +244,43 @@ class DeviceManagerDialog(QDialog):
         self.btn_scan.setEnabled(True)
         self._clear_rows()
         matched = 0
+        hidden = 0
         for dev in devices:
+            if not self._has_idn(dev.idn):
+                hidden += 1
+                continue   # ẩn thiết bị không trả *IDN? — dùng Wizard để thêm thủ công
             self._add_row(dev)
             if dev.is_matched:
                 matched += 1
+
+        # --- Tự động cập nhật & lưu profile ---
+        new_prof = self._build_profile_from_table()
+        # Giữ lại thiết bị không có *IDN? từ profile cũ (đã thêm qua Wizard)
+        for entry in self.profile.entries:
+            if not self._has_idn(entry.idn):
+                new_prof.set_entry(entry)
+
+        if new_prof.entries:
+            import os
+            save_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "connection_profile.json",
+            )
+            try:
+                new_prof.save_json(save_path)
+                self.profile = new_prof
+                logger.info("Auto-saved profile: %d entries → %s", len(new_prof.entries), save_path)
+                auto_msg = f" | Đã tự lưu profile ({len(new_prof.entries)} thiết bị)"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Auto-save profile thất bại: %s", exc)
+                auto_msg = ""
+        else:
+            auto_msg = ""
+
+        hidden_msg = f" | {hidden} ẩn (không *IDN?)" if hidden else ""
         self.lbl_status.setText(
-            f"Tìm thấy {len(devices)} thiết bị, tự nhận diện {matched}. "
-            f"Máy chưa khớp: chọn model thủ công hoặc dùng Wizard."
+            f"Tìm thấy {len(devices)} địa chỉ, hiển thị {self.table.rowCount()} (có *IDN?), "
+            f"nhận diện {matched}.{auto_msg}{hidden_msg}"
         )
 
     def _on_scan_failed(self, msg: str):
@@ -353,10 +396,16 @@ class DeviceManagerDialog(QDialog):
     def _load_profile_into_table(self, prof: ConnectionProfile):
         self._clear_rows()
         self.spn_delay.setValue(int(getattr(prof, "cmd_delay_ms", 100)))
+        hidden = 0
         for e in prof.entries:
+            if not self._has_idn(e.idn):
+                hidden += 1
+                continue   # ẩn thiết bị không có *IDN? — dùng Wizard để thêm
             dev = DiscoveredDevice(address=e.address, idn=e.idn,
                                    matched_key=e.model_key, serial=e.serial)
             self._add_row(dev, label=e.label, assign=e.model_key)
+        if hidden:
+            logger.info("_load_profile_into_table: ẩn %d thiết bị không có *IDN?", hidden)
 
     def _save_profile_file(self):
         prof = self._build_profile_from_table()
@@ -388,6 +437,10 @@ class DeviceManagerDialog(QDialog):
 
     def _on_accept(self):
         prof = self._build_profile_from_table()
+        # Giữ lại thiết bị không có *IDN? từ profile (đã thêm qua Wizard, bị ẩn khỏi bảng)
+        for entry in self.profile.entries:
+            if not self._has_idn(entry.idn):
+                prof.set_entry(entry)
         warns = prof.warnings()
         if warns:
             ret = QMessageBox.question(
