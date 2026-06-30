@@ -385,15 +385,9 @@ def scan_and_identify_safe(
         for entry in getattr(existing_profile, "entries", []):
             scan_dev = found_by_addr.get(entry.address)
             if scan_dev is None:
-                # Địa chỉ không xuất hiện trong scan (máy tắt / sai địa chỉ)
-                extra.append(DiscoveredDevice(
-                    address=entry.address,
-                    idn=entry.idn,
-                    matched_key=entry.model_key,
-                    serial=entry.serial,
-                    error="không xuất hiện trong scan (giữ từ profile)",
-                ))
-                log.info("Giữ lại từ profile (không thấy): %s → %s",
+                # Địa chỉ không xuất hiện trong scan → thiết bị đang tắt / ngắt kết nối,
+                # không thêm vào kết quả để tránh hiển thị thiết bị không connect.
+                log.info("Bỏ qua từ profile (không thấy trong scan): %s → %s",
                          entry.model_key, entry.address)
             elif scan_dev.matched_key is None:
                 # Địa chỉ thấy nhưng không match được IDN → dùng model_key từ profile
