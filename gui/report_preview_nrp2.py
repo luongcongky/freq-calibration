@@ -13,25 +13,24 @@ from __future__ import annotations
 
 from core.session import TableRow
 from core.report_generator import _fmt_freq, _fmt_dbm
-from core.report_generator_nrp2 import _fmt_w, _power_set_from_key
+from core.report_generator_nrp2 import _fmt_w, _power_set_from_key, _A1_N_LAN
 from gui.report_preview import _new_table, _set_cell, _finish, _add_checkbox_column
 
 
 def _build_a1_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None):
-    """Đúng mẫu Biên Bản: chỉ 3 cột (chuẩn / từng lần đo / Độ KĐBĐ)."""
+    """Đúng mẫu Biên Bản: 1 dòng, cột 'lần 1'..'lần 10' nằm ngang giữa Công
+    suất chuẩn và Độ KĐBĐ (giống cách trải cột của Bảng A2/A3)."""
     row0 = rows[0]
     raws = row0.raw_readings or []
-    n = max(len(raws), 1)
-    tbl = _new_table(n, ["Công suất\nchuẩn", "Công suất đo được\ntrên NRVD (W)", "Độ\nKĐBĐ"])
-    for i in range(n):
-        if i < len(raws):
-            _set_cell(tbl, i, 1, _fmt_w(raws[i]))
-    tbl.setSpan(0, 0, n, 1)
-    tbl.setSpan(0, 2, n, 1)
+    headers = ["Công suất\nchuẩn"] + [f"lần {i + 1}" for i in range(_A1_N_LAN)] + ["Độ\nKĐBĐ"]
+    tbl = _new_table(1, headers)
     _set_cell(tbl, 0, 0, "1 mW")
-    _set_cell(tbl, 0, 2, row0.limit)
+    for i in range(_A1_N_LAN):
+        if i < len(raws):
+            _set_cell(tbl, 0, 1 + i, _fmt_w(raws[i]))
+    _set_cell(tbl, 0, 1 + _A1_N_LAN, row0.limit)
     if with_checkbox:
-        _add_checkbox_column(tbl, [(0, n, row0)], on_toggle)
+        _add_checkbox_column(tbl, [(0, 1, row0)], on_toggle)
     return _finish(tbl)
 
 

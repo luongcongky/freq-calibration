@@ -169,17 +169,21 @@ def test_nrp2_a2_has_different_layout_than_cnt90xl_a2():
     assert any("lần" in h for h in headers_nrp2)
 
 
-def test_nrp2_a1_raw_readings_and_checkbox_span():
+def test_nrp2_a1_lan_columns_horizontal():
+    """Đúng mẫu Biên Bản: 1 dòng, cột 'lần 1'..'lần 10' nằm ngang (không xếp
+    dọc như trước)."""
     rows = [
         TableRow(key="1mW_50MHz", freq_set=50e6, value_measured=0.00099,
                  error=0.00001, limit="± 0,00002",
                  raw_readings=[0.00098, 0.00099, 0.00100], confirmed=False),
     ]
     tbl = build_wysiwyg_table(NRP2, "A1", rows, with_checkbox=True)
-    assert tbl.rowCount() == 3
-    assert tbl.columnCount() == 4   # 3 cột dữ liệu (chuẩn/đo được/Độ KĐBĐ) + 1 checkbox
-    assert tbl.rowSpan(0, 0) == 3   # checkbox gộp cả 3 dòng đo thô
+    assert tbl.rowCount() == 1
+    # 1 (chuẩn) + 10 (lần 1..10) + 1 (Độ KĐBĐ) + 1 (checkbox) = 13
+    assert tbl.columnCount() == 13
     assert tbl.item(0, 1).text() == "1 mW"   # cột "Công suất chuẩn" (đã dịch +1 vì checkbox)
+    assert tbl.item(0, 2).text() != ""       # lần 1 có giá trị
+    assert tbl.item(0, 11) is None or tbl.item(0, 11).text() == ""  # lần 10: không có dữ liệu (chỉ 3 lần đo trong test)
 
 
 def test_nrp2_a3_groups_by_frequency():

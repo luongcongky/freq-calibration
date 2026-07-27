@@ -73,32 +73,33 @@ def _empty_table(table_id: str, name: str) -> ReportTable:
 # Bảng A1 — Độ chính xác mức công suất tại đầu ra chuẩn
 # ---------------------------------------------------------------------------
 
+_A1_N_LAN = 10   # mục 5.3.1: đo 10 lần lặp lại
+
+
 def _add_table_a1_nrp2(doc: Document, rt: ReportTable):
-    """Đúng mẫu trang 14: chỉ 3 cột (chuẩn / từng lần đo trên NRVD / Độ KĐBĐ)
-    — KHÔNG có cột TB hay Số hiệu chỉnh trong Biên Bản (chỉ có ở GCN)."""
+    """Đúng mẫu trang 14: 1 dòng dữ liệu, cột 'lần 1'..'lần 10' nằm ngang
+    (giống cách trải cột của Bảng A2/A3) — KHÔNG có cột TB/Số hiệu chỉnh
+    trong Biên Bản (chỉ có ở GCN)."""
     _para(doc, "Bảng A1 - Xác định độ chính xác mức công suất tại đầu ra chuẩn",
           align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=SIZE_SMALL,
           space_before=4, space_after=2)
 
     row0 = rt.rows[0] if rt.rows else None
     raws = row0.raw_readings if row0 else []
-    n_data = max(len(raws), 1)
-    n_rows = 1 + n_data
 
-    tbl = doc.add_table(rows=n_rows, cols=3)
+    headers = ["Công suất\nchuẩn"] + [f"lần {i + 1}" for i in range(_A1_N_LAN)] + ["Độ\nKĐBĐ"]
+    tbl = doc.add_table(rows=2, cols=len(headers))
     tbl.style = "Table Grid"
-    _set_col_widths(tbl, [4.0, 6.0, 3.0])
+    _set_col_widths(tbl, [2.2] + [1.0] * _A1_N_LAN + [1.8])
 
-    for j, h in enumerate(["Công suất\nchuẩn", "Công suất đo được\ntrên NRVD (W)", "Độ\nKĐBĐ"]):
+    for j, h in enumerate(headers):
         _cell_para(tbl.cell(0, j), h, bold=True, size=SIZE_SMALL)
 
-    for i in range(n_data):
-        if i < len(raws):
-            _cell_para(tbl.cell(i + 1, 1), _fmt_w(raws[i]), size=SIZE_SMALL)
-    _merge_col(tbl, 0, 1, n_data)
-    _merge_col(tbl, 2, 1, n_data)
     _cell_para(tbl.cell(1, 0), "1 mW", size=SIZE_SMALL)
-    _cell_para(tbl.cell(1, 2), row0.limit if row0 else "", size=SIZE_SMALL)
+    for i in range(_A1_N_LAN):
+        if i < len(raws):
+            _cell_para(tbl.cell(1, 1 + i), _fmt_w(raws[i]), size=SIZE_SMALL)
+    _cell_para(tbl.cell(1, 1 + _A1_N_LAN), row0.limit if row0 else "", size=SIZE_SMALL)
 
 
 # ---------------------------------------------------------------------------
