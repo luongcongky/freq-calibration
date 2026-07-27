@@ -545,8 +545,11 @@ class _TestReviewTab(QWidget):
             w = item.widget()
             if w:
                 w.deleteLater()
+        # with_status dùng chung điều kiện với with_checkbox: chỉ cho sửa
+        # Đạt/Không đạt khi bài đã có kết quả thật (không phải khung xem trước).
         tbl = build_wysiwyg_table(self._template_id, table_id, rows,
                                   with_checkbox=with_checkbox, on_toggle=self._on_row_confirm_toggled,
+                                  with_status=with_checkbox, on_status_change=self._on_row_confirm_toggled,
                                   empty_message="Chưa có kết quả")
         self._result_holder.addWidget(tbl)
 
@@ -621,6 +624,7 @@ class _TestReviewTab(QWidget):
 class _ExportTab(QWidget):
     export_bienban_requested = pyqtSignal()
     export_gcnkd_requested   = pyqtSignal()
+    row_edited               = pyqtSignal()   # checkbox/combobox trong bảng xem trước vừa đổi
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -749,13 +753,23 @@ class _ExportTab(QWidget):
             title = QLabel(f"{t.table_id} — {t.name}")
             title.setStyleSheet(f"font-weight:bold; color:{Colors.ACCENT_CYAN}; font-size:12px;")
             self._preview_lay.addWidget(title)
-            tbl = build_wysiwyg_table(self._template_id, t.table_id, rows)
+            tbl = build_wysiwyg_table(self._template_id, t.table_id, rows,
+                                      with_checkbox=True, on_toggle=self._on_row_edited,
+                                      with_status=True, on_status_change=self._on_row_edited)
             tbl.setMaximumHeight(34 * (len(rows) + 1) + 16)
             self._preview_lay.addWidget(tbl)
 
         if not any_shown:
             self._preview_lay.addWidget(QLabel("Chưa có dòng kết quả nào được xác nhận."))
         self._preview_lay.addStretch()
+
+    def _on_row_edited(self):
+        """Checkbox/combobox trong bảng xem trước vừa đổi — chỉ báo lên
+        SessionManagerWindow để làm mới cột tổng hợp bên trái (icon xác
+        nhận, kết luận, nút xuất); KHÔNG tự dựng lại bảng xem trước (tránh
+        dòng biến mất đột ngột ngay dưới con trỏ khi vừa bỏ tick — "Xem
+        trước" vẫn là thao tác thủ công qua nút bấm)."""
+        self.row_edited.emit()
 
 
 # ============================================================================
@@ -907,6 +921,7 @@ class SessionManagerWindow(QMainWindow):
         self._step_review.run_one_requested.connect(self._run_one)
         self._step_export.export_bienban_requested.connect(self._export_bienban)
         self._step_export.export_gcnkd_requested.connect(self._export_gcnkd)
+        self._step_export.row_edited.connect(self._refresh_export_tab)
 
     def _on_step_changed(self, index: int):
         self.rail.set_current(index)

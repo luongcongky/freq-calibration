@@ -14,10 +14,13 @@ from __future__ import annotations
 from core.session import TableRow
 from core.report_generator import _fmt_freq, _fmt_dbm
 from core.report_generator_nrp2 import _fmt_w, _power_set_from_key, _A1_N_LAN
-from gui.report_preview import _new_table, _set_cell, _finish, _add_checkbox_column
+from gui.report_preview import (
+    _new_table, _set_cell, _finish, _add_checkbox_column, _add_status_column,
+)
 
 
-def _build_a1_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None):
+def _build_a1_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
+                   with_status: bool = False, on_status_change=None):
     """Đúng mẫu Biên Bản: 1 dòng, cột 'lần 1'..'lần 10' nằm ngang giữa Công
     suất chuẩn và Độ KĐBĐ (giống cách trải cột của Bảng A2/A3)."""
     row0 = rows[0]
@@ -29,12 +32,16 @@ def _build_a1_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
         if i < len(raws):
             _set_cell(tbl, 0, 1 + i, _fmt_w(raws[i]))
     _set_cell(tbl, 0, 1 + _A1_N_LAN, row0.limit)
+    row_groups = [(0, 1, row0)]
+    if with_status:
+        _add_status_column(tbl, row_groups, on_status_change)
     if with_checkbox:
-        _add_checkbox_column(tbl, [(0, 1, row0)], on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle)
     return _finish(tbl)
 
 
-def _build_a2_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None):
+def _build_a2_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
+                   with_status: bool = False, on_status_change=None):
     """Đúng mẫu Biên Bản: Tần số | lần 1..5 | TB | Độ KĐBĐ (8 cột)."""
     headers = ["Tần số thiết lập\n(mức công suất 0 dBm)",
                "lần 1", "lần 2", "lần 3", "lần 4", "lần 5", "TB", "Độ KĐBĐ"]
@@ -48,12 +55,16 @@ def _build_a2_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
         if r.value_measured is not None:
             _set_cell(tbl, i, 6, _fmt_dbm(r.value_measured))
         _set_cell(tbl, i, 7, r.limit)
+    row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
+    if with_status:
+        _add_status_column(tbl, row_groups, on_status_change)
     if with_checkbox:
-        _add_checkbox_column(tbl, [(i, i + 1, r) for i, r in enumerate(rows)], on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle)
     return _finish(tbl)
 
 
-def _build_a3_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None):
+def _build_a3_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
+                   with_status: bool = False, on_status_change=None):
     """Đúng mẫu Biên Bản: Tần số (gộp theo nhóm) | Công suất chuẩn | lần 1..5
     | TB | Độ KĐBĐ (9 cột)."""
     headers = ["Tần số\nthiết lập", "Công suất\nchuẩn (dBm)",
@@ -79,8 +90,11 @@ def _build_a3_nrp2(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
             _set_cell(tbl, i, 7, _fmt_dbm(r.value_measured))
         _set_cell(tbl, i, 8, r.limit)
 
+    row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
+    if with_status:
+        _add_status_column(tbl, row_groups, on_status_change)
     if with_checkbox:
-        _add_checkbox_column(tbl, [(i, i + 1, r) for i, r in enumerate(rows)], on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle)
     return _finish(tbl)
 
 

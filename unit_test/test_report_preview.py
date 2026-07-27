@@ -209,3 +209,80 @@ def test_unknown_template_falls_back_to_cnt90xl():
     rows = [TableRow(key="5Hz", freq_set=5, value_measured=5.0, limit="x")]
     tbl = build_wysiwyg_table("KHONG_TON_TAI", "A5", rows)
     assert tbl.columnCount() == 4   # vẫn dùng layout CNT-90XL, không crash
+
+
+# ---------------------------------------------------------------------------
+# Cột "Đạt/Không đạt" (combobox, chỉ nội bộ app — không in vào docx)
+# ---------------------------------------------------------------------------
+
+from PyQt5.QtWidgets import QComboBox  # noqa: E402
+
+
+def test_status_column_appended_at_end_with_default_from_passed():
+    rows = [
+        TableRow(key="5Hz", freq_set=5, value_measured=5.0000012, error=2.4e-7,
+                 limit="± 2,4×10⁻⁷", passed=True),
+    ]
+    tbl = build_wysiwyg_table(CNT90, "A5", rows, with_status=True)
+    assert tbl.columnCount() == 5   # 4 cột dữ liệu + 1 status
+    assert tbl.horizontalHeaderItem(4).text() == "Đạt/\nKhông đạt"
+    combo = tbl.cellWidget(0, 4)
+    assert isinstance(combo, QComboBox)
+    assert combo.currentIndex() == 1   # passed=True -> "✅ Đạt"
+
+
+def test_status_column_defaults_to_dash_when_passed_none():
+    rows = [TableRow(key="10MHz", freq_set=10e6, value_measured=12.3, limit="≤ 15 mVrms", passed=None)]
+    tbl = build_wysiwyg_table(CNT90, "A2", rows, with_status=True)
+    combo = tbl.cellWidget(0, tbl.columnCount() - 1)
+    assert combo.currentIndex() == 0   # "—"
+
+
+def test_status_combobox_writes_back_to_passed_and_calls_callback():
+    rows = [TableRow(key="5Hz", freq_set=5, value_measured=5.0, limit="x", passed=None)]
+    changed = []
+    tbl = build_wysiwyg_table(CNT90, "A5", rows, with_status=True,
+                              on_status_change=lambda: changed.append(1))
+    combo = tbl.cellWidget(0, tbl.columnCount() - 1)
+    combo.setCurrentIndex(2)   # "❌ Không đạt"
+    assert rows[0].passed is False
+    assert changed == [1]
+    combo.setCurrentIndex(1)   # "✅ Đạt"
+    assert rows[0].passed is True
+
+
+def test_checkbox_and_status_together_correct_order():
+    """Khi bật cả 2: [checkbox][...dữ liệu...][status]."""
+    rows = [TableRow(key="5Hz", freq_set=5, value_measured=5.0, limit="x", passed=True, confirmed=False)]
+    tbl = build_wysiwyg_table(CNT90, "A5", rows, with_checkbox=True, with_status=True)
+    # 4 cột dữ liệu + checkbox (đầu) + status (cuối) = 6
+    assert tbl.columnCount() == 6
+    assert tbl.horizontalHeaderItem(0).text() == "Đưa vào\nbáo cáo"
+    assert tbl.horizontalHeaderItem(5).text() == "Đạt/\nKhông đạt"
+    from PyQt5.QtWidgets import QCheckBox
+    assert tbl.cellWidget(0, 0).findChild(QCheckBox) is not None
+    assert isinstance(tbl.cellWidget(0, 5), QComboBox)
+
+
+def test_status_column_spans_all_raw_reading_rows():
+    """Bảng kiểu A1 (nhiều dòng lưới, 1 TableRow) -> combobox cũng phải gộp
+    (span) hết N dòng, giống hệt checkbox."""
+    rows = [
+        TableRow(key="10MHz", freq_set=10e6, value_measured=10e6 + 1,
+                 raw_readings=[10e6, 10e6 + 1, 10e6 + 2], passed=None),
+    ]
+    tbl = build_wysiwyg_table(CNT90, "A1", rows, with_status=True)
+    assert tbl.rowSpan(0, tbl.columnCount() - 1) == 3
+
+
+def test_nrp2_status_column_also_appended():
+    """NRP2 A1 là 1 dòng duy nhất (lần 1..10 nằm ngang thành cột, không xếp
+    dọc như CNT-90XL) -> chỉ cần combobox ở dòng đó, không cần gộp span."""
+    rows = [
+        TableRow(key="1mW_50MHz", freq_set=50e6, value_measured=0.00099,
+                 raw_readings=[0.00098, 0.00099, 0.00100], passed=None),
+    ]
+    tbl = build_wysiwyg_table(NRP2, "A1", rows, with_status=True)
+    assert tbl.rowCount() == 1
+    assert tbl.horizontalHeaderItem(tbl.columnCount() - 1).text() == "Đạt/\nKhông đạt"
+    assert isinstance(tbl.cellWidget(0, tbl.columnCount() - 1), QComboBox)

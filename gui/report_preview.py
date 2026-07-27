@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QCheckBox, QWidget, QHBoxLayout,
+    QCheckBox, QComboBox, QWidget, QHBoxLayout,
 )
 from PyQt5.QtCore import Qt
 
@@ -82,11 +82,42 @@ def _add_checkbox_column(tbl: QTableWidget, row_groups: list, on_toggle=None):
     tbl.setColumnWidth(0, 70)
 
 
+_STATUS_OPTIONS = [("—", None), ("✅ Đạt", True), ("❌ Không đạt", False)]
+_STATUS_INDEX = {None: 0, True: 1, False: 2}
+
+
+def _add_status_column(tbl: QTableWidget, row_groups: list, on_change=None):
+    """Thêm cột 'Đạt/Không đạt' ở CUỐI bảng — combobox cho kiểm định viên tự
+    chọn/ghi đè TableRow.passed (chỉ hỗ trợ rà soát trong app, KHÔNG in vào
+    file docx xuất ra). Cùng cấu trúc row_groups như _add_checkbox_column."""
+    col = tbl.columnCount()
+    tbl.setColumnCount(col + 1)
+    tbl.setHorizontalHeaderItem(col, QTableWidgetItem("Đạt/\nKhông đạt"))
+    for start, end, r in row_groups:
+        combo = QComboBox()
+        for label, _ in _STATUS_OPTIONS:
+            combo.addItem(label)
+        combo.setCurrentIndex(_STATUS_INDEX.get(r.passed, 0))
+
+        def _make_cb(row_obj):
+            def _cb(index):
+                row_obj.passed = _STATUS_OPTIONS[index][1]
+                if on_change:
+                    on_change()
+            return _cb
+
+        combo.currentIndexChanged.connect(_make_cb(r))
+        tbl.setCellWidget(start, col, combo)
+        if end - start > 1:
+            tbl.setSpan(start, col, end - start, 1)
+
+
 # ---------------------------------------------------------------------------
 # A1 — Sai số bộ dao động thạch anh (mô phỏng report_generator._add_table_a1)
 # ---------------------------------------------------------------------------
 
-def _build_a1(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None) -> QTableWidget:
+def _build_a1(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
+             with_status: bool = False, on_status_change=None) -> QTableWidget:
     row0 = rows[0]
     raws = row0.raw_readings or []
     n = max(len(raws), 1)
@@ -104,8 +135,11 @@ def _build_a1(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None)
     _set_cell(tbl, 0, 2, _fmt_hz_measured(row0.value_measured) if row0.value_measured else "")
     _set_cell(tbl, 0, 3, f"± {_sci(row0.error)}" if row0.error is not None else "")
     _set_cell(tbl, 0, 4, row0.limit or "± 2,4×10⁻⁷")
+    row_groups = [(0, n, row0)]
+    if with_status:
+        _add_status_column(tbl, row_groups, on_status_change)
     if with_checkbox:
-        _add_checkbox_column(tbl, [(0, n, row0)], on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle)
     return _finish(tbl)
 
 
@@ -129,11 +163,15 @@ def _fill_grouped_limit(tbl: QTableWidget, rows: list[TableRow], value_fmt):
 
 
 def _build_sensitivity(rows: list[TableRow], value_fmt,
-                       with_checkbox: bool = False, on_toggle=None) -> QTableWidget:
+                       with_checkbox: bool = False, on_toggle=None,
+                       with_status: bool = False, on_status_change=None) -> QTableWidget:
     tbl = _new_table(len(rows), ["Tần số thiết lập", "Độ nhạy đo được", "Độ nhạy cho phép"])
     _fill_grouped_limit(tbl, rows, value_fmt)
+    row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
+    if with_status:
+        _add_status_column(tbl, row_groups, on_status_change)
     if with_checkbox:
-        _add_checkbox_column(tbl, [(i, i + 1, r) for i, r in enumerate(rows)], on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle)
     return _finish(tbl)
 
 
@@ -141,7 +179,8 @@ def _build_sensitivity(rows: list[TableRow], value_fmt,
 # A5/A6/A7 — Sai số đo tần số
 # ---------------------------------------------------------------------------
 
-def _build_freq_error(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None) -> QTableWidget:
+def _build_freq_error(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
+                      with_status: bool = False, on_status_change=None) -> QTableWidget:
     headers = ["Tần số\nthiết lập", "Tần số đo được\n(fđo)", "Sai số đo\ntần số (δf)", "Sai số\ncho phép"]
     tbl = _new_table(len(rows), headers)
     for i, r in enumerate(rows):
@@ -154,8 +193,11 @@ def _build_freq_error(rows: list[TableRow], with_checkbox: bool = False, on_togg
     if rows:
         tbl.setSpan(0, 3, len(rows), 1)
         _set_cell(tbl, 0, 3, rows[0].limit or "± 2,4×10⁻⁷")
+    row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
+    if with_status:
+        _add_status_column(tbl, row_groups, on_status_change)
     if with_checkbox:
-        _add_checkbox_column(tbl, [(i, i + 1, r) for i, r in enumerate(rows)], on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle)
     return _finish(tbl)
 
 
@@ -163,7 +205,8 @@ def _build_freq_error(rows: list[TableRow], with_checkbox: bool = False, on_togg
 # A8 — Sai số đo chu kỳ
 # ---------------------------------------------------------------------------
 
-def _build_period_error(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None) -> QTableWidget:
+def _build_period_error(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
+                        with_status: bool = False, on_status_change=None) -> QTableWidget:
     headers = ["Tần số (chu kỳ)\nthiết lập", "Chu kỳ\nđo được (Tđo)",
                "Sai số đo\n(δT)", "Sai số cho phép\n(δTcp)"]
     tbl = _new_table(len(rows), headers)
@@ -176,8 +219,11 @@ def _build_period_error(rows: list[TableRow], with_checkbox: bool = False, on_to
     if rows:
         tbl.setSpan(0, 3, len(rows), 1)
         _set_cell(tbl, 0, 3, rows[0].limit or "± 2,4×10⁻⁷")
+    row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
+    if with_status:
+        _add_status_column(tbl, row_groups, on_status_change)
     if with_checkbox:
-        _add_checkbox_column(tbl, [(i, i + 1, r) for i, r in enumerate(rows)], on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle)
     return _finish(tbl)
 
 
@@ -206,13 +252,18 @@ _TEMPLATE_BUILDERS = {
 
 def build_wysiwyg_table(template_id: str, table_id: str, rows: list[TableRow],
                         with_checkbox: bool = False, on_toggle=None,
+                        with_status: bool = False, on_status_change=None,
                         empty_message: str = "Chưa có dòng nào được xác nhận") -> QTableWidget:
     """Dựng bảng khớp đúng layout docx thật của table_id, theo đúng template
-    đang dùng (mỗi template có thể định nghĩa lại ý nghĩa mã bảng A1..A8)."""
+    đang dùng (mỗi template có thể định nghĩa lại ý nghĩa mã bảng A1..A8).
+
+    with_status thêm cột 'Đạt/Không đạt' (combobox, ghi vào TableRow.passed)
+    — chỉ hỗ trợ rà soát trong app, KHÔNG xuất hiện trong file docx."""
     if not rows:
         return _empty_table(empty_message)
     get_builders = _TEMPLATE_BUILDERS.get(template_id, _TEMPLATE_BUILDERS["QTKD_2461_CNT90XL"])
     builder = get_builders().get(table_id)
     if builder is None:
         return _empty_table(f"Không rõ định dạng bảng '{table_id}'")
-    return builder(rows, with_checkbox=with_checkbox, on_toggle=on_toggle)
+    return builder(rows, with_checkbox=with_checkbox, on_toggle=on_toggle,
+                   with_status=with_status, on_status_change=on_status_change)
