@@ -51,16 +51,18 @@ def _finish(tbl: QTableWidget) -> QTableWidget:
     return tbl
 
 
-def _add_checkbox_column(tbl: QTableWidget, row_groups: list, on_toggle=None):
+def _add_checkbox_column(tbl: QTableWidget, row_groups: list, on_toggle=None, enabled: bool = True):
     """Chèn cột 'Đưa vào báo cáo' ở đầu bảng — Qt tự dịch cell/span có sẵn
     sang phải khi insertColumn(0). row_groups: [(start_row, end_row_excl,
     TableRow), ...] — 1 nhóm có thể trải nhiều dòng lưới (vd bảng đo lặp N
-    lần chỉ có 1 TableRow nhưng N dòng hiển thị từng lần đo)."""
+    lần chỉ có 1 TableRow nhưng N dòng hiển thị từng lần đo). enabled=False
+    hiện checkbox nhưng khoá (bài chưa có kết quả thật để xác nhận)."""
     tbl.insertColumn(0)
     tbl.setHorizontalHeaderItem(0, QTableWidgetItem("Đưa vào\nbáo cáo"))
     for start, end, r in row_groups:
         chk = QCheckBox()
         chk.setChecked(r.confirmed)
+        chk.setEnabled(enabled)
 
         def _make_cb(row_obj, checkbox):
             def _cb(_state):
@@ -86,10 +88,11 @@ _STATUS_OPTIONS = [("—", None), ("✅ Đạt", True), ("❌ Không đạt", Fa
 _STATUS_INDEX = {None: 0, True: 1, False: 2}
 
 
-def _add_status_column(tbl: QTableWidget, row_groups: list, on_change=None):
+def _add_status_column(tbl: QTableWidget, row_groups: list, on_change=None, enabled: bool = True):
     """Thêm cột 'Đạt/Không đạt' ở CUỐI bảng — combobox cho kiểm định viên tự
     chọn/ghi đè TableRow.passed (chỉ hỗ trợ rà soát trong app, KHÔNG in vào
-    file docx xuất ra). Cùng cấu trúc row_groups như _add_checkbox_column."""
+    file docx xuất ra). Cùng cấu trúc row_groups như _add_checkbox_column.
+    enabled=False hiện combobox nhưng khoá (bài chưa có kết quả thật)."""
     col = tbl.columnCount()
     tbl.setColumnCount(col + 1)
     tbl.setHorizontalHeaderItem(col, QTableWidgetItem("Đạt/\nKhông đạt"))
@@ -98,6 +101,7 @@ def _add_status_column(tbl: QTableWidget, row_groups: list, on_change=None):
         for label, _ in _STATUS_OPTIONS:
             combo.addItem(label)
         combo.setCurrentIndex(_STATUS_INDEX.get(r.passed, 0))
+        combo.setEnabled(enabled)
 
         def _make_cb(row_obj):
             def _cb(index):
@@ -117,7 +121,8 @@ def _add_status_column(tbl: QTableWidget, row_groups: list, on_change=None):
 # ---------------------------------------------------------------------------
 
 def _build_a1(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
-             with_status: bool = False, on_status_change=None) -> QTableWidget:
+             with_status: bool = False, on_status_change=None,
+             interactive: bool = True) -> QTableWidget:
     row0 = rows[0]
     raws = row0.raw_readings or []
     n = max(len(raws), 1)
@@ -137,9 +142,9 @@ def _build_a1(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
     _set_cell(tbl, 0, 4, row0.limit or "± 2,4×10⁻⁷")
     row_groups = [(0, n, row0)]
     if with_status:
-        _add_status_column(tbl, row_groups, on_status_change)
+        _add_status_column(tbl, row_groups, on_status_change, enabled=interactive)
     if with_checkbox:
-        _add_checkbox_column(tbl, row_groups, on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle, enabled=interactive)
     return _finish(tbl)
 
 
@@ -164,14 +169,15 @@ def _fill_grouped_limit(tbl: QTableWidget, rows: list[TableRow], value_fmt):
 
 def _build_sensitivity(rows: list[TableRow], value_fmt,
                        with_checkbox: bool = False, on_toggle=None,
-                       with_status: bool = False, on_status_change=None) -> QTableWidget:
+                       with_status: bool = False, on_status_change=None,
+                       interactive: bool = True) -> QTableWidget:
     tbl = _new_table(len(rows), ["Tần số thiết lập", "Độ nhạy đo được", "Độ nhạy cho phép"])
     _fill_grouped_limit(tbl, rows, value_fmt)
     row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
     if with_status:
-        _add_status_column(tbl, row_groups, on_status_change)
+        _add_status_column(tbl, row_groups, on_status_change, enabled=interactive)
     if with_checkbox:
-        _add_checkbox_column(tbl, row_groups, on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle, enabled=interactive)
     return _finish(tbl)
 
 
@@ -180,7 +186,8 @@ def _build_sensitivity(rows: list[TableRow], value_fmt,
 # ---------------------------------------------------------------------------
 
 def _build_freq_error(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
-                      with_status: bool = False, on_status_change=None) -> QTableWidget:
+                      with_status: bool = False, on_status_change=None,
+                      interactive: bool = True) -> QTableWidget:
     headers = ["Tần số\nthiết lập", "Tần số đo được\n(fđo)", "Sai số đo\ntần số (δf)", "Sai số\ncho phép"]
     tbl = _new_table(len(rows), headers)
     for i, r in enumerate(rows):
@@ -195,9 +202,9 @@ def _build_freq_error(rows: list[TableRow], with_checkbox: bool = False, on_togg
         _set_cell(tbl, 0, 3, rows[0].limit or "± 2,4×10⁻⁷")
     row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
     if with_status:
-        _add_status_column(tbl, row_groups, on_status_change)
+        _add_status_column(tbl, row_groups, on_status_change, enabled=interactive)
     if with_checkbox:
-        _add_checkbox_column(tbl, row_groups, on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle, enabled=interactive)
     return _finish(tbl)
 
 
@@ -206,7 +213,8 @@ def _build_freq_error(rows: list[TableRow], with_checkbox: bool = False, on_togg
 # ---------------------------------------------------------------------------
 
 def _build_period_error(rows: list[TableRow], with_checkbox: bool = False, on_toggle=None,
-                        with_status: bool = False, on_status_change=None) -> QTableWidget:
+                        with_status: bool = False, on_status_change=None,
+                        interactive: bool = True) -> QTableWidget:
     headers = ["Tần số (chu kỳ)\nthiết lập", "Chu kỳ\nđo được (Tđo)",
                "Sai số đo\n(δT)", "Sai số cho phép\n(δTcp)"]
     tbl = _new_table(len(rows), headers)
@@ -221,9 +229,9 @@ def _build_period_error(rows: list[TableRow], with_checkbox: bool = False, on_to
         _set_cell(tbl, 0, 3, rows[0].limit or "± 2,4×10⁻⁷")
     row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
     if with_status:
-        _add_status_column(tbl, row_groups, on_status_change)
+        _add_status_column(tbl, row_groups, on_status_change, enabled=interactive)
     if with_checkbox:
-        _add_checkbox_column(tbl, row_groups, on_toggle)
+        _add_checkbox_column(tbl, row_groups, on_toggle, enabled=interactive)
     return _finish(tbl)
 
 
@@ -253,12 +261,15 @@ _TEMPLATE_BUILDERS = {
 def build_wysiwyg_table(template_id: str, table_id: str, rows: list[TableRow],
                         with_checkbox: bool = False, on_toggle=None,
                         with_status: bool = False, on_status_change=None,
+                        interactive: bool = True,
                         empty_message: str = "Chưa có dòng nào được xác nhận") -> QTableWidget:
     """Dựng bảng khớp đúng layout docx thật của table_id, theo đúng template
     đang dùng (mỗi template có thể định nghĩa lại ý nghĩa mã bảng A1..A8).
 
     with_status thêm cột 'Đạt/Không đạt' (combobox, ghi vào TableRow.passed)
-    — chỉ hỗ trợ rà soát trong app, KHÔNG xuất hiện trong file docx."""
+    — chỉ hỗ trợ rà soát trong app, KHÔNG xuất hiện trong file docx.
+    interactive=False vẫn HIỆN checkbox/combobox nhưng khoá lại (disabled)
+    — dùng khi bài chưa có kết quả thật (bảng xem trước khung rỗng)."""
     if not rows:
         return _empty_table(empty_message)
     get_builders = _TEMPLATE_BUILDERS.get(template_id, _TEMPLATE_BUILDERS["QTKD_2461_CNT90XL"])
@@ -266,4 +277,5 @@ def build_wysiwyg_table(template_id: str, table_id: str, rows: list[TableRow],
     if builder is None:
         return _empty_table(f"Không rõ định dạng bảng '{table_id}'")
     return builder(rows, with_checkbox=with_checkbox, on_toggle=on_toggle,
-                   with_status=with_status, on_status_change=on_status_change)
+                   with_status=with_status, on_status_change=on_status_change,
+                   interactive=interactive)

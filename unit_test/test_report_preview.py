@@ -251,6 +251,20 @@ def test_status_combobox_writes_back_to_passed_and_calls_callback():
     assert rows[0].passed is True
 
 
+def test_interactive_false_shows_but_disables_widgets():
+    """Bài chưa chạy (khung xem trước) -> vẫn HIỆN đủ 2 cột nhưng khoá lại,
+    không cho tick/chọn trên dữ liệu chưa tồn tại."""
+    rows = [TableRow(key="5Hz", freq_set=5, value_measured=5.0, limit="x", passed=None, confirmed=False)]
+    tbl = build_wysiwyg_table(CNT90, "A5", rows, with_checkbox=True, with_status=True,
+                              interactive=False)
+    assert tbl.columnCount() == 6   # vẫn đủ cột như khi interactive=True
+    from PyQt5.QtWidgets import QCheckBox
+    chk = tbl.cellWidget(0, 0).findChild(QCheckBox)
+    combo = tbl.cellWidget(0, 5)
+    assert chk.isEnabled() is False
+    assert combo.isEnabled() is False
+
+
 def test_checkbox_and_status_together_correct_order():
     """Khi bật cả 2: [checkbox][...dữ liệu...][status]."""
     rows = [TableRow(key="5Hz", freq_set=5, value_measured=5.0, limit="x", passed=True, confirmed=False)]
