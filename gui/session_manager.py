@@ -76,70 +76,6 @@ def _test_status_label(test: SessionTest) -> tuple[str, str]:
     return STATUS_LABELS.get(test.status, (test.status, Colors.TEXT_DIM))
 
 
-def _build_rows_table(rows: list, with_checkbox: bool = False, on_toggle=None) -> QTableWidget:
-    """Dựng bảng hiển thị các TableRow của 1 bài test.
-
-    with_checkbox=True thêm cột đầu 'Đưa vào báo cáo' gắn trực tiếp vào
-    TableRow.confirmed (tick/untick ghi thẳng vào object, không cần nút Lưu).
-    on_toggle() được gọi mỗi khi 1 checkbox đổi trạng thái (không tham số).
-    """
-    tbl = QTableWidget()
-    tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
-    tbl.verticalHeader().setVisible(False)
-
-    if not rows:
-        tbl.setColumnCount(1)
-        tbl.setHorizontalHeaderLabels(["Ghi chú"])
-        tbl.insertRow(0)
-        tbl.setItem(0, 0, QTableWidgetItem("Chưa có kết quả"))
-        return tbl
-
-    headers = ["Điểm đo", "Giá trị đo", "Đơn vị", "Sai số", "Đạt/Không"]
-    offset = 0
-    if with_checkbox:
-        headers = ["Đưa vào\nbáo cáo"] + headers
-        offset = 1
-
-    tbl.setColumnCount(len(headers))
-    tbl.setHorizontalHeaderLabels(headers)
-    tbl.setRowCount(len(rows))
-
-    for i, r in enumerate(rows):
-        if with_checkbox:
-            chk = QCheckBox()
-            chk.setChecked(r.confirmed)
-
-            def _make_cb(row_obj, checkbox):
-                def _cb(_state):
-                    row_obj.confirmed = checkbox.isChecked()
-                    if on_toggle:
-                        on_toggle()
-                return _cb
-
-            chk.stateChanged.connect(_make_cb(r, chk))
-            cell_w = QWidget()
-            cell_lay = QHBoxLayout(cell_w)
-            cell_lay.addWidget(chk)
-            cell_lay.setAlignment(Qt.AlignCenter)
-            cell_lay.setContentsMargins(4, 0, 4, 0)
-            tbl.setCellWidget(i, 0, cell_w)
-
-        val_str  = f"{r.value_measured:.6g}" if r.value_measured is not None else "—"
-        err_str  = f"{r.error:.4e}"          if r.error is not None else "—"
-        pass_str = ("✅ Đạt" if r.passed else "❌ Không đạt") if r.passed is not None else "—"
-        pass_clr = (Colors.ACCENT_GREEN if r.passed else
-                    (Colors.ACCENT_RED if r.passed is False else Colors.TEXT_DIM))
-        for col, text in enumerate([r.key, val_str, r.value_unit, err_str, pass_str]):
-            it = QTableWidgetItem(text)
-            it.setFlags(it.flags() & ~Qt.ItemIsEditable)
-            if col == 4:
-                it.setForeground(QColor(pass_clr))
-            tbl.setItem(i, col + offset, it)
-
-    tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-    return tbl
-
-
 # ============================================================================
 # Worker: chạy 1 scenario trong nền
 # ============================================================================
@@ -397,6 +333,7 @@ class _TestReviewTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._tests: list[SessionTest] = []
+        self._template_id: str = ""
         self._current_index: Optional[int] = None
         self._running = False
 
@@ -499,7 +436,7 @@ class _TestReviewTab(QWidget):
 
         self._result_holder = QVBoxLayout()
         right_lay.addLayout(self._result_holder, 1)
-        self._render_result_table([])
+        self._render_result_table("", [])
 
         splitter.addWidget(right)
         splitter.setSizes([460, 700])
@@ -507,8 +444,9 @@ class _TestReviewTab(QWidget):
 
     # -- Nạp / làm mới danh sách -----------------------------------------
 
-    def load_tests(self, tests: list[SessionTest]):
+    def load_tests(self, tests: list[SessionTest], template_id: str = ""):
         self._tests = tests
+        self._template_id = template_id
         self.table.setRowCount(0)
         for i, t in enumerate(tests):
             self._append_row(i, t)
@@ -572,7 +510,7 @@ class _TestReviewTab(QWidget):
         self.btn_run_one.setEnabled(False)
         self.btn_check_all.setEnabled(False)
         self.btn_uncheck_all.setEnabled(False)
-        self._render_result_table([])
+        self._render_result_table("", [])
 
     def _show_test(self, row: int):
         if row < 0 or row >= len(self._tests):
@@ -583,17 +521,19 @@ class _TestReviewTab(QWidget):
         self.e_file.setText(test.scenario_path or "(chưa chọn file kịch bản)")
         self.btn_run_one.setEnabled(not self._running)
         rows = test.result_table.rows if test.result_table else []
-        self._render_result_table(rows)
+        self._render_result_table(test.table_id, rows)
         self.btn_check_all.setEnabled(bool(rows))
         self.btn_uncheck_all.setEnabled(bool(rows))
 
-    def _render_result_table(self, rows):
+    def _render_result_table(self, table_id: str, rows):
         while self._result_holder.count():
             item = self._result_holder.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
-        tbl = _build_rows_table(rows, with_checkbox=True, on_toggle=self._on_row_confirm_toggled)
+        tbl = build_wysiwyg_table(self._template_id, table_id, rows,
+                                  with_checkbox=True, on_toggle=self._on_row_confirm_toggled,
+                                  empty_message="Chưa có kết quả")
         self._result_holder.addWidget(tbl)
 
     def _on_row_confirm_toggled(self):
@@ -608,7 +548,7 @@ class _TestReviewTab(QWidget):
             return
         for r in test.result_table.rows:
             r.confirmed = value
-        self._render_result_table(test.result_table.rows)
+        self._render_result_table(test.table_id, test.result_table.rows)
         self._set_status_cell(self._current_index, test)
 
     # -- Chọn file kịch bản -------------------------------------------------
@@ -731,9 +671,11 @@ class _ExportTab(QWidget):
         layout.addWidget(splitter, 1)
 
         self._tests: list[SessionTest] = []
+        self._template_id: str = ""
 
-    def refresh(self, tests: list[SessionTest], all_passed: Optional[bool]):
+    def refresh(self, tests: list[SessionTest], all_passed: Optional[bool], template_id: str = ""):
         self._tests = tests
+        self._template_id = template_id
         self.lst_tests.clear()
         n_partial = 0
         for t in tests:
@@ -793,7 +735,7 @@ class _ExportTab(QWidget):
             title = QLabel(f"{t.table_id} — {t.name}")
             title.setStyleSheet(f"font-weight:bold; color:{Colors.ACCENT_CYAN}; font-size:12px;")
             self._preview_lay.addWidget(title)
-            tbl = build_wysiwyg_table(t.table_id, rows)
+            tbl = build_wysiwyg_table(self._template_id, t.table_id, rows)
             tbl.setMaximumHeight(34 * (len(rows) + 1) + 16)
             self._preview_lay.addWidget(tbl)
 
@@ -1089,7 +1031,7 @@ class SessionManagerWindow(QMainWindow):
         tpl.fill_session_defaults(self._session)
         self._session.tests = tpl.default_tests()
         self._step_meta.load_from(self._session)
-        self._step_review.load_tests(self._session.tests)
+        self._step_review.load_tests(self._session.tests, tid)
         self._refresh_export_tab()
 
     # -------------------------------------------------------------------------
@@ -1115,7 +1057,7 @@ class SessionManagerWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi mở file", str(exc)); return
         self._step_meta.load_from(self._session)
-        self._step_review.load_tests(self._session.tests)
+        self._step_review.load_tests(self._session.tests, self._session.template_id)
         self._refresh_export_tab()
         self._log(f"Đã mở: {path}", Colors.ACCENT_GREEN)
 
@@ -1329,7 +1271,8 @@ class SessionManagerWindow(QMainWindow):
     # -------------------------------------------------------------------------
 
     def _refresh_export_tab(self):
-        self._step_export.refresh(self._session.tests, self._session.all_passed)
+        self._step_export.refresh(self._session.tests, self._session.all_passed,
+                                  self._session.template_id)
 
     def _log(self, msg: str, color: str = Colors.TEXT_DIM):
         self.log.append(f"<font color='{color}'>{msg}</font>")
