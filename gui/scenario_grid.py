@@ -21,7 +21,8 @@ from PyQt5.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QPushButton, QLabel, QDialog,
     QListWidget, QListWidgetItem, QComboBox, QLineEdit, QFormLayout,
     QDialogButtonBox, QHeaderView, QFileDialog, QMessageBox,
-    QAbstractItemView, QTextEdit, QStyle, QStyleOptionButton, QSpinBox,
+    QAbstractItemView, QTextEdit, QStyle, QStyleOptionButton, QSpinBox, QFrame,
+    QGroupBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QPointF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF, QPixmap, QIcon
@@ -36,6 +37,7 @@ from core.scenario_runner import ScenarioRunner, StepResult
 from core.commands import (
     parse_cmd, get_commands_for, get_common_commands, load_custom, WAIT_CMD, BREAK_CMD,
 )
+from core.result_mapper import TABLE_ROW_KEYS, TABLE_FIELD_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +280,27 @@ class StepEditorDialog(QDialog):
         note_form.addRow("Ghi chú:", self.note_edit)
         root.addLayout(note_form)
 
+        # ----- Gắn nhãn báo cáo (report_tag) — tuỳ chọn -----
+        tag_group = QGroupBox("Gắn nhãn báo cáo (tuỳ chọn)")
+        tag_form = QFormLayout(tag_group)
+        self.cmb_tag_table = QComboBox()
+        self.cmb_tag_table.addItem("(không gắn)", "")
+        for tid in TABLE_ROW_KEYS:
+            self.cmb_tag_table.addItem(tid, tid)
+        self.cmb_tag_table.currentIndexChanged.connect(self._on_tag_table_changed)
+        tag_form.addRow("Bảng:", self.cmb_tag_table)
+        self.cmb_tag_row = QComboBox()
+        self.cmb_tag_row.setEnabled(False)
+        tag_form.addRow("Điểm đo (row_key):", self.cmb_tag_row)
+        self.cmb_tag_field = QComboBox()
+        self.cmb_tag_field.setEnabled(False)
+        tag_form.addRow("Trường dữ liệu (field):", self.cmb_tag_field)
+        tag_hint = QLabel("Đánh dấu bước này là kết quả của 1 điểm đo cụ thể trong báo cáo "
+                          "(vd Bảng A2, điểm 100kHz) để hệ thống tự gom vào bảng kết quả.")
+        tag_hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;"); tag_hint.setWordWrap(True)
+        tag_form.addRow("", tag_hint)
+        root.addWidget(tag_group)
+
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self._on_accept)
         bb.rejected.connect(self.reject)
@@ -292,6 +315,43 @@ class StepEditorDialog(QDialog):
 
     def _update_ctrl_labels(self):
         self.ctrl_name.setEditable(self.ctrl_action.currentData() == "label")
+
+    def _on_tag_table_changed(self):
+        tid = self.cmb_tag_table.currentData()
+        self.cmb_tag_row.clear()
+        self.cmb_tag_field.clear()
+        enabled = bool(tid)
+        self.cmb_tag_row.setEnabled(enabled)
+        self.cmb_tag_field.setEnabled(enabled)
+        if not enabled:
+            return
+        for rk in TABLE_ROW_KEYS.get(tid, []):
+            self.cmb_tag_row.addItem(rk, rk)
+        for f in TABLE_FIELD_KEYS.get(tid, []):
+            self.cmb_tag_field.addItem(f, f)
+
+    def _load_report_tag(self, tag: dict | None):
+        if not tag:
+            self.cmb_tag_table.setCurrentIndex(0)
+            return
+        idx = self.cmb_tag_table.findData(tag.get("table", ""))
+        self.cmb_tag_table.setCurrentIndex(max(0, idx))
+        ridx = self.cmb_tag_row.findData(tag.get("row_key", ""))
+        if ridx >= 0:
+            self.cmb_tag_row.setCurrentIndex(ridx)
+        fidx = self.cmb_tag_field.findData(tag.get("field", ""))
+        if fidx >= 0:
+            self.cmb_tag_field.setCurrentIndex(fidx)
+
+    def _current_report_tag(self) -> dict | None:
+        tid = self.cmb_tag_table.currentData()
+        if not tid:
+            return None
+        row_key = self.cmb_tag_row.currentData()
+        field = self.cmb_tag_field.currentData()
+        if not row_key or not field:
+            return None
+        return {"table": tid, "row_key": row_key, "field": field}
 
     def _update_mode(self):
         mode = self.step_mode.currentData()
@@ -410,6 +470,7 @@ class StepEditorDialog(QDialog):
     # ── load existing step ──────────────────────────────────────────────────
 
     def _load_step(self, step: ScenarioStep):
+        self._load_report_tag(step.report_tag)
         if step.action in ("set_var", "compute", "collect"):
             self.step_mode.setCurrentIndex(max(0, self.step_mode.findData("var")))
             self.var_action.setCurrentIndex(max(0, self.var_action.findData(step.action)))
@@ -487,7 +548,8 @@ class StepEditorDialog(QDialog):
                 if not expr:
                     QMessageBox.warning(self, "Thiếu", "Nhập biểu thức."); return
                 params = {"name": name, "expr": expr}
-            self._result = ScenarioStep(action=act, devices=[], params=params, note=note)
+            self._result = ScenarioStep(action=act, devices=[], params=params, note=note,
+                                        report_tag=self._current_report_tag())
             self.accept()
             return
 
@@ -500,7 +562,8 @@ class StepEditorDialog(QDialog):
                                     "Nhập tên điểm thao tác." if act == "label"
                                     else "Chọn điểm thao tác đích."); return
             key = "name" if act == "label" else "target"
-            self._result = ScenarioStep(action=act, devices=[], params={key: name}, note=note)
+            self._result = ScenarioStep(action=act, devices=[], params={key: name}, note=note,
+                                        report_tag=self._current_report_tag())
             self.accept()
             return
 
@@ -518,12 +581,14 @@ class StepEditorDialog(QDialog):
                 s_val = float(w.text().strip()) if isinstance(w, QLineEdit) else 0.5
             except (ValueError, AttributeError):
                 QMessageBox.warning(self, "Sai tham số", "Thời gian chờ phải là số."); return
-            self._result = ScenarioStep(action="wait", devices=[], params={"seconds": s_val}, note=note)
+            self._result = ScenarioStep(action="wait", devices=[], params={"seconds": s_val}, note=note,
+                                        report_tag=self._current_report_tag())
             self.accept()
             return
 
         if model_key == "__break__":
-            self._result = ScenarioStep(action="break", devices=[], params={}, note=note)
+            self._result = ScenarioStep(action="break", devices=[], params={}, note=note,
+                                        report_tag=self._current_report_tag())
             self.accept()
             return
 
@@ -561,7 +626,8 @@ class StepEditorDialog(QDialog):
                         QMessageBox.warning(self, "Sai tham số",
                                             f"'{p.label}' phải là số hoặc =biểu_thức."); return
 
-        self._result = ScenarioStep(action="raw_scpi", devices=devices, params=params, note=note)
+        self._result = ScenarioStep(action="raw_scpi", devices=devices, params=params, note=note,
+                                    report_tag=self._current_report_tag())
         self.accept()
 
     def get_step(self) -> ScenarioStep:
@@ -884,7 +950,9 @@ class ScenarioWorker(QThread):
 # ===========================================================================
 
 class ScenarioGridWindow(QMainWindow):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, address_map: dict | None = None,
+                 cmd_delay_s: float | None = None,
+                 on_device_changed=None):
         super().__init__(parent)
         self.setWindowTitle("FREQ-CAL PRO :: Scenario Builder")
         self.setWindowIcon(QIcon("gui/logo.png"))
@@ -897,22 +965,40 @@ class ScenarioGridWindow(QMainWindow):
         self._last_mode = ""
         self._connected_keys: set[str] = set()
         self.address_map: dict[str, str] = {}
-        self.cmd_delay_s: float = 0.1     # nghỉ giữa lệnh khi chạy REAL (mặc định 100ms)
+        self.cmd_delay_s: float = 0.1
+        self._on_device_changed = on_device_changed   # callback → Phiên Kiểm Định
 
-        # ánh xạ runtime (QTreeWidgetItem không hashable -> meta lưu trong item)
-        self._id_to_item: dict = {}       # id(node) -> item
-        self._item_results: dict = {}     # id(item) -> list[str]
+        self._id_to_item: dict = {}
+        self._item_results: dict = {}
 
         self._build_ui()
         self._refresh_tree()
         self._auto_load_profile()
 
+        # Nếu được truyền address_map từ parent (Phiên Kiểm Định) → dùng thay profile.
+        # Lúc này thiết bị đã được xác nhận *IDN? bởi cửa sổ cha — ẩn nút Thiết bị.
+        if address_map is not None:
+            self.address_map = dict(address_map)
+            self._connected_keys = set(address_map.keys())
+            # Ẩn nút Thiết bị, hiện label thông báo dùng thiết bị từ Phiên Kiểm Định
+            self._btn_device.setVisible(False)
+            self._lbl_device_info.setVisible(True)
+            self._lbl_device_info.setText(
+                f"🔌 Thiết bị từ Phiên Kiểm Định: {', '.join(address_map) or '(trống)'}"
+            )
+        if cmd_delay_s is not None:
+            self.cmd_delay_s = cmd_delay_s
+
     # ------------------------------------------------------------------
     def _build_ui(self):
         central = QWidget(); self.setCentralWidget(central)
-        root = QVBoxLayout(central); root.setContentsMargins(12, 12, 12, 12); root.setSpacing(10)
+        root = QVBoxLayout(central); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
 
-        head = QHBoxLayout()
+        # ── Header ────────────────────────────────────────────────────────────
+        head_frame = QFrame()
+        head_frame.setObjectName("app_header")
+        head = QHBoxLayout(head_frame)
+        head.setContentsMargins(12, 8, 12, 8)
         logo_lbl = QLabel()
         logo_pix = QPixmap("gui/logo.png").scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         logo_lbl.setPixmap(logo_pix)
@@ -925,16 +1011,27 @@ class ScenarioGridWindow(QMainWindow):
         self.theme_toggle.toggled.connect(
             lambda checked: self._switch_to_digital() if checked else None)
         head.addWidget(self.theme_toggle)
-        root.addLayout(head)
+        root.addWidget(head_frame)
 
-        bar = QHBoxLayout(); bar.setSpacing(6)
+        # ── Toolbar ───────────────────────────────────────────────────────────
+        tool_frame = QFrame()
+        tool_frame.setObjectName("app_toolbar")
+        bar = QHBoxLayout(tool_frame)
+        bar.setContentsMargins(8, 4, 8, 4)
+        bar.setSpacing(6)
+
         def mkbtn(text, slot, color=None):
             b = QPushButton(text); b.clicked.connect(slot)
             if color:
                 b.setStyleSheet(f"background:{color}; color:{Colors.BG_WINDOW}; font-weight:bold;"
                                 f" border:none; border-radius:6px; padding:8px 14px;")
             bar.addWidget(b); return b
-        mkbtn("🔌 Thiết bị", self._open_device_manager)
+        self._btn_device = mkbtn("🔌 Thiết bị", self._open_device_manager)
+        # Label thay thế nút Thiết bị khi mở từ Phiên Kiểm Định (ẩn mặc định)
+        self._lbl_device_info = QLabel("")
+        self._lbl_device_info.setStyleSheet(f"color:{Colors.ACCENT_GREEN}; font-size:11px;")
+        self._lbl_device_info.setVisible(False)
+        bar.addWidget(self._lbl_device_info)
         mkbtn("➕ Bước", self._add_step)
         mkbtn("🔁 Loop", self._add_loop)
         mkbtn("❓ If", self._add_if)
@@ -948,7 +1045,13 @@ class ScenarioGridWindow(QMainWindow):
         self.btn_run = mkbtn("▶ CHẠY", self._run, Colors.ACCENT_CYAN)
         self.btn_stop = mkbtn("■ DỪNG", self._stop, Colors.ACCENT_RED); self.btn_stop.setEnabled(False)
         self.btn_export = mkbtn("📤 Xuất", self._export_results); self.btn_export.setEnabled(False)
-        root.addLayout(bar)
+        root.addWidget(tool_frame)
+
+        # ── Tree (content area) ───────────────────────────────────────────────
+        content = QWidget()
+        content_lay = QVBoxLayout(content)
+        content_lay.setContentsMargins(12, 8, 12, 8)
+        content_lay.setSpacing(0)
 
         self.tree = ScenarioTree()
         self.header = CheckBoxHeader(self.tree, label="Bật / Nội dung")
@@ -972,7 +1075,15 @@ class ScenarioGridWindow(QMainWindow):
         self.tree.setColumnWidth(3, 190)   # Tham số / Điều kiện
         self.tree.setColumnWidth(4, 250)   # Kết quả (+50)
         self.tree.setColumnWidth(5, 90)    # Trạng thái
-        root.addWidget(self.tree, 3)
+        content_lay.addWidget(self.tree, 1)
+        root.addWidget(content, 1)
+
+        # ── Log ───────────────────────────────────────────────────────────────
+        log_frame = QFrame()
+        log_frame.setObjectName("log_panel")
+        log_lay = QVBoxLayout(log_frame)
+        log_lay.setContentsMargins(12, 6, 12, 6)
+        log_lay.setSpacing(4)
 
         log_head = QHBoxLayout()
         log_head.addWidget(QLabel("Log"))
@@ -980,10 +1091,15 @@ class ScenarioGridWindow(QMainWindow):
         btn_clear_log = QPushButton("🗑 Xóa log")
         btn_clear_log.clicked.connect(lambda: self.log.clear())
         log_head.addWidget(btn_clear_log)
-        root.addLayout(log_head)
+        log_lay.addLayout(log_head)
 
-        self.log = QTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(140)
-        root.addWidget(self.log, 1)
+        self.log = QTextEdit()
+        self.log.setObjectName("log_console")
+        self.log.setReadOnly(True)
+        self.log.setMaximumHeight(140)
+        log_lay.addWidget(self.log)
+        root.addWidget(log_frame)
+
         self.statusBar().showMessage("Sẵn sàng.")
 
     # ------------------------------------------------------------------
@@ -1061,8 +1177,11 @@ class ScenarioGridWindow(QMainWindow):
                 spec = ACTION_SPECS.get(node.action, {})
                 step_label = spec.get("label", node.action)
                 step_desc = spec.get("desc", "")
+            label_text = f"Bước: {step_label}"
+            if node.report_tag:
+                label_text += f"  🏷 {node.report_tag.get('table', '')}/{node.report_tag.get('row_key', '')}"
             it = self._new_item(parent_item, node.enabled,
-                           f"Bước: {step_label}", step_desc,
+                           label_text, step_desc,
                            ", ".join(node.devices) if node.devices else "—",
                            node.describe_params(), "step", node, parent_obj)
             if node.action in ("goto", "label"):
@@ -1734,6 +1853,8 @@ class ScenarioGridWindow(QMainWindow):
                       f"{', '.join(self.address_map) or '(trống)'} "
                       f"| delay giữa lệnh: {self._profile.cmd_delay_ms}ms",
                       Colors.ACCENT_GREEN)
+            if callable(self._on_device_changed):
+                self._on_device_changed(self.address_map, self.cmd_delay_s)
 
     def _save(self):
         path, _ = QFileDialog.getSaveFileName(self, "Lưu kịch bản", "scenario.json", "JSON (*.json)")

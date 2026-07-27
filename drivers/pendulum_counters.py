@@ -77,6 +77,21 @@ class _PendulumCounter(VisaInstrument):
             ) from exc
         return Reading(value=value, unit="Hz", channel=channel, raw=raw)
 
+    # --- ACQUIRE: đo chu kỳ ------------------------------------------
+    def measure_period(self, channel: int = 1) -> Reading:
+        """Đo chu kỳ một lần trên kênh chỉ định, trả Reading (s)."""
+        raw = self._query(
+            f"MEAS:PER? (@{channel})",
+            timeout_override_ms=int(self._gate_time_s * 1000) + 5000,
+        )
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise MeasurementError(
+                f"{self.MODEL_NAME}: không parse được chu kỳ: '{raw}'"
+            ) from exc
+        return Reading(value=value, unit="s", channel=channel, raw=raw)
+
     # --- Reference clock (tiện ích) ----------------------------------
     def set_reference_external(self, freq_hz: float = 10e6) -> None:
         """Khóa vào chuẩn ngoài 10 MHz."""
@@ -103,6 +118,10 @@ class _PendulumCounter(VisaInstrument):
         if "MEAS:FREQ?" in cmd or "READ:FREQ?" in cmd:
             import random
             return f"{self._mock_freq + random.gauss(0, 0.5):.6f}"
+        if "MEAS:PER?" in cmd or "READ:PER?" in cmd:
+            import random
+            period = 1.0 / self._mock_freq
+            return f"{period + random.gauss(0, period * 1e-8):.12e}"
         if "ACQ:APER?" in cmd:
             return f"{self._gate_time_s:.9f}"
         if "ROSC:SOUR?" in cmd:

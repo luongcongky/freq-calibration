@@ -89,6 +89,8 @@ class StepResult:
     iteration: int = 0               # vòng lặp hiện tại (0 nếu không trong loop)
     kind: str = "step"              # "step" | "control"
     timestamp: float = field(default_factory=time.time)
+    # Nhãn báo cáo — sao chép từ ScenarioStep.report_tag khi bước có tag.
+    report_tag: Optional[dict] = None
 
     def summary(self) -> str:
         """Chuỗi ĐẦY ĐỦ cho LOG (kèm thiết bị + action + vòng lặp)."""
@@ -195,13 +197,26 @@ def evaluate_condition(cond: Condition, ctx: _Ctx) -> tuple[bool, str]:
 def _parse_leading_float(resp: str) -> Optional[float]:
     """Thử lấy SỐ (float) ở đầu chuỗi trả lời SCPI; None nếu không phải số.
 
-    Hỗ trợ các dạng phổ biến: '1.2345E9', '1.2345E9 HZ' (kèm đơn vị),
-    '-10.0,...' (lấy phần tử đầu trước dấu phẩy), '+1.0E+02'.
-    Trả None cho chuỗi trạng thái như 'ON', 'INT' → khi đó chỉ giữ text.
+    Hỗ trợ:
+    - Dấu chấm chuẩn SCPI:  '1.2345E9', '-18.5,0.3' (multi-value → lấy phần tử đầu)
+    - Dấu phẩy EU locale:   '-18,9975228', '0,000751'  (phổ biến trên thiết bị EU/VN)
+
+    Cách phân biệt: nếu phần trước dấu phẩy đầu tiên KHÔNG chứa '.' thì đây là
+    số EU (vd: "-18,9975228" → -18.9975228), không phải SCPI multi-value.
+    Trả None cho chuỗi trạng thái như 'ON', 'INT'.
     """
     if not resp:
         return None
-    head = resp.strip().split(",")[0].split()[0] if resp.strip() else ""
+    s = resp.strip()
+
+    # Chuẩn hóa dấu phẩy EU → dấu chấm nếu phần trước dấu phẩy không có '.'
+    # vd: "-18,9975228" → "-18.9975228"  |  "-18.5,0.3" giữ nguyên (period đã có)
+    if "," in s:
+        before = s.split(",")[0].strip()
+        if "." not in before:
+            s = s.replace(",", ".", 1)
+
+    head = s.split(",")[0].split()[0]
     try:
         return float(head)
     except ValueError:
@@ -221,6 +236,9 @@ def execute_action(action: str, device, params: dict[str, Any]) -> dict:
         return {"text": f"gate={params['gate_time']}s"}
     if action == "measure_frequency":
         r: Reading = device.measure_frequency()
+        return {"value": r.value, "unit": r.unit}
+    if action == "measure_period":
+        r: Reading = device.measure_period()
         return {"value": r.value, "unit": r.unit}
     if action == "set_frequency":
         device.set_frequency(float(params["freq_hz"]))
@@ -474,12 +492,15 @@ class ScenarioRunner:
     def _run_var_action(self, idx: int, step: ScenarioStep, iteration: int) -> None:
         """set_var / compute / collect — thao tác trên biến, không gọi thiết bị."""
         res = StepResult(step_index=idx, action=step.action,
-                         node_id=id(step), iteration=iteration)
+                         node_id=id(step), iteration=iteration,
+                         report_tag=step.report_tag)
         try:
             if step.action in ("set_var", "compute"):
                 name = step.params.get("name") or step.params.get("target")
                 val = eval_expr(step.params.get("expr", ""), self._ctx.eval_env())
                 self._ctx.variables[name] = val
+                if isinstance(val, (int, float)):
+                    res.value = float(val)
                 res.text = f"{name} = {format_number_vi(val)}" if isinstance(val, (int, float)) else f"{name} = {val}"
             else:  # collect
                 var = step.params.get("var")
@@ -489,6 +510,8 @@ class ScenarioRunner:
                     lst = []
                 lst.append(val)
                 self._ctx.variables[var] = lst
+                if isinstance(val, (int, float)):
+                    res.value = float(val)
                 res.text = f"{var}[{len(lst)}] ← {format_number_vi(val)}" if isinstance(val, (int, float)) else f"{var} ← {val}"
         except Exception as exc:  # noqa: BLE001
             res.ok = False; res.error = str(exc)
@@ -537,7 +560,8 @@ class ScenarioRunner:
 
         for dk in step.devices:
             res = StepResult(step_index=idx, action=step.action, device_key=dk,
-                             node_id=id(step), iteration=iteration)
+                             node_id=id(step), iteration=iteration,
+                             report_tag=step.report_tag)
             try:
                 info = execute_action(step.action, self._devices[dk],
                                       self._resolve_params(step.params))

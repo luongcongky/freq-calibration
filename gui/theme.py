@@ -14,17 +14,31 @@ import pathlib
 
 
 class Colors:
-    """Bảng màu kỹ thuật (engineering dashboard)."""
-    BG_WINDOW    = "#121417"
-    BG_CARD      = "#1e2126"
-    BG_INPUT     = "#111316"
+    """Bảng màu kỹ thuật (engineering dashboard).
+
+    Phân cấp độ sáng từ tối → sáng:
+      BG_DEEP → BG_INPUT → BG_WINDOW → BG_SURFACE → BG_CARD → BG_CARD_HI
+    """
+    # ── Nền (từ tối nhất → sáng nhất) ────────────────────────────────────
+    BG_DEEP      = "#080b10"   # Log / terminal (tối nhất — recessed)
+    BG_INPUT     = "#0c0f18"   # Input field, table (recessed)
+    BG_WINDOW    = "#111520"   # Nền cửa sổ chính
+    BG_SURFACE   = "#171e30"   # Header, toolbar strips (chrome)
+    BG_CARD      = "#1c2438"   # Tab pane, content panel
+    BG_CARD_HI   = "#21304a"   # GroupBox, elevated card
+
+    # ── Accent ────────────────────────────────────────────────────────────
     ACCENT_CYAN  = "#00d1ff"
     ACCENT_GREEN = "#65f08d"
     ACCENT_RED   = "#ff4d4d"
     ACCENT_WARN  = "#ffaa00"
-    TEXT_MAIN    = "#ffffff"
-    TEXT_DIM     = "#a0a5ad"
-    BORDER       = "#2c3038"
+
+    # ── Text ──────────────────────────────────────────────────────────────
+    TEXT_MAIN    = "#e8ecf4"   # Trắng ngà (dễ đọc hơn trắng thuần)
+    TEXT_DIM     = "#7a8aa8"
+
+    # ── Border ────────────────────────────────────────────────────────────
+    BORDER       = "#28364e"   # Blue-navy tint
 
 
 def build_global_qss() -> str:
@@ -78,4 +92,68 @@ def build_global_qss() -> str:
                    border-right: 1px solid {C.BORDER}; padding: 7px; }}
         QTableWidget {{ background-color: {C.BG_INPUT}; gridline-color: {C.BORDER};
                    border: 1px solid {C.BORDER}; }}
+
+        /* ── Tab widget ── */
+        QTabWidget::pane {{ border: 1px solid {C.BORDER};
+                   background-color: {C.BG_CARD}; top: -1px; }}
+        QTabBar::tab {{ background-color: {C.BG_SURFACE}; color: {C.TEXT_DIM};
+                   border: 1px solid {C.BORDER}; border-bottom: none;
+                   padding: 8px 20px; border-radius: 4px 4px 0 0; min-width: 130px; }}
+        QTabBar::tab:selected {{ background-color: {C.BG_CARD}; color: {C.ACCENT_CYAN};
+                   border-bottom: 2px solid {C.ACCENT_CYAN}; font-weight: bold; }}
+        QTabBar::tab:hover:!selected {{ background-color: {C.BG_CARD}; color: {C.TEXT_MAIN}; }}
+
+        /* ── GroupBox ── */
+        QGroupBox {{ background-color: {C.BG_CARD_HI}; border: 1px solid {C.BORDER};
+                   border-radius: 6px; margin-top: 14px; padding-top: 8px; }}
+        QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left;
+                   left: 12px; padding: 0 6px;
+                   color: {C.ACCENT_CYAN}; font-weight: bold; }}
+
+        /* ── Date / Progress / Splitter ── */
+        QDateEdit {{ background-color: {C.BG_INPUT}; color: {C.TEXT_MAIN};
+                   border: 1px solid {C.BORDER}; border-radius: 4px; padding: 5px; }}
+        QDateEdit::drop-down {{ border: none; border-left: 1px solid {C.BORDER};
+                   width: 24px; background: transparent; }}
+        QProgressBar {{ background-color: {C.BG_INPUT}; border: 1px solid {C.BORDER};
+                   border-radius: 4px; text-align: center; color: {C.TEXT_MAIN}; }}
+        QProgressBar::chunk {{ background-color: {C.ACCENT_CYAN}; border-radius: 3px; }}
+        QSplitter::handle {{ background-color: {C.BORDER}; width: 1px; }}
+
+        /* ── Layout-section frames ── */
+        QFrame#app_header {{
+            background-color: {C.BG_SURFACE};
+            border-bottom: 2px solid {C.ACCENT_CYAN};
+        }}
+        QFrame#app_toolbar {{
+            background-color: {C.BG_SURFACE};
+            border-bottom: 1px solid {C.BORDER};
+        }}
+        QFrame#log_panel {{
+            background-color: {C.BG_DEEP};
+            border-top: 1px solid {C.BORDER};
+        }}
+        QFrame#log_panel QLabel {{
+            background: transparent;
+            color: {C.TEXT_DIM};
+            font-size: 10px;
+        }}
+        QFrame#log_panel QPushButton {{
+            background: transparent;
+            border: none;
+            color: {C.TEXT_DIM};
+            padding: 2px 6px;
+        }}
+        QFrame#log_panel QPushButton:hover {{ color: {C.TEXT_MAIN}; }}
+        QTextEdit#log_console {{
+            background-color: {C.BG_DEEP};
+            color: {C.ACCENT_GREEN};
+            border: none;
+            font-family: Consolas, 'Courier New', monospace;
+            font-size: 10px;
+        }}
+
+        /* ── Content area inside tab panes / scroll areas ── */
+        QScrollArea {{ background: transparent; border: none; }}
+        QScrollArea > QWidget > QWidget {{ background: transparent; }}
     """

@@ -1,19 +1,15 @@
 import logging
 
-from gui.scenario_grid import run_scenario_builder
+from gui.session_manager import run_session_manager
 
 
 def main():
-    # Cấu hình logging toàn cục
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-
-    # Điểm vào duy nhất: Scenario Builder (grid step-by-step, đa thiết bị).
-    # Luồng file .txt + dashboard SMW200A/CNT-90XL cũ đã được loại bỏ.
-    run_scenario_builder()
+    run_session_manager()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,218 @@
+{
+  "name": "Kịch bản đo sai số bộ dao động thạch anh - CNT90 (theo QTKĐ 2.461:2018, mục 5.3.1, Bảng A1)",
+  "description": "Xác định sai số bộ dao động thạch anh nội của CNT90 tại tần số 10 MHz. Đọc liên tục tín hiệu chuẩn 10 MHz nối vào đầu vào đo (không cần điều khiển SMW200A, không cần máy phát). Đo lặp lại đúng 10 lần theo quy trình (mỗi lần cách nhau ~5 giây), lưu vào mảng lich_su_do, tự động dừng khi đủ 10 lần. Sai số cho phép: ± 2,4×10⁻⁷.",
+  "nodes": [
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "*RST",
+        "__is_query__": false,
+        "__cmd_original__": "*RST",
+        "__cmd_desc__": "Reset thiết bị về cài đặt mặc định nhà máy"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": ":SYST:TOUT:TIME {t}",
+        "__is_query__": false,
+        "__cmd_original__": ":SYST:TOUT:TIME <t>",
+        "__cmd_desc__": "Đặt giá trị time out (giây)",
+        "t": 0.05
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": ":SYST:TOUT {b}",
+        "__is_query__": false,
+        "__cmd_original__": ":SYST:TOUT <b>",
+        "__cmd_desc__": "Bật chế độ time out",
+        "b": 1.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "CONF:FREQ (@{n})",
+        "__is_query__": false,
+        "__cmd_original__": "CONF:FREQ (@<n>)",
+        "__cmd_desc__": "Cấu hình đo tần số trên kênh đo chuẩn 10 MHz",
+        "n": 1
+      },
+      "note": "Kênh A - nối tín hiệu chuẩn 10 MHz (từ bộ dao động thạch anh nội/tham chiếu ngoài) vào đầu vào này. CẦN XÁC NHẬN LẠI kênh vật lý dùng để kiểm tra bộ dao động thạch anh theo đúng hướng dẫn máy CNT-90XL trước khi chạy thật.",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "lich_su_do",
+        "expr": "[]"
+      },
+      "note": "Khởi tạo mảng lưu lịch sử đo (chỉ chạy 1 lần lúc đầu, không reset trong vòng lặp)",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "so_lan",
+        "expr": "0"
+      },
+      "note": "Đếm số lần đã đo, dừng khi đủ 10 lần (theo Bảng A1)",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "label",
+      "devices": [],
+      "params": {
+        "name": "Vòng đo"
+      },
+      "note": "Mỗi vòng = 1 lần đo tần số 10 MHz của bộ dao động thạch anh. KHÔNG cần máy phát SMW200A, chỉ đọc tín hiệu chuẩn 10 MHz có sẵn ở đầu vào.",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Khởi động phép đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ đo xong",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo tần số (giá trị hiển thị cho lần đo này)"
+      },
+      "note": "Đo tần số bộ dao động thạch anh (danh định 10 MHz)",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "collect",
+      "devices": [],
+      "params": {
+        "var": "lich_su_do",
+        "source": "$last"
+      },
+      "note": "Lưu lại giá trị đo được của lần này vào mảng lịch sử - tích lũy toàn bộ 10 lần đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 4.0
+      },
+      "note": "Chờ đủ tổng cộng ~5 giây trước khi đo lần tiếp theo (1s đo + 4s chờ)",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "so_lan",
+        "expr": "so_lan + 1"
+      },
+      "note": "Tăng biến đếm số lần đã đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "type": "if",
+      "note": "Dừng khi đã đủ 10 lần đo (theo Bảng A1)",
+      "enabled": true,
+      "branches": [
+        {
+          "condition": {
+            "kind": "expr",
+            "device": "",
+            "op": ">=",
+            "value": 10.0,
+            "value2": 0.0,
+            "status": "ok",
+            "expr": "so_lan"
+          },
+          "enabled": true,
+          "body": [
+            {
+              "action": "break",
+              "devices": [],
+              "params": {},
+              "note": "Đã đủ 10 lần đo -> dừng chương trình",
+              "enabled": true,
+              "type": "step"
+            }
+          ]
+        },
+        {
+          "condition": null,
+          "enabled": true,
+          "body": [
+            {
+              "action": "goto",
+              "devices": [],
+              "params": {
+                "target": "Vòng đo"
+              },
+              "note": "Chưa đủ 10 lần -> đo tiếp",
+              "enabled": true,
+              "type": "step"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

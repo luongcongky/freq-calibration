@@ -1,0 +1,785 @@
+{
+  "name": "Kịch bản đo độ nhạy đầu vào Kênh C - CNT90 (theo QTKĐ 2.461:2018, mục 5.3.4, Bảng A4)",
+  "description": "Dò công suất tối thiểu (độ nhạy) trên Input C của CNT90 tại 11 điểm tần số chuẩn quy trình: 400 MHz, 1 GHz, 2 GHz, 5 GHz, 10 GHz, 13 GHz, 16 GHz, 18 GHz, 19,9 GHz, 20 GHz, 22 GHz. Giữ nguyên cấu trúc thuật toán dò công suất tăng dần của kịch bản gốc, chỉ thay danh sách tần số quét bằng đúng các điểm quy định thay vì công thức nhân đôi octave (250MHz*2^n, chỉ tới 8GHz như trước). Ngưỡng đạt: ≤ -27 dBm (400MHz-16GHz, 20-22GHz), ≤ -29 dBm (18GHz, 19,9GHz).",
+  "nodes": [
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "*RST",
+        "__is_query__": false,
+        "__cmd_original__": "*RST",
+        "__cmd_desc__": "Reset thiết bị về cài đặt mặc định nhà máy"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT OFF",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT OFF",
+        "__cmd_desc__": "Tắt RF output kênh chỉ định",
+        "ch": 1
+      },
+      "note": "Khởi tạo tắt RF",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:MODE CW",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:MODE CW",
+        "__cmd_desc__": "Chuyển về chế độ CW (thoát khỏi sweep)",
+        "ch": 1
+      },
+      "note": "Đảm bảo ở chế độ CW",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "octave",
+        "expr": "0"
+      },
+      "note": "Chỉ số bước nhân đôi tần số",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "cong_suat",
+        "expr": "-40"
+      },
+      "note": "Công suất khởi tạo -40dBm (mốc thấp phù hợp dải GHz, theo mục 5.3.4)",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": ":SYST:TOUT:TIME {t}",
+        "__is_query__": false,
+        "__cmd_original__": ":SYST:TOUT:TIME <t>",
+        "__cmd_desc__": "Đặt giá trị time out: giới hạn thời gian đo (đơn vị giây)",
+        "t": 0.05
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": ":SYST:TOUT {b}",
+        "__is_query__": false,
+        "__cmd_original__": ":SYST:TOUT <b>",
+        "__cmd_desc__": "Lệnh thiết lập chế độ time out: chỉ đo trong một phạm vi thời gian nhất định",
+        "b": 1.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "trangthai_loi",
+        "expr": "str"
+      },
+      "note": "",
+      "enabled": false,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "CONF:FREQ (@{n})",
+        "__is_query__": false,
+        "__cmd_original__": "CONF:FREQ (@<n>)",
+        "__cmd_desc__": "Đặt chế độ đo tần số kênh \"n\". Lệnh này làm nhẹ máy hơn lệnh Meas",
+        "n": 3
+      },
+      "note": "Kênh C",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "tan_so_df",
+        "expr": "400000000"
+      },
+      "note": "Điểm tần số đầu tiên: 400000000 Hz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output kênh chỉ định",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "label",
+      "devices": [],
+      "params": {
+        "name": "Điểm lặp"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW kênh chỉ định",
+        "ch": 1,
+        "Hz": "=tan_so_df"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:POW:POW {dBm} dBm",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:POW:POW <dBm> dBm",
+        "__cmd_desc__": "Đặt mức công suất RF output",
+        "ch": 1,
+        "dBm": "=cong_suat"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "tan_so",
+        "expr": "[]"
+      },
+      "note": "Khởi tạo biến tan_so cho thiết bị máy đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "type": "loop",
+      "count": 4,
+      "note": "",
+      "enabled": true,
+      "mode": "count",
+      "max_iter": 50,
+      "condition": null,
+      "body": [
+        {
+          "action": "raw_scpi",
+          "devices": [
+            "CNT90"
+          ],
+          "params": {
+            "__template__": "INIT",
+            "__is_query__": false,
+            "__cmd_original__": "INIT",
+            "__cmd_desc__": "Khởi động phép đo đã đặt, lệnh này sau lệnh CON:FREQ (@<n>)"
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "action": "wait",
+          "devices": [],
+          "params": {
+            "seconds": 0.5
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "action": "raw_scpi",
+          "devices": [
+            "CNT90"
+          ],
+          "params": {
+            "__template__": "FETC?",
+            "__is_query__": true,
+            "__cmd_original__": "FETC?",
+            "__cmd_desc__": "Lệnh đọc giá trị sau lệnh INIT. Lệnh này lấy dữ liệu về"
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "type": "if",
+          "note": "Nếu thực hiện lệnh đọc thất bại",
+          "enabled": true,
+          "branches": [
+            {
+              "condition": {
+                "kind": "status",
+                "device": "",
+                "op": ">",
+                "value": 0.0,
+                "value2": 0.0,
+                "status": "error",
+                "expr": ""
+              },
+              "enabled": true,
+              "body": [
+                {
+                  "action": "set_var",
+                  "devices": [],
+                  "params": {
+                    "name": "$iter",
+                    "expr": "$iter -1"
+                  },
+                  "note": "Trả lại 1 đơn vị cho vòng lặp",
+                  "enabled": true,
+                  "type": "step"
+                },
+                {
+                  "action": "set_var",
+                  "devices": [],
+                  "params": {
+                    "name": "cong_suat",
+                    "expr": "cong_suat + 2"
+                  },
+                  "note": "Tăng công suất hiện tại lên +2 dBm",
+                  "enabled": true,
+                  "type": "step"
+                },
+                {
+                  "action": "raw_scpi",
+                  "devices": [
+                    "CNT90"
+                  ],
+                  "params": {
+                    "__template__": "*CLS",
+                    "__is_query__": false,
+                    "__cmd_original__": "*CLS",
+                    "__cmd_desc__": "Xóa thanh ghi trạng thái và hàng đợi lỗi SCPI"
+                  },
+                  "note": "",
+                  "enabled": true,
+                  "type": "step"
+                },
+                {
+                  "type": "if",
+                  "note": "",
+                  "enabled": true,
+                  "branches": [
+                    {
+                      "condition": {
+                        "kind": "expr",
+                        "device": "",
+                        "op": ">=",
+                        "value": 0.0,
+                        "value2": 0.0,
+                        "status": "ok",
+                        "expr": "cong_suat"
+                      },
+                      "enabled": true,
+                      "body": [
+                        {
+                          "action": "break",
+                          "devices": [],
+                          "params": {},
+                          "note": "",
+                          "enabled": true,
+                          "type": "step"
+                        }
+                      ]
+                    },
+                    {
+                      "condition": null,
+                      "enabled": true,
+                      "body": [
+                        {
+                          "action": "goto",
+                          "devices": [],
+                          "params": {
+                            "target": "Điểm lặp"
+                          },
+                          "note": "",
+                          "enabled": true,
+                          "type": "step"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "action": "collect",
+          "devices": [],
+          "params": {
+            "var": "tan_so",
+            "source": "$last"
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "action": "wait",
+          "devices": [],
+          "params": {
+            "seconds": 0.5
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "sai_so",
+        "expr": "abs(avg(tan_so) - tan_so_df)/tan_so_df"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "type": "if",
+      "note": "",
+      "enabled": true,
+      "branches": [
+        {
+          "condition": {
+            "kind": "expr",
+            "device": "",
+            "op": "<=",
+            "value": 5e-05,
+            "value2": 0.0,
+            "status": "ok",
+            "expr": "sai_so"
+          },
+          "enabled": true,
+          "body": [
+            {
+              "action": "set_var",
+              "devices": [],
+              "params": {
+                "name": "cong_suat",
+                "expr": "-40"
+              },
+              "note": "Reset công suất về mặc định -40dBm",
+              "enabled": true,
+              "type": "step"
+            },
+            {
+              "action": "set_var",
+              "devices": [],
+              "params": {
+                "name": "octave",
+                "expr": "octave+1"
+              },
+              "note": "",
+              "enabled": true,
+              "type": "step"
+            },
+            {
+              "type": "if",
+              "note": "Chọn tần số điểm đo tiếp theo theo octave (không dùng subscript mảng)",
+              "enabled": true,
+              "branches": [
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 1.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "1000000000"
+                      },
+                      "note": "Điểm tần số thứ 2/11: 1000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 2.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "2000000000"
+                      },
+                      "note": "Điểm tần số thứ 3/11: 2000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 3.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "5000000000"
+                      },
+                      "note": "Điểm tần số thứ 4/11: 5000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 4.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "10000000000"
+                      },
+                      "note": "Điểm tần số thứ 5/11: 10000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 5.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "13000000000"
+                      },
+                      "note": "Điểm tần số thứ 6/11: 13000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 6.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "16000000000"
+                      },
+                      "note": "Điểm tần số thứ 7/11: 16000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 7.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "18000000000"
+                      },
+                      "note": "Điểm tần số thứ 8/11: 18000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 8.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "19900000000"
+                      },
+                      "note": "Điểm tần số thứ 9/11: 19900000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 9.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "20000000000"
+                      },
+                      "note": "Điểm tần số thứ 10/11: 20000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": {
+                    "kind": "expr",
+                    "device": "",
+                    "op": "==",
+                    "value": 10.0,
+                    "value2": 0.0,
+                    "status": "ok",
+                    "expr": "octave"
+                  },
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "set_var",
+                      "devices": [],
+                      "params": {
+                        "name": "tan_so_df",
+                        "expr": "22000000000"
+                      },
+                      "note": "Điểm tần số thứ 11/11: 22000000000 Hz",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                },
+                {
+                  "condition": null,
+                  "enabled": true,
+                  "body": [
+                    {
+                      "action": "break",
+                      "devices": [],
+                      "params": {},
+                      "note": "Đã hết danh sách điểm tần số -> dừng chương trình",
+                      "enabled": true,
+                      "type": "step"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "action": "goto",
+              "devices": [],
+              "params": {
+                "target": "Điểm lặp"
+              },
+              "note": "Đo tiếp tại điểm tần số mới",
+              "enabled": true,
+              "type": "step"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "kind": "expr",
+            "device": "",
+            "op": ">=",
+            "value": 0.0,
+            "value2": 0.0,
+            "status": "ok",
+            "expr": "cong_suat"
+          },
+          "enabled": true,
+          "body": [
+            {
+              "action": "wait",
+              "devices": [],
+              "params": {
+                "seconds": 0.5
+              },
+              "note": "Đã đạt công suất tối đa 0dBm mà vẫn chưa đo đúng -> chờ ổn định rồi kết thúc chương trình (giống hệt File 1, không ghi kết quả riêng)",
+              "enabled": true,
+              "type": "step"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "kind": "expr",
+            "device": "",
+            "op": ">",
+            "value": 5e-05,
+            "value2": 0.0,
+            "status": "ok",
+            "expr": "sai_so"
+          },
+          "enabled": true,
+          "body": [
+            {
+              "action": "set_var",
+              "devices": [],
+              "params": {
+                "name": "cong_suat",
+                "expr": "cong_suat + 0.5"
+              },
+              "note": "Tăng công suất hiện tại lên 0.5 dBm",
+              "enabled": true,
+              "type": "step"
+            },
+            {
+              "action": "goto",
+              "devices": [],
+              "params": {
+                "target": "Điểm lặp"
+              },
+              "note": "",
+              "enabled": true,
+              "type": "step"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

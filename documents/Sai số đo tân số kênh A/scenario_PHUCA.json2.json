@@ -1,0 +1,1081 @@
+{
+  "name": "Kịch bản đo sai số tần số Kênh A - CNT90 (theo QTKĐ 2.461:2018, mục 5.3.5, Bảng A5)",
+  "description": "Xác định sai số đo tần số kênh A theo 11 điểm chuẩn quy trình: 5 Hz, 10 Hz, 100 Hz, 1 kHz, 10 kHz, 100 kHz, 500 kHz, 1 MHz, 10 MHz, 100 MHz, 300 MHz. Mức tín hiệu cố định -10 dBm. Thiết bị: SMW200A phát, CNT90 Kênh A đo. Lưu ý: quy trình gốc dùng máy phát âm tần Γ3-110 cho dải 5Hz-500kHz và SMF-100A/tương đương cho dải 1MHz-300MHz; ở đây gộp chung trên SMW200A, cần xác nhận SMW200A có thể phát ổn định tới tần số thấp 5 Hz trước khi chạy thật.",
+  "nodes": [
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT OFF",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT OFF",
+        "__cmd_desc__": "Tắt RF output",
+        "ch": 1
+      },
+      "note": "Khởi tạo tắt RF",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:MODE CW",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:MODE CW",
+        "__cmd_desc__": "Chế độ CW",
+        "ch": 1
+      },
+      "note": "Đảm bảo ở chế độ CW",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:POW:POW {dBm} dBm",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:POW:POW <dBm> dBm",
+        "__cmd_desc__": "Đặt công suất RF",
+        "ch": 1,
+        "dBm": -10.0
+      },
+      "note": "Cố định công suất -10 dBm (theo mục 5.3.5 Bảng A5 QTKĐ CNT-90XL)",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "*RST",
+        "__is_query__": false,
+        "__cmd_original__": "*RST",
+        "__cmd_desc__": "Reset CNT90 về mặc định"
+      },
+      "note": "Reset máy đếm tần số",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": ":SYST:TOUT:TIME {t}",
+        "__is_query__": false,
+        "__cmd_original__": ":SYST:TOUT:TIME <t>",
+        "__cmd_desc__": "Đặt timeout đo (giây)",
+        "t": 5.0
+      },
+      "note": "Timeout 5s",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": ":SYST:TOUT {b}",
+        "__is_query__": false,
+        "__cmd_original__": ":SYST:TOUT <b>",
+        "__cmd_desc__": "Bật chế độ timeout",
+        "b": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "CONF:FREQ (@{n})",
+        "__is_query__": false,
+        "__cmd_original__": "CONF:FREQ (@<n>)",
+        "__cmd_desc__": "Chế độ đo tần số kênh A",
+        "n": 1
+      },
+      "note": "Cấu hình Kênh A (n=1) CNT90 - CẦN XÁC NHẬN LẠI mapping kênh thực tế (n=1 ứng Input A) trước khi chạy thật trên máy của bạn",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INP{n}:IMP {z}",
+        "__is_query__": false,
+        "__cmd_original__": "INP<n>:IMP <z>",
+        "__cmd_desc__": "Đặt trở kháng đầu vào kênh A = 50 Ohm (giảm phản xạ tín hiệu)",
+        "n": 1,
+        "z": 50
+      },
+      "note": "Bắt buộc 50 Ohm theo yêu cầu cấu hình tối ưu dải tần cao",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INP{n}:COUP {c}",
+        "__is_query__": false,
+        "__cmd_original__": "INP<n>:COUP <c>",
+        "__cmd_desc__": "Đặt chế độ ghép tầng AC kênh A",
+        "n": 1,
+        "c": "AC"
+      },
+      "note": "Ghép AC để giảm thiểu phản xạ/sai số đếm xung ở tần số cao",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 5.0
+      },
+      "note": "Tần số: 5 Hz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 5 Hz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 10.0
+      },
+      "note": "Tần số: 10 Hz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 10 Hz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 100.0
+      },
+      "note": "Tần số: 100 Hz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 100 Hz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 1000.0
+      },
+      "note": "Tần số: 1 kHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 1 kHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 10000.0
+      },
+      "note": "Tần số: 10 kHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 10 kHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 100000.0
+      },
+      "note": "Tần số: 100 kHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 100 kHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 500000.0
+      },
+      "note": "Tần số: 500 kHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 500 kHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 1000000.0
+      },
+      "note": "Tần số: 1 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 1 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 10000000.0
+      },
+      "note": "Tần số: 10 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 10 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 100000000.0
+      },
+      "note": "Tần số: 100 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 100 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "SOUR{ch}:FREQ:CW {Hz} HZ",
+        "__is_query__": false,
+        "__cmd_original__": "SOUR<ch>:FREQ:CW <Hz> HZ",
+        "__cmd_desc__": "Đặt tần số CW",
+        "ch": 1,
+        "Hz": 300000000.0
+      },
+      "note": "Tần số: 300 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT ON",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT ON",
+        "__cmd_desc__": "Bật RF output",
+        "ch": 1
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 2.0
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "INIT",
+        "__is_query__": false,
+        "__cmd_original__": "INIT",
+        "__cmd_desc__": "Bắt đầu đo"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "CNT90"
+      ],
+      "params": {
+        "__template__": "FETC?",
+        "__is_query__": true,
+        "__cmd_original__": "FETC?",
+        "__cmd_desc__": "Đọc kết quả đo"
+      },
+      "note": "Đo tần số tại 300 MHz",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "wait",
+      "devices": [],
+      "params": {
+        "seconds": 1.0
+      },
+      "note": "Chờ sau khi đo",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "action": "raw_scpi",
+      "devices": [
+        "SMW200A"
+      ],
+      "params": {
+        "__template__": "OUTP{ch}:STAT OFF",
+        "__is_query__": false,
+        "__cmd_original__": "OUTP<ch>:STAT OFF",
+        "__cmd_desc__": "Tắt RF output",
+        "ch": 1
+      },
+      "note": "Kết thúc: tắt RF",
+      "enabled": true,
+      "type": "step"
+    }
+  ]
+}

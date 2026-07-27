@@ -61,6 +61,10 @@ ACTION_SPECS: dict[str, dict] = {
         "label": "Đo tần số",
         "categories": ("counter",), "needs_device": True, "params": [],
     },
+    "measure_period": {
+        "label": "Đo chu kỳ",
+        "categories": ("counter",), "needs_device": True, "params": [],
+    },
     "set_frequency": {
         "label": "Đặt tần số (cal factor — power meter)",
         "categories": ("power",), "needs_device": True,
@@ -132,7 +136,7 @@ ACTION_SPECS: dict[str, dict] = {
 VAR_ACTIONS = ("set_var", "compute", "collect")
 
 # Action sinh ra giá trị đo (dùng cho điều kiện "measure").
-MEASURE_ACTIONS = ("measure_frequency", "measure_power")
+MEASURE_ACTIONS = ("measure_frequency", "measure_period", "measure_power")
 
 
 def actions_for_category(category: str) -> list[str]:
@@ -168,6 +172,9 @@ class ScenarioStep:
     params: dict[str, Any] = field(default_factory=dict)
     note: str = ""
     enabled: bool = True
+    # Gắn nhãn để ResultMapper biết điền ô nào trong báo cáo.
+    # Ví dụ: {"table": "A5", "row_key": "5Hz", "field": "freq_measured"}
+    report_tag: Optional[dict] = None
 
     def describe_params(self) -> str:
         if self.action == "raw_scpi":
@@ -189,6 +196,8 @@ class ScenarioStep:
     def to_dict(self) -> dict:
         d = asdict(self)
         d["type"] = "step"
+        if d.get("report_tag") is None:
+            d.pop("report_tag", None)
         return d
 
     @classmethod
@@ -199,6 +208,7 @@ class ScenarioStep:
             params=dict(d.get("params", {})),
             note=d.get("note", ""),
             enabled=bool(d.get("enabled", True)),
+            report_tag=d.get("report_tag"),
         )
 
 
