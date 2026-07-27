@@ -74,6 +74,8 @@ def _empty_table(table_id: str, name: str) -> ReportTable:
 # ---------------------------------------------------------------------------
 
 def _add_table_a1_nrp2(doc: Document, rt: ReportTable):
+    """Đúng mẫu trang 14: chỉ 3 cột (chuẩn / từng lần đo trên NRVD / Độ KĐBĐ)
+    — KHÔNG có cột TB hay Số hiệu chỉnh trong Biên Bản (chỉ có ở GCN)."""
     _para(doc, "Bảng A1 - Xác định độ chính xác mức công suất tại đầu ra chuẩn",
           align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=SIZE_SMALL,
           space_before=4, space_after=2)
@@ -83,31 +85,20 @@ def _add_table_a1_nrp2(doc: Document, rt: ReportTable):
     n_data = max(len(raws), 1)
     n_rows = 1 + n_data
 
-    tbl = doc.add_table(rows=n_rows, cols=5)
+    tbl = doc.add_table(rows=n_rows, cols=3)
     tbl.style = "Table Grid"
-    _set_col_widths(tbl, [3.2, 4.0, 3.5, 2.8, 2.5])
+    _set_col_widths(tbl, [4.0, 6.0, 3.0])
 
-    headers = ["Công suất\nchuẩn", "Công suất đo được\ntrên NRVD (W)",
-               "Công suất TB\nđo được (W)", "Số hiệu\nchỉnh", "Độ\nKĐBĐ"]
-    for j, h in enumerate(headers):
+    for j, h in enumerate(["Công suất\nchuẩn", "Công suất đo được\ntrên NRVD (W)", "Độ\nKĐBĐ"]):
         _cell_para(tbl.cell(0, j), h, bold=True, size=SIZE_SMALL)
 
-    if row0:
-        for i in range(n_data):
-            if i < len(raws):
-                _cell_para(tbl.cell(i + 1, 1), _fmt_w(raws[i]), size=SIZE_SMALL)
-        for col_idx in [0, 2, 3, 4]:
-            _merge_col(tbl, col_idx, 1, n_data)
-        _cell_para(tbl.cell(1, 0), "1 mW", size=SIZE_SMALL)
-        _cell_para(tbl.cell(1, 2),
-                  _fmt_w(row0.value_measured) if row0.value_measured is not None else "",
-                  size=SIZE_SMALL)
-        _cell_para(tbl.cell(1, 3), _fmt_correction(row0.error, "mW"), size=SIZE_SMALL)
-        _cell_para(tbl.cell(1, 4), row0.limit, size=SIZE_SMALL)
-    else:
-        for col_idx in [0, 2, 3, 4]:
-            _merge_col(tbl, col_idx, 1, n_data)
-        _cell_para(tbl.cell(1, 0), "1 mW", size=SIZE_SMALL)
+    for i in range(n_data):
+        if i < len(raws):
+            _cell_para(tbl.cell(i + 1, 1), _fmt_w(raws[i]), size=SIZE_SMALL)
+    _merge_col(tbl, 0, 1, n_data)
+    _merge_col(tbl, 2, 1, n_data)
+    _cell_para(tbl.cell(1, 0), "1 mW", size=SIZE_SMALL)
+    _cell_para(tbl.cell(1, 2), row0.limit if row0 else "", size=SIZE_SMALL)
 
 
 # ---------------------------------------------------------------------------
@@ -115,26 +106,31 @@ def _add_table_a1_nrp2(doc: Document, rt: ReportTable):
 # ---------------------------------------------------------------------------
 
 def _add_table_a2_nrp2(doc: Document, rt: ReportTable):
+    """Đúng mẫu trang 15: Tần số | 5 lần đo + TB | Độ KĐBĐ — KHÔNG có cột
+    Số hiệu chỉnh trong Biên Bản (chỉ có ở GCN)."""
     _para(doc, "Bảng A2 - Xác định độ chính xác đo mức công suất tuyệt đối (tại 0 dBm)",
           align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=SIZE_SMALL,
           space_before=4, space_after=2)
 
     n_rows = 1 + len(rt.rows)
-    tbl = doc.add_table(rows=n_rows, cols=4)
+    tbl = doc.add_table(rows=n_rows, cols=8)
     tbl.style = "Table Grid"
-    _set_col_widths(tbl, [4.0, 5.0, 3.0, 3.0])
+    _set_col_widths(tbl, [3.5, 1.6, 1.6, 1.6, 1.6, 1.6, 1.8, 2.5])
 
-    for j, h in enumerate(["Tần số thiết lập", "Công suất đo được\ntrên NRP2 (dBm)",
-                           "Số hiệu chỉnh", "Độ KĐBĐ"]):
+    headers = ["Tần số thiết lập\n(mức công suất 0 dBm)",
+               "lần 1", "lần 2", "lần 3", "lần 4", "lần 5", "TB", "Độ KĐBĐ"]
+    for j, h in enumerate(headers):
         _cell_para(tbl.cell(0, j), h, bold=True, size=SIZE_SMALL)
 
     for i, r in enumerate(rt.rows, start=1):
         if r.freq_set:
             _cell_para(tbl.cell(i, 0), _fmt_freq(r.freq_set), size=SIZE_SMALL)
+        for k in range(5):
+            if k < len(r.raw_readings):
+                _cell_para(tbl.cell(i, 1 + k), _fmt_dbm(r.raw_readings[k]), size=SIZE_SMALL)
         if r.value_measured is not None:
-            _cell_para(tbl.cell(i, 1), _fmt_dbm(r.value_measured), size=SIZE_SMALL)
-        _cell_para(tbl.cell(i, 2), _fmt_correction(r.error, "dB"), size=SIZE_SMALL)
-        _cell_para(tbl.cell(i, 3), r.limit, size=SIZE_SMALL)
+            _cell_para(tbl.cell(i, 6), _fmt_dbm(r.value_measured), size=SIZE_SMALL)
+        _cell_para(tbl.cell(i, 7), r.limit, size=SIZE_SMALL)
 
 
 # ---------------------------------------------------------------------------
@@ -142,18 +138,21 @@ def _add_table_a2_nrp2(doc: Document, rt: ReportTable):
 # ---------------------------------------------------------------------------
 
 def _add_table_a3_nrp2(doc: Document, rt: ReportTable):
+    """Đúng mẫu trang 15-16: Tần số | Công suất chuẩn | 5 lần đo + TB | Độ
+    KĐBĐ — KHÔNG có cột Số hiệu chỉnh trong Biên Bản (chỉ có ở GCN)."""
     _para(doc, "Bảng A3 - Xác định độ chính xác đo công suất với bộ hiệu chuẩn "
                "công suất NRPC50 calibration kit",
           align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=SIZE_SMALL,
           space_before=4, space_after=2)
 
     n_rows = 1 + len(rt.rows)
-    tbl = doc.add_table(rows=n_rows, cols=5)
+    tbl = doc.add_table(rows=n_rows, cols=9)
     tbl.style = "Table Grid"
-    _set_col_widths(tbl, [3.0, 3.0, 4.0, 3.0, 3.0])
+    _set_col_widths(tbl, [2.5, 2.5, 1.6, 1.6, 1.6, 1.6, 1.6, 1.7, 2.3])
 
-    for j, h in enumerate(["Tần số\nthiết lập", "Công suất chuẩn\ntrên NRP2 (dBm)",
-                           "Công suất TB\nđo được (dBm)", "Số hiệu\nchỉnh", "Độ\nKĐBĐ"]):
+    headers = ["Tần số\nthiết lập", "Công suất\nchuẩn (dBm)",
+               "lần 1", "lần 2", "lần 3", "lần 4", "lần 5", "TB", "Độ\nKĐBĐ"]
+    for j, h in enumerate(headers):
         _cell_para(tbl.cell(0, j), h, bold=True, size=SIZE_SMALL)
 
     # Gộp ô cột "Tần số thiết lập" theo nhóm liên tiếp cùng freq_set
@@ -167,18 +166,24 @@ def _add_table_a3_nrp2(doc: Document, rt: ReportTable):
             start = i
 
     for i, r in enumerate(rows, start=1):
-        power_set = None
-        if r.key and "_" in r.key:
-            try:
-                power_set = float(r.key.rsplit("_", 1)[1].replace("dBm", ""))
-            except ValueError:
-                power_set = None
+        power_set = _power_set_from_key(r.key)
         if power_set is not None:
             _cell_para(tbl.cell(i, 1), _fmt_dbm(power_set), size=SIZE_SMALL)
+        for k in range(5):
+            if k < len(r.raw_readings):
+                _cell_para(tbl.cell(i, 2 + k), _fmt_dbm(r.raw_readings[k]), size=SIZE_SMALL)
         if r.value_measured is not None:
-            _cell_para(tbl.cell(i, 2), _fmt_dbm(r.value_measured), size=SIZE_SMALL)
-        _cell_para(tbl.cell(i, 3), _fmt_correction(r.error, "dB"), size=SIZE_SMALL)
-        _cell_para(tbl.cell(i, 4), r.limit, size=SIZE_SMALL)
+            _cell_para(tbl.cell(i, 7), _fmt_dbm(r.value_measured), size=SIZE_SMALL)
+        _cell_para(tbl.cell(i, 8), r.limit, size=SIZE_SMALL)
+
+
+def _power_set_from_key(key: str) -> Optional[float]:
+    if key and "_" in key:
+        try:
+            return float(key.rsplit("_", 1)[1].replace("dBm", ""))
+        except ValueError:
+            return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -473,12 +478,7 @@ def _add_gcn_result_tables(doc: Document, session: CalibrationSession):
                     _cell_para(tbl.cell(start + 1, 0), _fmt_freq(rows[start].freq_set), size=SIZE_SMALL)
                 start = i
         for i, r in enumerate(rows, start=1):
-            power_set = None
-            if r.key and "_" in r.key:
-                try:
-                    power_set = float(r.key.rsplit("_", 1)[1].replace("dBm", ""))
-                except ValueError:
-                    power_set = None
+            power_set = _power_set_from_key(r.key)
             if power_set is not None:
                 _cell_para(tbl.cell(i, 1), _fmt_dbm(power_set), size=SIZE_SMALL)
             if r.value_measured is not None:

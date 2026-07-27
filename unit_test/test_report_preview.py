@@ -162,10 +162,11 @@ def test_nrp2_a2_has_different_layout_than_cnt90xl_a2():
 
     assert headers_cnt90 != headers_nrp2
     assert tbl_cnt90.columnCount() == 3       # Tần số/Độ nhạy đo được/Độ nhạy cho phép
-    assert tbl_nrp2.columnCount() == 4        # Tần số/Công suất đo được/Số hiệu chỉnh/Độ KĐBĐ
+    # Tần số/lần1/lần2/lần3/lần4/lần5/TB/Độ KĐBĐ — đúng mẫu Biên Bản (không có Số hiệu chỉnh)
+    assert tbl_nrp2.columnCount() == 8
     assert any("nhạy" in h for h in headers_cnt90)
     assert not any("nhạy" in h for h in headers_nrp2)
-    assert any("hiệu chỉnh" in h for h in headers_nrp2)
+    assert any("lần" in h for h in headers_nrp2)
 
 
 def test_nrp2_a1_raw_readings_and_checkbox_span():
@@ -176,22 +177,28 @@ def test_nrp2_a1_raw_readings_and_checkbox_span():
     ]
     tbl = build_wysiwyg_table(NRP2, "A1", rows, with_checkbox=True)
     assert tbl.rowCount() == 3
-    assert tbl.columnCount() == 6   # 5 cột dữ liệu + 1 checkbox
+    assert tbl.columnCount() == 4   # 3 cột dữ liệu (chuẩn/đo được/Độ KĐBĐ) + 1 checkbox
     assert tbl.rowSpan(0, 0) == 3   # checkbox gộp cả 3 dòng đo thô
     assert tbl.item(0, 1).text() == "1 mW"   # cột "Công suất chuẩn" (đã dịch +1 vì checkbox)
 
 
 def test_nrp2_a3_groups_by_frequency():
     rows = [
-        TableRow(key="50MHz_-30dBm", freq_set=50e6, value_measured=-30.1, error=0.1, limit="± 0,2"),
-        TableRow(key="50MHz_-20dBm", freq_set=50e6, value_measured=-20.1, error=0.1, limit="± 0,2"),
-        TableRow(key="1GHz_-30dBm", freq_set=1e9, value_measured=-30.2, error=0.2, limit="± 0,2"),
+        TableRow(key="50MHz_-30dBm", freq_set=50e6, value_measured=-30.1, limit="± 0,2",
+                 raw_readings=[-30.0, -30.1, -30.1, -30.2, -30.1]),
+        TableRow(key="50MHz_-20dBm", freq_set=50e6, value_measured=-20.1, limit="± 0,2",
+                 raw_readings=[-20.0, -20.1, -20.1, -20.2, -20.1]),
+        TableRow(key="1GHz_-30dBm", freq_set=1e9, value_measured=-30.2, limit="± 0,2",
+                 raw_readings=[-30.1, -30.2, -30.2, -30.3, -30.2]),
     ]
     tbl = build_wysiwyg_table(NRP2, "A3", rows)
-    assert tbl.columnCount() == 5
+    # Tần số/Công suất chuẩn/lần1-5/TB/Độ KĐBĐ — đúng mẫu Biên Bản
+    assert tbl.columnCount() == 9
     assert tbl.rowSpan(0, 0) == 2   # 2 dòng đầu cùng 50MHz -> gộp
     assert tbl.rowSpan(2, 0) == 1   # dòng 1GHz riêng
-    assert tbl.item(0, 2).text() != ""   # công suất chuẩn suy từ row.key
+    assert tbl.item(0, 1).text() != ""   # công suất chuẩn suy từ row.key
+    assert tbl.item(0, 2).text() != ""   # lần 1
+    assert tbl.item(0, 7).text() != ""   # TB
 
 
 def test_unknown_template_falls_back_to_cnt90xl():

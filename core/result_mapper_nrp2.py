@@ -115,12 +115,18 @@ def map_table_a1(groups: dict) -> ReportTable:
 def map_table_a2(groups: dict) -> ReportTable:
     rows = []
     for row_key, freq_hz in _TABLE_A2_ROWS:
+        # Mục 5.3.2: đo 5 lần lặp lại mỗi điểm tần số — Biên Bản ghi từng lần
+        # + TB, GCN chỉ ghi TB + số hiệu chỉnh (xem report_generator_nrp2.py).
+        raws = _all_ok_values(groups, "A2", row_key, "raw_reading")
         p_avg = _last_ok_value(groups, "A2", row_key, "power_measured")
+        if raws and p_avg is None:
+            p_avg = sum(raws) / len(raws)
         correction = (_A2_POWER_SET_DBM - p_avg) if p_avg is not None else None
         uncertainty = _last_ok_value(groups, "A2", row_key, "uncertainty")
         rows.append(TableRow(
             key=row_key, freq_set=freq_hz, value_measured=p_avg, value_unit="dBm",
             error=correction, limit=_fmt_uncertainty(uncertainty), passed=None,
+            raw_readings=raws,
         ))
     return ReportTable(table_id="A2",
                        name="Xác định độ chính xác đo mức công suất tuyệt đối (tại 0 dBm)",
@@ -130,12 +136,18 @@ def map_table_a2(groups: dict) -> ReportTable:
 def map_table_a3(groups: dict) -> ReportTable:
     rows = []
     for row_key, freq_hz, power_set_dbm in _TABLE_A3_ROWS:
+        # Mục 5.3.3: đo 5 lần lặp lại mỗi điểm (tần số, công suất) — cùng
+        # cách ghi như A2.
+        raws = _all_ok_values(groups, "A3", row_key, "raw_reading")
         p_avg = _last_ok_value(groups, "A3", row_key, "power_measured")
+        if raws and p_avg is None:
+            p_avg = sum(raws) / len(raws)
         correction = (power_set_dbm - p_avg) if p_avg is not None else None
         uncertainty = _last_ok_value(groups, "A3", row_key, "uncertainty")
         rows.append(TableRow(
             key=row_key, freq_set=freq_hz, value_measured=p_avg, value_unit="dBm",
             error=correction, limit=_fmt_uncertainty(uncertainty), passed=None,
+            raw_readings=raws,
         ))
     return ReportTable(table_id="A3",
                        name="Xác định độ chính xác đo công suất với bộ hiệu chuẩn "
