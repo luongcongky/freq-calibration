@@ -520,19 +520,33 @@ class _TestReviewTab(QWidget):
         self.lbl_title.setText(f"{test.table_id}: {test.name}")
         self.e_file.setText(test.scenario_path or "(chưa chọn file kịch bản)")
         self.btn_run_one.setEnabled(not self._running)
-        rows = test.result_table.rows if test.result_table else []
-        self._render_result_table(test.table_id, rows)
-        self.btn_check_all.setEnabled(bool(rows))
-        self.btn_uncheck_all.setEnabled(bool(rows))
+        has_result = test.result_table is not None
+        rows = test.result_table.rows if has_result else self._preview_rows(test)
+        self._render_result_table(test.table_id, rows, with_checkbox=has_result)
+        self.btn_check_all.setEnabled(has_result and bool(rows))
+        self.btn_uncheck_all.setEnabled(has_result and bool(rows))
 
-    def _render_result_table(self, table_id: str, rows):
+    def _preview_rows(self, test: SessionTest) -> list:
+        """Bài chưa chạy (result_table=None) -> dựng khung bảng theo đúng mẫu
+        báo cáo (đủ số dòng, giá trị để trống) để xem trước cấu trúc đo,
+        không cho xác nhận (chưa có gì để xác nhận)."""
+        if not self._template_id:
+            return []
+        try:
+            tpl = get_template(self._template_id)
+            rt = tpl.map_test_result(test)
+        except Exception:  # noqa: BLE001
+            return []
+        return rt.rows if rt else []
+
+    def _render_result_table(self, table_id: str, rows, with_checkbox: bool = True):
         while self._result_holder.count():
             item = self._result_holder.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
         tbl = build_wysiwyg_table(self._template_id, table_id, rows,
-                                  with_checkbox=True, on_toggle=self._on_row_confirm_toggled,
+                                  with_checkbox=with_checkbox, on_toggle=self._on_row_confirm_toggled,
                                   empty_message="Chưa có kết quả")
         self._result_holder.addWidget(tbl)
 
