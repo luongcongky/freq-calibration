@@ -329,6 +329,7 @@ class _TestReviewTab(QWidget):
     run_all_requested = pyqtSignal()
     run_one_requested = pyqtSignal(int)
     stop_requested     = pyqtSignal()
+    open_scenario_requested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -371,6 +372,7 @@ class _TestReviewTab(QWidget):
             f"QTableWidget::item:alternate {{ background-color: #1a1f26; }}"
         )
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         left_lay.addWidget(self.table, 1)
 
         bar = QHBoxLayout()
@@ -469,9 +471,11 @@ class _TestReviewTab(QWidget):
             it.setFlags(it.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(index, col, it)
 
-        path_it = QTableWidgetItem(test.scenario_path)
+        path_it = QTableWidgetItem(os.path.basename(test.scenario_path) if test.scenario_path else "")
         path_it.setFlags(path_it.flags() & ~Qt.ItemIsEditable)
         path_it.setForeground(QColor(Colors.TEXT_DIM if not test.scenario_path else Colors.TEXT_MAIN))
+        if test.scenario_path:
+            path_it.setToolTip(test.scenario_path)
         self.table.setItem(index, _COL_FILE, path_it)
 
         stat_it = QTableWidgetItem("")
@@ -502,6 +506,10 @@ class _TestReviewTab(QWidget):
         rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
         if rows:
             self._show_test(rows[0])
+
+    def _on_cell_double_clicked(self, row: int, col: int):
+        if col in (_COL_NAME, _COL_FILE):
+            self.open_scenario_requested.emit(row)
 
     def _clear_detail(self):
         self._current_index = None
@@ -545,11 +553,14 @@ class _TestReviewTab(QWidget):
             w = item.widget()
             if w:
                 w.deleteLater()
-        # with_status dùng chung điều kiện với with_checkbox: chỉ cho sửa
-        # Đạt/Không đạt khi bài đã có kết quả thật (không phải khung xem trước).
+        # Luôn HIỆN cả 2 cột (checkbox + Đạt/Không đạt); with_checkbox ở đây
+        # chỉ còn ý nghĩa "bài đã có kết quả thật" (interactive) -> nếu bài
+        # chưa chạy (khung xem trước rỗng) thì 2 cột vẫn hiện nhưng bị khoá,
+        # tránh tick/chọn trên dữ liệu chưa tồn tại rồi mất khi đổi bài khác.
         tbl = build_wysiwyg_table(self._template_id, table_id, rows,
-                                  with_checkbox=with_checkbox, on_toggle=self._on_row_confirm_toggled,
-                                  with_status=with_checkbox, on_status_change=self._on_row_confirm_toggled,
+                                  with_checkbox=True, on_toggle=self._on_row_confirm_toggled,
+                                  with_status=True, on_status_change=self._on_row_confirm_toggled,
+                                  interactive=with_checkbox,
                                   empty_message="Chưa có kết quả")
         self._result_holder.addWidget(tbl)
 
@@ -592,7 +603,8 @@ class _TestReviewTab(QWidget):
         test.scenario_path = path
         it = self.table.item(row, _COL_FILE)
         if it:
-            it.setText(path)
+            it.setText(os.path.basename(path))
+            it.setToolTip(path)
             it.setForeground(QColor(Colors.TEXT_MAIN))
         if row == self._current_index:
             self.e_file.setText(path)
@@ -919,6 +931,7 @@ class SessionManagerWindow(QMainWindow):
         self._step_review.run_all_requested.connect(self._run_all)
         self._step_review.stop_requested.connect(self._stop_run)
         self._step_review.run_one_requested.connect(self._run_one)
+        self._step_review.open_scenario_requested.connect(self._open_scenario_for_test)
         self._step_export.export_bienban_requested.connect(self._export_bienban)
         self._step_export.export_gcnkd_requested.connect(self._export_gcnkd)
         self._step_export.row_edited.connect(self._refresh_export_tab)
@@ -1010,6 +1023,18 @@ class SessionManagerWindow(QMainWindow):
         else:
             self._scenario_win.raise_()
             self._scenario_win.activateWindow()
+
+    def _open_scenario_for_test(self, index: int):
+        test = self._session.tests[index]
+        if not test.scenario_path or not os.path.isfile(test.scenario_path):
+            QMessageBox.information(self, "Chưa có file",
+                                    "Bài này chưa chọn file kịch bản hợp lệ.")
+            return
+        self._open_scenario_builder()
+        if not self._scenario_win.load_scenario_file(test.scenario_path):
+            return
+        self._scenario_win.raise_()
+        self._scenario_win.activateWindow()
 
     def _on_scenario_builder_device_changed(self, address_map: dict, cmd_delay_s: float):
         """Callback khi Scenario Builder cập nhật thiết bị — đồng bộ ngược lại."""
@@ -1213,6 +1238,13 @@ class SessionManagerWindow(QMainWindow):
 
     def _on_step_result(self, res: StepResult):
         self._step_results_current.append(res)
+        win = self._scenario_win
+        if win and win.isVisible() and self._current_test_index >= 0:
+            running_path = self._session.tests[self._current_test_index].scenario_path
+            if (win.loaded_path and running_path and
+                    os.path.normcase(os.path.abspath(win.loaded_path)) ==
+                    os.path.normcase(os.path.abspath(running_path))):
+                win.highlight_flat_index(res.flat_index)
 
     def _on_test_done(self, index: int, n_steps: int):
         test = self._session.tests[index]

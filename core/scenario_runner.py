@@ -28,7 +28,7 @@ from typing import Any, Callable, Optional
 from drivers import DEVICE_REGISTRY, Reading
 from core.scenario import (
     Scenario, ScenarioStep, LoopBlock, IfBlock, Branch, Condition,
-    ACTION_SPECS,
+    ACTION_SPECS, enumerate_nodes,
 )
 from core.expr import evaluate as eval_expr, ExprError
 
@@ -86,6 +86,7 @@ class StepResult:
     error: str = ""
     is_query: bool = False           # raw_scpi: lệnh truy vấn (có đọc kết quả về)
     node_id: int = 0                 # id(obj) của node/step để GUI ánh xạ
+    flat_index: int = -1             # vị trí DFS (enumerate_nodes) — ổn định giữa 2 lần load_json độc lập
     iteration: int = 0               # vòng lặp hiện tại (0 nếu không trong loop)
     kind: str = "step"              # "step" | "control"
     timestamp: float = field(default_factory=time.time)
@@ -329,6 +330,9 @@ class ScenarioRunner:
         self._results.append(res)
         self._on_result(res)
 
+    def _fidx(self, obj) -> int:
+        return self._flat_index.get(id(obj), -1)
+
     # ------------------------------------------------------------------
 
     def run(self, scn: Scenario) -> list[StepResult]:
@@ -336,6 +340,7 @@ class ScenarioRunner:
         self._ctx = _Ctx()
         self._devices = {}
         nodes = scn.nodes
+        self._flat_index = {id(n): i for i, n in enumerate(enumerate_nodes(nodes))}
         # Nhãn (label) cấp ngoài cùng -> chỉ số node, làm đích cho goto.
         labels = {n.params.get("name"): i for i, n in enumerate(nodes)
                   if isinstance(n, ScenarioStep) and n.action == "label" and n.params.get("name")}
@@ -406,7 +411,8 @@ class ScenarioRunner:
             self._run_loop_until(idx, loop)
             return
         self._emit(StepResult(step_index=idx, action="loop", kind="control",
-                              node_id=id(loop), text=f"Lặp {loop.count} lần"))
+                              node_id=id(loop), flat_index=self._fidx(loop),
+                              text=f"Lặp {loop.count} lần"))
         self._ctx.iter_stack.append(0)
         try:
             for i in range(1, loop.count + 1):
@@ -423,7 +429,7 @@ class ScenarioRunner:
     def _run_loop_until(self, idx: int, loop: LoopBlock) -> None:
         max_iter = max(1, int(getattr(loop, "max_iter", 50)))
         self._emit(StepResult(step_index=idx, action="loop", kind="control",
-                              node_id=id(loop),
+                              node_id=id(loop), flat_index=self._fidx(loop),
                               text=f"Lặp đến khi: {loop.condition.describe() if loop.condition else '?'} "
                                    f"(tối đa {max_iter})"))
         self._ctx.iter_stack.append(0)
@@ -446,14 +452,14 @@ class ScenarioRunner:
                     if ok:
                         reached = True
                         self._emit(StepResult(step_index=idx, action="loop", kind="control",
-                                              node_id=id(loop),
+                                              node_id=id(loop), flat_index=self._fidx(loop),
                                               text=f"→ đạt sau {i} vòng ({why})"))
                         break
         finally:
             self._ctx.iter_stack.pop()
         if not reached and not broke_early and not self._stop_flag():
             self._emit(StepResult(step_index=idx, action="loop", kind="control",
-                                  node_id=id(loop), ok=False,
+                                  node_id=id(loop), flat_index=self._fidx(loop), ok=False,
                                   error=f"chưa đạt điều kiện sau {i} vòng (max_iter={max_iter})"))
 
     def _run_if(self, idx: int, ib: IfBlock) -> None:
@@ -472,11 +478,12 @@ class ScenarioRunner:
 
         if chosen is None:
             self._emit(StepResult(step_index=idx, action="if", kind="control",
-                                  node_id=id(ib), text="không nhánh nào khớp → bỏ qua"))
+                                  node_id=id(ib), flat_index=self._fidx(ib),
+                                  text="không nhánh nào khớp → bỏ qua"))
             return
 
         self._emit(StepResult(step_index=idx, action="if", kind="control",
-                              node_id=id(ib), text=f"→ {chosen_desc}"))
+                              node_id=id(ib), flat_index=self._fidx(ib), text=f"→ {chosen_desc}"))
         self._run_body(idx, chosen.body, iteration=0)   # nhánh có thể chứa loop/if lồng
 
     def _resolve_params(self, params: dict) -> dict:
@@ -492,7 +499,7 @@ class ScenarioRunner:
     def _run_var_action(self, idx: int, step: ScenarioStep, iteration: int) -> None:
         """set_var / compute / collect — thao tác trên biến, không gọi thiết bị."""
         res = StepResult(step_index=idx, action=step.action,
-                         node_id=id(step), iteration=iteration,
+                         node_id=id(step), flat_index=self._fidx(step), iteration=iteration,
                          report_tag=step.report_tag)
         try:
             if step.action in ("set_var", "compute"):
@@ -522,19 +529,19 @@ class ScenarioRunner:
 
         if step.action == "break":
             self._emit(StepResult(step_index=idx, action="break", kind="control",
-                                  node_id=id(step), iteration=iteration,
+                                  node_id=id(step), flat_index=self._fidx(step), iteration=iteration,
                                   text="⛔ break — thoát vòng lặp"))
             raise _BreakLoop()
 
         if step.action == "label":
             self._emit(StepResult(step_index=idx, action="label", kind="control",
-                                  node_id=id(step), iteration=iteration,
+                                  node_id=id(step), flat_index=self._fidx(step), iteration=iteration,
                                   text=f"◆ Nhãn: {step.params.get('name', '')}"))
             return
 
         if step.action == "goto":
             self._emit(StepResult(step_index=idx, action="goto", kind="control",
-                                  node_id=id(step), iteration=iteration,
+                                  node_id=id(step), flat_index=self._fidx(step), iteration=iteration,
                                   text=f"→ Goto: {step.params.get('target', '')}"))
             raise _Goto(step.params.get("target", ""))
 
@@ -544,7 +551,7 @@ class ScenarioRunner:
 
         if not spec.get("needs_device", True):       # wait
             res = StepResult(step_index=idx, action=step.action,
-                             node_id=id(step), iteration=iteration)
+                             node_id=id(step), flat_index=self._fidx(step), iteration=iteration)
             try:
                 params = dict(step.params)
                 if step.action == "wait" and not self._settle_wait:
@@ -560,7 +567,7 @@ class ScenarioRunner:
 
         for dk in step.devices:
             res = StepResult(step_index=idx, action=step.action, device_key=dk,
-                             node_id=id(step), iteration=iteration,
+                             node_id=id(step), flat_index=self._fidx(step), iteration=iteration,
                              report_tag=step.report_tag)
             try:
                 info = execute_action(step.action, self._devices[dk],

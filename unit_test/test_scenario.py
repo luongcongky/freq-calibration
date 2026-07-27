@@ -8,7 +8,7 @@ import pytest
 
 from core.scenario import (
     Scenario, ScenarioStep, LoopBlock, IfBlock, Branch, Condition,
-    actions_for_devices, validate_scenario, node_kind,
+    actions_for_devices, validate_scenario, node_kind, enumerate_nodes,
 )
 from core.scenario_runner import ScenarioRunner, StepResult, evaluate_condition, _Ctx
 
@@ -417,3 +417,87 @@ def test_result_cell_error():
     r = StepResult(action="raw_scpi", device_key="CNT91",
                    ok=False, error="Timeout")
     assert r.result_cell() == "LỖI — Timeout"
+
+
+# ---------------------------------------------------------------------------
+# enumerate_nodes() / StepResult.flat_index — đối chiếu vị trí node giữa
+# 2 object graph độc lập cùng nội dung (Bước 2 vs Scenario Builder mở cùng file).
+# ---------------------------------------------------------------------------
+
+def _nested_scenario() -> Scenario:
+    """Loop lồng If — cấu trúc đủ phức tạp để kiểm tra thứ tự DFS."""
+    return Scenario(name="Lồng nhau", nodes=[
+        ScenarioStep(action="identify", devices=["CNT91"]),
+        LoopBlock(count=2, body=[
+            ScenarioStep(action="measure_frequency", devices=["CNT91"]),
+            IfBlock(branches=[
+                Branch(condition=Condition(kind="measure", op=">", value=1e6),
+                       body=[ScenarioStep(action="identify", devices=["CNT91"])]),
+                Branch(condition=None, body=[
+                    ScenarioStep(action="identify", devices=["N1913A"]),
+                    ScenarioStep(action="wait", devices=[], params={"seconds": 0.0}),
+                ]),
+            ]),
+        ]),
+        ScenarioStep(action="measure_power", devices=["N1913A"]),
+    ])
+
+
+def test_enumerate_nodes_order_and_kinds():
+    scn = _nested_scenario()
+    flat = enumerate_nodes(scn.nodes)
+    kinds = [node_kind(n) for n in flat]
+    # step, loop, step(trong loop), if, step(nhánh1), step(nhánh else)x2, step cuối
+    assert kinds == ["step", "loop", "step", "if", "step", "step", "step", "step"]
+    assert flat[0] is scn.nodes[0]
+    assert flat[1] is scn.nodes[1]                       # LoopBlock
+    assert flat[-1] is scn.nodes[2]                       # step cuối cùng cấp ngoài
+
+
+def test_enumerate_nodes_stable_across_independent_loads():
+    scn = _nested_scenario()
+    d = scn.to_dict()
+    a = Scenario.from_dict(d)
+    b = Scenario.from_dict(d)
+    flat_a = enumerate_nodes(a.nodes)
+    flat_b = enumerate_nodes(b.nodes)
+    assert len(flat_a) == len(flat_b)
+    for na, nb in zip(flat_a, flat_b):
+        assert id(na) != id(nb)                           # object graph khác nhau
+        assert node_kind(na) == node_kind(nb)
+        if isinstance(na, ScenarioStep):
+            assert na.action == nb.action
+            assert na.devices == nb.devices
+
+
+def test_flat_index_stamped_matches_enumerate_nodes():
+    scn = _nested_scenario()
+    results = ScenarioRunner(mock=True, settle_wait=False).run(scn)
+    flat = enumerate_nodes(scn.nodes)
+    for r in results:
+        assert r.flat_index != -1
+        assert flat[r.flat_index] is not None
+
+
+def test_flat_index_cross_reference_between_independent_loads(tmp_path):
+    """Mô phỏng đúng tình huống thật: Bước 2 và Scenario Builder mở CÙNG 1
+    file .json bằng 2 lần Scenario.load_json() độc lập -> id() khác nhau
+    nhưng flat_index phải tra đúng node tương ứng ở phía kia."""
+    scn = _nested_scenario()
+    p = tmp_path / "nested.json"
+    scn.save_json(p)
+
+    scn_a = Scenario.load_json(p)   # phía "worker" chạy kịch bản
+    scn_b = Scenario.load_json(p)   # phía "Scenario Builder" hiển thị cây
+
+    results = ScenarioRunner(mock=True, settle_wait=False).run(scn_a)
+    flat_b = enumerate_nodes(scn_b.nodes)
+
+    for r in results:
+        if r.kind != "step":
+            continue
+        node_b = flat_b[r.flat_index]
+        assert isinstance(node_b, ScenarioStep)
+        assert node_b.action == r.action
+        if r.device_key:
+            assert r.device_key in node_b.devices

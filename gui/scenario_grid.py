@@ -32,6 +32,7 @@ from core.scenario import (
     Scenario, ScenarioStep, LoopBlock, IfBlock, Branch, Condition,
     ACTION_SPECS, OPERATORS, OP_LABELS, MAX_NEST_DEPTH,
     actions_for_devices, validate_scenario, node_kind, node_from_dict,
+    enumerate_nodes,
 )
 from core.scenario_runner import ScenarioRunner, StepResult
 from core.commands import (
@@ -959,6 +960,7 @@ class ScenarioGridWindow(QMainWindow):
         self.resize(1600, 900)
         self.setMinimumSize(1150, 680)
         self.scenario = Scenario(name="Kịch bản mới")
+        self.loaded_path: str = ""
         self.worker: ScenarioWorker | None = None
         self._loading = False
         self._last_results: list[StepResult] = []
@@ -970,6 +972,7 @@ class ScenarioGridWindow(QMainWindow):
 
         self._id_to_item: dict = {}
         self._item_results: dict = {}
+        self._flatidx_to_item: dict = {}
 
         self._build_ui()
         self._refresh_tree()
@@ -1135,6 +1138,11 @@ class ScenarioGridWindow(QMainWindow):
         for node in self.scenario.nodes:
             self._add_node_item(node, root, None)
         self.tree.expandAll()
+        self._flatidx_to_item = {
+            i: self._id_to_item[id(n)]
+            for i, n in enumerate(enumerate_nodes(self.scenario.nodes))
+            if id(n) in self._id_to_item
+        }
         self._loading = False
         self._update_header_check()
         n = len(self.scenario.nodes)
@@ -1865,11 +1873,22 @@ class ScenarioGridWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Mở kịch bản", "", "JSON (*.json)")
         if not path:
             return
+        self.load_scenario_file(path)
+
+    def load_scenario_file(self, path: str) -> bool:
+        """Nạp 1 file kịch bản từ bên ngoài (vd Bước 2 click xem chi tiết).
+        Trả về False nếu đang chạy dở (không an toàn để thay self.scenario)."""
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.warning(self, "Đang chạy",
+                                "Kịch bản đang chạy — không thể nạp file khác lúc này.")
+            return False
         try:
             self.scenario = Scenario.load_json(path)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Lỗi mở file", str(exc)); return
+            QMessageBox.critical(self, "Lỗi mở file", str(exc)); return False
+        self.loaded_path = path
         self._refresh_tree(); self._log(f"Đã mở: {path}", Colors.ACCENT_GREEN)
+        return True
 
     # ------------------------------------------------------------------
     # Chạy
@@ -1918,6 +1937,16 @@ class ScenarioGridWindow(QMainWindow):
         walk(self.tree.invisibleRootItem())
         return out
 
+    def highlight_flat_index(self, flat_index: int):
+        """Tô sáng + cuộn tới node theo vị trí phẳng (enumerate_nodes) — dùng
+        để đồng bộ với 1 worker chạy ở cửa sổ khác trên object graph khác
+        (id() không khớp), vd Bước 2 của Phiên Kiểm Định."""
+        item = self._flatidx_to_item.get(flat_index)
+        if item is None:
+            return
+        self.tree.setCurrentItem(item)
+        self.tree.scrollToItem(item, QAbstractItemView.EnsureVisible)
+
     def _on_result(self, res: StepResult):
         self._last_results.append(res)
         item = self._id_to_item.get(res.node_id)
@@ -1925,8 +1954,7 @@ class ScenarioGridWindow(QMainWindow):
             self._log(f"B{res.step_index} {res.summary()}",
                       Colors.ACCENT_RED if not res.ok else Colors.TEXT_DIM)
             return
-        self.tree.setCurrentItem(item)
-        self.tree.scrollToItem(item, QAbstractItemView.EnsureVisible)
+        self.highlight_flat_index(res.flat_index)
         self._loading = True
         key = id(item)
         self._item_results.setdefault(key, []).append(res.result_cell())

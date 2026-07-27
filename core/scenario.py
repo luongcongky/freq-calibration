@@ -373,6 +373,23 @@ def node_kind(node: Node) -> str:
     return "step"
 
 
+def enumerate_nodes(nodes: list) -> list:
+    """Duyệt DFS pre-order mọi node (step/loop/if — KHÔNG yield Branch) theo
+    đúng thứ tự ScenarioRunner thực thi và ScenarioGridWindow hiển thị cây.
+    Vị trí (index) trong danh sách phẳng này ổn định giữa 2 lần
+    Scenario.load_json() độc lập trên cùng 1 file — dùng để đối chiếu node
+    giữa 2 object graph khác nhau (id() Python không khớp giữa 2 lần load)."""
+    out = []
+    for n in nodes:
+        out.append(n)
+        if isinstance(n, LoopBlock):
+            out.extend(enumerate_nodes(n.body))
+        elif isinstance(n, IfBlock):
+            for br in n.branches:
+                out.extend(enumerate_nodes(br.body))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Scenario
 # ---------------------------------------------------------------------------
