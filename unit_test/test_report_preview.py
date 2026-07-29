@@ -2,8 +2,8 @@
 unit_test/test_report_preview.py
 =================================
 Test cho:
-  - core.result_mapper.TABLE_ROW_KEYS / TABLE_FIELD_KEYS (metadata cho dropdown
-    gắn report_tag trong Scenario Builder).
+  - core.result_mapper.TABLE_ROW_KEYS (metadata cho dropdown chọn bảng đích
+    của action report_val trong Scenario Builder).
   - gui.report_preview.build_wysiwyg_table (bảng preview khớp layout docx thật,
     tách đúng theo template — CNT-90XL vs NRP2 dùng chung mã "A1".."A3" nhưng
     layout khác nhau, đây chính là bug đã phát hiện và sửa).
@@ -14,7 +14,7 @@ import pytest
 QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 from PyQt5.QtWidgets import QApplication
 
-from core.result_mapper import TABLE_MAPPERS, TABLE_ROW_KEYS, TABLE_FIELD_KEYS
+from core.result_mapper import TABLE_MAPPERS, TABLE_ROW_KEYS
 from core.session import TableRow
 from gui.report_preview import build_wysiwyg_table
 
@@ -25,20 +25,17 @@ NRP2 = "QTHC_2515_NRP2"
 
 
 # ---------------------------------------------------------------------------
-# TABLE_ROW_KEYS / TABLE_FIELD_KEYS
+# TABLE_ROW_KEYS
 # ---------------------------------------------------------------------------
 
-def test_every_table_id_has_row_keys_and_fields():
+def test_every_table_id_has_row_keys():
     for table_id in TABLE_MAPPERS:
         assert table_id in TABLE_ROW_KEYS
         assert TABLE_ROW_KEYS[table_id], f"{table_id} thiếu row_key"
-        assert table_id in TABLE_FIELD_KEYS
-        assert TABLE_FIELD_KEYS[table_id], f"{table_id} thiếu field"
 
 
 def test_no_stray_table_ids():
     assert set(TABLE_ROW_KEYS.keys()) == set(TABLE_MAPPERS.keys())
-    assert set(TABLE_FIELD_KEYS.keys()) == set(TABLE_MAPPERS.keys())
 
 
 # ---------------------------------------------------------------------------

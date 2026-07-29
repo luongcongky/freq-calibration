@@ -115,6 +115,10 @@ ACTION_SPECS: dict[str, dict] = {
         "label": "Thu thập vào list",
         "categories": (), "needs_device": False, "params": [],
     },
+    "report_val": {
+        "label": "Ghi giá trị vào báo cáo (report_val)",
+        "categories": (), "needs_device": False, "params": [],
+    },
     "break": {
         "label": "⛔ Thoát vòng lặp (break)",
         "categories": (), "needs_device": False, "params": [],
@@ -133,7 +137,7 @@ ACTION_SPECS: dict[str, dict] = {
 }
 
 # Action thao tác trên biến (không gọi thiết bị, không cần ParamSpec).
-VAR_ACTIONS = ("set_var", "compute", "collect")
+VAR_ACTIONS = ("set_var", "compute", "collect", "report_val")
 
 # Action sinh ra giá trị đo (dùng cho điều kiện "measure").
 MEASURE_ACTIONS = ("measure_frequency", "measure_period", "measure_power")
@@ -172,9 +176,6 @@ class ScenarioStep:
     params: dict[str, Any] = field(default_factory=dict)
     note: str = ""
     enabled: bool = True
-    # Gắn nhãn để ResultMapper biết điền ô nào trong báo cáo.
-    # Ví dụ: {"table": "A5", "row_key": "5Hz", "field": "freq_measured"}
-    report_tag: Optional[dict] = None
 
     def describe_params(self) -> str:
         if self.action == "raw_scpi":
@@ -196,8 +197,6 @@ class ScenarioStep:
     def to_dict(self) -> dict:
         d = asdict(self)
         d["type"] = "step"
-        if d.get("report_tag") is None:
-            d.pop("report_tag", None)
         return d
 
     @classmethod
@@ -208,7 +207,6 @@ class ScenarioStep:
             params=dict(d.get("params", {})),
             note=d.get("note", ""),
             enabled=bool(d.get("enabled", True)),
-            report_tag=d.get("report_tag"),
         )
 
 
@@ -490,6 +488,9 @@ def _validate_step(step: ScenarioStep, where: str, problems: list[str]) -> None:
         if not step.params.get("var"):
             problems.append(f"{where}: collect thiếu tên list (var).")
         _check_expr(step.params.get("source", "$last"), where, problems)
+        return
+    if step.action == "report_val":
+        _check_expr(step.params.get("value", "$last"), where, problems)
         return
 
     if step.action == "raw_scpi":

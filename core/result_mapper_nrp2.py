@@ -7,6 +7,12 @@ core/result_mapper.py vì cả 2 template đều dùng mã bảng "A1"/"A2"/"A3"
 không được dùng chung 1 dict TABLE_MAPPERS (sẽ áp nhầm hàm map của
 CNT-90XL cho dữ liệu NRP2).
 
+Kịch bản đẩy giá trị vào báo cáo bằng action "report_val" (chỉ 1 tham số
+value — không cần khai bảng đích, vì 1 lần chạy kịch bản luôn ứng với đúng
+1 bài test/1 bảng). ResultMapper lấy TUẦN TỰ các StepResult report_val
+(đúng thứ tự thực thi, kể cả trong Loop) rồi tách theo số giá trị/dòng đã
+định nghĩa sẵn cho bảng đó để đổ vào từng TableRow.
+
 QTHC 2.515:2021 là văn bản HIỆU CHUẨN (báo cáo giá trị + số hiệu chỉnh +
 độ không đảm bảo đo), không phải KIỂM ĐỊNH (đạt/không đạt) như QTKĐ 2.461 —
 nên mọi TableRow ở đây luôn có passed=None, limit="" (không có ngưỡng); field
@@ -18,7 +24,6 @@ Không phụ thuộc Qt/docx → test được độc lập.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Optional
 
 from core.session import TableRow, ReportTable
@@ -55,104 +60,94 @@ _TABLE_A3_ROWS = [
 
 
 # ---------------------------------------------------------------------------
-# Helper gom StepResult theo report_tag (giống result_mapper.py, thuần generic)
+# Helper lấy giá trị report_val tuần tự (giống result_mapper.py, thuần generic)
 # ---------------------------------------------------------------------------
 
-def _group_tagged(step_results) -> dict:
-    groups: dict = defaultdict(list)
-    for r in step_results:
-        tag = getattr(r, "report_tag", None)
-        if not tag:
-            continue
-        key = (tag.get("table", ""), tag.get("row_key", ""), tag.get("field", ""))
-        groups[key].append(r)
-    return groups
+def _table_values(step_results) -> list:
+    """Lấy TUẦN TỰ (đúng thứ tự thực thi) mọi giá trị report_val — step_results
+    của 1 bài test luôn chỉ ứng với đúng 1 bảng, không cần lọc theo tên bảng."""
+    return [r.value for r in step_results
+            if r.action == "report_val" and r.ok and r.value is not None]
 
 
-def _last_ok_value(groups: dict, table: str, row_key: str, field: str) -> Optional[float]:
-    items = groups.get((table, row_key, field), [])
-    ok = [r for r in items if r.ok and r.value is not None]
-    return ok[-1].value if ok else None
+def _consume(values: list, n: Optional[int]) -> tuple:
+    """Lấy n phần tử đầu (n=None -> lấy hết); trả (chunk, phần còn lại)."""
+    if n is None:
+        return values, []
+    return values[:n], values[n:]
 
 
-def _all_ok_values(groups: dict, table: str, row_key: str, field: str) -> list:
-    items = groups.get((table, row_key, field), [])
-    return [r.value for r in items if r.ok and r.value is not None]
-
-
-def _fmt_uncertainty(u: Optional[float]) -> str:
-    """QTHC 2.515 không có khái niệm 'giới hạn' — tái dùng TableRow.limit
-    (chuỗi tự do) để chứa Độ không đảm bảo đo mở rộng (U, k=2) thay vì
-    ngưỡng đạt/không đạt."""
-    if u is None:
+def _leftover_note(table_id: str, leftover: list) -> str:
+    if not leftover:
         return ""
-    return f"± {u:.4g}"
+    return (f"Kịch bản đẩy dư {len(leftover)} giá trị report_val cho bảng "
+            f"{table_id} không dùng tới — kiểm tra lại kịch bản.")
 
+
+# TableRow.limit không mang ý nghĩa ngưỡng đạt/không đạt ở QTHC 2.515 (không
+# có khái niệm này) — để trống; giữ field lại vì report_generator_nrp2.py/
+# report_preview_nrp2.py dùng chung cấu trúc TableRow với template CNT-90XL.
 
 # ---------------------------------------------------------------------------
 # Mapping từng bảng
 # ---------------------------------------------------------------------------
 
-def map_table_a1(groups: dict) -> ReportTable:
+def map_table_a1(step_results) -> ReportTable:
+    """Mục 5.3.1: 1 điểm, đo _A1_N_LAN (10) lần lặp lại — 1 dòng duy nhất."""
+    from core.report_generator_nrp2 import _A1_N_LAN
+    values = _table_values(step_results)
     rows = []
     for row_key, freq_hz, power_set_w in _TABLE_A1_ROWS:
-        raws = _all_ok_values(groups, "A1", row_key, "raw_reading")
-        p_avg = _last_ok_value(groups, "A1", row_key, "power_measured")
-        if raws and p_avg is None:
-            p_avg = sum(raws) / len(raws)
+        raws, values = _consume(values, _A1_N_LAN)
+        p_avg = sum(raws) / len(raws) if raws else None
         correction = (power_set_w - p_avg) if p_avg is not None else None
-        uncertainty = _last_ok_value(groups, "A1", row_key, "uncertainty")
         rows.append(TableRow(
             key=row_key, freq_set=freq_hz, value_measured=p_avg, value_unit="W",
-            error=correction, limit=_fmt_uncertainty(uncertainty), passed=None,
+            error=correction, limit="", passed=None,
             raw_readings=raws,
         ))
     return ReportTable(table_id="A1",
                        name="Xác định độ chính xác mức công suất tại đầu ra chuẩn",
-                       rows=rows, passed=None)
+                       rows=rows, passed=None, note=_leftover_note("A1", values))
 
 
-def map_table_a2(groups: dict) -> ReportTable:
+def map_table_a2(step_results) -> ReportTable:
+    """Mục 5.3.2: đo 5 lần lặp lại mỗi điểm tần số — Biên Bản ghi từng lần
+    + TB, GCN chỉ ghi TB + số hiệu chỉnh (xem report_generator_nrp2.py)."""
+    values = _table_values(step_results)
     rows = []
     for row_key, freq_hz in _TABLE_A2_ROWS:
-        # Mục 5.3.2: đo 5 lần lặp lại mỗi điểm tần số — Biên Bản ghi từng lần
-        # + TB, GCN chỉ ghi TB + số hiệu chỉnh (xem report_generator_nrp2.py).
-        raws = _all_ok_values(groups, "A2", row_key, "raw_reading")
-        p_avg = _last_ok_value(groups, "A2", row_key, "power_measured")
-        if raws and p_avg is None:
-            p_avg = sum(raws) / len(raws)
+        raws, values = _consume(values, 5)
+        p_avg = sum(raws) / len(raws) if raws else None
         correction = (_A2_POWER_SET_DBM - p_avg) if p_avg is not None else None
-        uncertainty = _last_ok_value(groups, "A2", row_key, "uncertainty")
         rows.append(TableRow(
             key=row_key, freq_set=freq_hz, value_measured=p_avg, value_unit="dBm",
-            error=correction, limit=_fmt_uncertainty(uncertainty), passed=None,
+            error=correction, limit="", passed=None,
             raw_readings=raws,
         ))
     return ReportTable(table_id="A2",
                        name="Xác định độ chính xác đo mức công suất tuyệt đối (tại 0 dBm)",
-                       rows=rows, passed=None)
+                       rows=rows, passed=None, note=_leftover_note("A2", values))
 
 
-def map_table_a3(groups: dict) -> ReportTable:
+def map_table_a3(step_results) -> ReportTable:
+    """Mục 5.3.3: đo 5 lần lặp lại mỗi điểm (tần số, công suất) — cùng cách
+    ghi như A2."""
+    values = _table_values(step_results)
     rows = []
     for row_key, freq_hz, power_set_dbm in _TABLE_A3_ROWS:
-        # Mục 5.3.3: đo 5 lần lặp lại mỗi điểm (tần số, công suất) — cùng
-        # cách ghi như A2.
-        raws = _all_ok_values(groups, "A3", row_key, "raw_reading")
-        p_avg = _last_ok_value(groups, "A3", row_key, "power_measured")
-        if raws and p_avg is None:
-            p_avg = sum(raws) / len(raws)
+        raws, values = _consume(values, 5)
+        p_avg = sum(raws) / len(raws) if raws else None
         correction = (power_set_dbm - p_avg) if p_avg is not None else None
-        uncertainty = _last_ok_value(groups, "A3", row_key, "uncertainty")
         rows.append(TableRow(
             key=row_key, freq_set=freq_hz, value_measured=p_avg, value_unit="dBm",
-            error=correction, limit=_fmt_uncertainty(uncertainty), passed=None,
+            error=correction, limit="", passed=None,
             raw_readings=raws,
         ))
     return ReportTable(table_id="A3",
                        name="Xác định độ chính xác đo công suất với bộ hiệu chuẩn "
                             "công suất NRPC50 calibration kit",
-                       rows=rows, passed=None)
+                       rows=rows, passed=None, note=_leftover_note("A3", values))
 
 
 TABLE_MAPPERS_NRP2 = {
@@ -172,5 +167,4 @@ def map_results_nrp2(table_id: str, step_results: list) -> Optional[ReportTable]
     mapper = TABLE_MAPPERS_NRP2.get(table_id)
     if mapper is None:
         return None
-    groups = _group_tagged(step_results)
-    return mapper(groups)
+    return mapper(step_results)

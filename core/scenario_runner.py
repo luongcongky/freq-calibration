@@ -90,8 +90,6 @@ class StepResult:
     iteration: int = 0               # vòng lặp hiện tại (0 nếu không trong loop)
     kind: str = "step"              # "step" | "control"
     timestamp: float = field(default_factory=time.time)
-    # Nhãn báo cáo — sao chép từ ScenarioStep.report_tag khi bước có tag.
-    report_tag: Optional[dict] = None
 
     def summary(self) -> str:
         """Chuỗi ĐẦY ĐỦ cho LOG (kèm thiết bị + action + vòng lặp)."""
@@ -497,10 +495,9 @@ class ScenarioRunner:
         return out
 
     def _run_var_action(self, idx: int, step: ScenarioStep, iteration: int) -> None:
-        """set_var / compute / collect — thao tác trên biến, không gọi thiết bị."""
+        """set_var / compute / collect / report_val — thao tác trên biến, không gọi thiết bị."""
         res = StepResult(step_index=idx, action=step.action,
-                         node_id=id(step), flat_index=self._fidx(step), iteration=iteration,
-                         report_tag=step.report_tag)
+                         node_id=id(step), flat_index=self._fidx(step), iteration=iteration)
         try:
             if step.action in ("set_var", "compute"):
                 name = step.params.get("name") or step.params.get("target")
@@ -509,7 +506,7 @@ class ScenarioRunner:
                 if isinstance(val, (int, float)):
                     res.value = float(val)
                 res.text = f"{name} = {format_number_vi(val)}" if isinstance(val, (int, float)) else f"{name} = {val}"
-            else:  # collect
+            elif step.action == "collect":
                 var = step.params.get("var")
                 val = eval_expr(step.params.get("source", "$last"), self._ctx.eval_env())
                 lst = self._ctx.variables.get(var)
@@ -520,6 +517,11 @@ class ScenarioRunner:
                 if isinstance(val, (int, float)):
                     res.value = float(val)
                 res.text = f"{var}[{len(lst)}] ← {format_number_vi(val)}" if isinstance(val, (int, float)) else f"{var} ← {val}"
+            else:  # report_val
+                val = eval_expr(step.params.get("value", "$last"), self._ctx.eval_env())
+                if isinstance(val, (int, float)):
+                    res.value = float(val)
+                res.text = f"→ báo cáo: {format_number_vi(val)}" if isinstance(val, (int, float)) else f"→ báo cáo: {val}"
         except Exception as exc:  # noqa: BLE001
             res.ok = False; res.error = str(exc)
         self._emit(res)
@@ -545,7 +547,7 @@ class ScenarioRunner:
                                   text=f"→ Goto: {step.params.get('target', '')}"))
             raise _Goto(step.params.get("target", ""))
 
-        if step.action in ("set_var", "compute", "collect"):
+        if step.action in ("set_var", "compute", "collect", "report_val"):
             self._run_var_action(idx, step, iteration)
             return
 
@@ -567,8 +569,7 @@ class ScenarioRunner:
 
         for dk in step.devices:
             res = StepResult(step_index=idx, action=step.action, device_key=dk,
-                             node_id=id(step), flat_index=self._fidx(step), iteration=iteration,
-                             report_tag=step.report_tag)
+                             node_id=id(step), flat_index=self._fidx(step), iteration=iteration)
             try:
                 info = execute_action(step.action, self._devices[dk],
                                       self._resolve_params(step.params))

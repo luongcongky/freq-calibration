@@ -21,10 +21,9 @@ from PyQt5.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QPushButton, QLabel, QDialog,
     QListWidget, QListWidgetItem, QComboBox, QLineEdit, QFormLayout,
     QDialogButtonBox, QHeaderView, QFileDialog, QMessageBox,
-    QAbstractItemView, QTextEdit, QStyle, QStyleOptionButton, QSpinBox, QFrame,
-    QGroupBox,
+    QAbstractItemView, QTextEdit, QSpinBox, QFrame,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QPointF
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPointF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF, QPixmap, QIcon
 
 from drivers import DEVICE_REGISTRY
@@ -38,12 +37,10 @@ from core.scenario_runner import ScenarioRunner, StepResult
 from core.commands import (
     parse_cmd, get_commands_for, get_common_commands, load_custom, WAIT_CMD, BREAK_CMD,
 )
-from core.result_mapper import TABLE_ROW_KEYS, TABLE_FIELD_KEYS
-
 logger = logging.getLogger(__name__)
 
 from gui.theme import Colors, build_global_qss
-from gui.widgets import ThemeToggle, EXPR_HELP
+from gui.widgets import ThemeToggle, EXPR_HELP, CheckBoxHeader
 
 COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
 
@@ -52,63 +49,6 @@ COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Đ
 ROLE_OBJ = Qt.UserRole          # node/step/branch object
 ROLE_KIND = Qt.UserRole + 1     # "step" | "loop" | "if" | "branch"
 ROLE_PARENT = Qt.UserRole + 2   # object cha (None nếu node cấp ngoài)
-
-
-# ===========================================================================
-# Header có checkbox "chọn/bỏ tất cả" ở cột 0
-# ===========================================================================
-
-class CheckBoxHeader(QHeaderView):
-    toggled_all = pyqtSignal(bool)
-
-    def __init__(self, parent=None, label="Bật"):
-        super().__init__(Qt.Horizontal, parent)
-        self._checked = False
-        self._label = label
-        self.setSectionsClickable(True)
-
-    def setChecked(self, checked: bool):
-        if checked != self._checked:
-            self._checked = checked
-            self.updateSection(0)
-
-    def paintSection(self, painter, rect, logicalIndex):
-        # Cột 1+ do QSS vẽ (đã có border-bottom + border-right). Chỉ cột 0 vẽ tay
-        # để chèn ô tick — nên tự vẽ luôn đường ngang dưới + dọc phải cho đồng bộ.
-        if logicalIndex != 0:
-            super().paintSection(painter, rect, logicalIndex)
-            return
-        painter.save()
-        painter.fillRect(rect, QColor(Colors.BG_CARD))
-        painter.setPen(QColor(Colors.BORDER))
-        painter.drawLine(rect.bottomLeft(), rect.bottomRight())   # ngang dưới
-        painter.drawLine(rect.topRight(), rect.bottomRight())     # dọc phải (ngăn cách cột)
-        sz = 15
-        cb = QRect(rect.x() + 6, rect.y() + (rect.height() - sz) // 2, sz, sz)
-        opt = QStyleOptionButton()
-        opt.rect = cb
-        opt.state = QStyle.State_Enabled | (QStyle.State_On if self._checked else QStyle.State_Off)
-        self.style().drawPrimitive(QStyle.PE_IndicatorCheckBox, opt, painter)
-        painter.setPen(QColor(Colors.TEXT_DIM))
-        text_rect = QRect(cb.right() + 6, rect.y(),
-                          rect.width() - (cb.right() + 6 - rect.x()), rect.height())
-        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, self._label)
-        painter.restore()
-
-    def _checkbox_rect(self) -> QRect:
-        """Vùng hình ô tick ở cột 0 (toạ độ viewport của header)."""
-        sz = 15
-        x0 = self.sectionViewportPosition(0)
-        return QRect(x0 + 6, (self.height() - sz) // 2, sz, sz)
-
-    def mousePressEvent(self, event):
-        # Chỉ bật/tắt "chọn tất cả" khi bấm ĐÚNG vào ô tick. Mọi chỗ khác — kể cả
-        # mép giữa các cột để KÉO RỘNG/HẸP — đều để QHeaderView xử lý như thường.
-        if self._checkbox_rect().contains(event.pos()):
-            self.setChecked(not self._checked)
-            self.toggled_all.emit(self._checked)
-            return
-        super().mousePressEvent(event)
 
 
 # ===========================================================================
@@ -241,22 +181,25 @@ class StepEditorDialog(QDialog):
 
         # ----- Panel biến / tính toán -----
         self.var_panel = QWidget()
-        vform = QFormLayout(self.var_panel); vform.setContentsMargins(0, 0, 0, 0)
+        self._var_form = QFormLayout(self.var_panel); self._var_form.setContentsMargins(0, 0, 0, 0)
         self.var_action = QComboBox()
         self.var_action.addItem("Gán biến (set_var)", "set_var")
         self.var_action.addItem("Tính toán → biến (compute)", "compute")
         self.var_action.addItem("Thu thập vào list (collect)", "collect")
-        vform.addRow("Thao tác:", self.var_action)
+        self.var_action.addItem("Ghi vào bảng báo cáo (report_val)", "report_val")
+        self.var_action.currentIndexChanged.connect(self._update_var_mode)
+        self._var_form.addRow("Thao tác:", self.var_action)
         self.var_name = QLineEdit(); self.var_name.setPlaceholderText("vd: error / samples")
-        vform.addRow("Tên biến / list:", self.var_name)
+        self._var_form.addRow("Tên biến / list:", self.var_name)
         self.var_expr = QLineEdit()
         self.var_expr.setPlaceholderText("vd: avg(samples) · abs(f_avg-f_set)/f_set · $last")
         self.var_expr.setToolTip(EXPR_HELP)
-        vform.addRow("Biểu thức / nguồn:", self.var_expr)
+        self._var_form.addRow("Biểu thức / nguồn:", self.var_expr)
         hint = QLabel("Hàm: avg, mean, std, min, max, abs, sqrt, count, last · biến đặc biệt: $last, $iter")
         hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;"); hint.setWordWrap(True)
-        vform.addRow("", hint)
+        self._var_form.addRow("", hint)
         root.addWidget(self.var_panel)
+        self._update_var_mode()
 
         # ----- Panel Nhãn / Goto -----
         self.ctrl_panel = QWidget()
@@ -281,27 +224,6 @@ class StepEditorDialog(QDialog):
         note_form.addRow("Ghi chú:", self.note_edit)
         root.addLayout(note_form)
 
-        # ----- Gắn nhãn báo cáo (report_tag) — tuỳ chọn -----
-        tag_group = QGroupBox("Gắn nhãn báo cáo (tuỳ chọn)")
-        tag_form = QFormLayout(tag_group)
-        self.cmb_tag_table = QComboBox()
-        self.cmb_tag_table.addItem("(không gắn)", "")
-        for tid in TABLE_ROW_KEYS:
-            self.cmb_tag_table.addItem(tid, tid)
-        self.cmb_tag_table.currentIndexChanged.connect(self._on_tag_table_changed)
-        tag_form.addRow("Bảng:", self.cmb_tag_table)
-        self.cmb_tag_row = QComboBox()
-        self.cmb_tag_row.setEnabled(False)
-        tag_form.addRow("Điểm đo (row_key):", self.cmb_tag_row)
-        self.cmb_tag_field = QComboBox()
-        self.cmb_tag_field.setEnabled(False)
-        tag_form.addRow("Trường dữ liệu (field):", self.cmb_tag_field)
-        tag_hint = QLabel("Đánh dấu bước này là kết quả của 1 điểm đo cụ thể trong báo cáo "
-                          "(vd Bảng A2, điểm 100kHz) để hệ thống tự gom vào bảng kết quả.")
-        tag_hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;"); tag_hint.setWordWrap(True)
-        tag_form.addRow("", tag_hint)
-        root.addWidget(tag_group)
-
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self._on_accept)
         bb.rejected.connect(self.reject)
@@ -317,42 +239,16 @@ class StepEditorDialog(QDialog):
     def _update_ctrl_labels(self):
         self.ctrl_name.setEditable(self.ctrl_action.currentData() == "label")
 
-    def _on_tag_table_changed(self):
-        tid = self.cmb_tag_table.currentData()
-        self.cmb_tag_row.clear()
-        self.cmb_tag_field.clear()
-        enabled = bool(tid)
-        self.cmb_tag_row.setEnabled(enabled)
-        self.cmb_tag_field.setEnabled(enabled)
-        if not enabled:
-            return
-        for rk in TABLE_ROW_KEYS.get(tid, []):
-            self.cmb_tag_row.addItem(rk, rk)
-        for f in TABLE_FIELD_KEYS.get(tid, []):
-            self.cmb_tag_field.addItem(f, f)
+    def _show_row(self, widget, visible: bool):
+        widget.setVisible(visible)
+        lbl = self._var_form.labelForField(widget)
+        if lbl:
+            lbl.setVisible(visible)
 
-    def _load_report_tag(self, tag: dict | None):
-        if not tag:
-            self.cmb_tag_table.setCurrentIndex(0)
-            return
-        idx = self.cmb_tag_table.findData(tag.get("table", ""))
-        self.cmb_tag_table.setCurrentIndex(max(0, idx))
-        ridx = self.cmb_tag_row.findData(tag.get("row_key", ""))
-        if ridx >= 0:
-            self.cmb_tag_row.setCurrentIndex(ridx)
-        fidx = self.cmb_tag_field.findData(tag.get("field", ""))
-        if fidx >= 0:
-            self.cmb_tag_field.setCurrentIndex(fidx)
-
-    def _current_report_tag(self) -> dict | None:
-        tid = self.cmb_tag_table.currentData()
-        if not tid:
-            return None
-        row_key = self.cmb_tag_row.currentData()
-        field = self.cmb_tag_field.currentData()
-        if not row_key or not field:
-            return None
-        return {"table": tid, "row_key": row_key, "field": field}
+    def _update_var_mode(self):
+        # report_val chỉ cần biểu thức giá trị, không cần tên biến/list.
+        is_report_val = self.var_action.currentData() == "report_val"
+        self._show_row(self.var_name, not is_report_val)
 
     def _update_mode(self):
         mode = self.step_mode.currentData()
@@ -471,16 +367,18 @@ class StepEditorDialog(QDialog):
     # ── load existing step ──────────────────────────────────────────────────
 
     def _load_step(self, step: ScenarioStep):
-        self._load_report_tag(step.report_tag)
-        if step.action in ("set_var", "compute", "collect"):
+        if step.action in ("set_var", "compute", "collect", "report_val"):
             self.step_mode.setCurrentIndex(max(0, self.step_mode.findData("var")))
             self.var_action.setCurrentIndex(max(0, self.var_action.findData(step.action)))
             if step.action == "collect":
                 self.var_name.setText(step.params.get("var", ""))
                 self.var_expr.setText(step.params.get("source", "$last"))
+            elif step.action == "report_val":
+                self.var_expr.setText(step.params.get("value", "$last"))
             else:
                 self.var_name.setText(step.params.get("name") or step.params.get("target", ""))
                 self.var_expr.setText(step.params.get("expr", ""))
+            self._update_var_mode()
             self.note_edit.setText(step.note)
             return
 
@@ -539,8 +437,13 @@ class StepEditorDialog(QDialog):
         # --- Chế độ Biến / Tính toán ---
         if self.step_mode.currentData() == "var":
             act = self.var_action.currentData()
-            name = self.var_name.text().strip()
             expr = self.var_expr.text().strip()
+            if act == "report_val":
+                params = {"value": expr or "$last"}
+                self._result = ScenarioStep(action=act, devices=[], params=params, note=note)
+                self.accept()
+                return
+            name = self.var_name.text().strip()
             if not name:
                 QMessageBox.warning(self, "Thiếu", "Nhập tên biến / list."); return
             if act == "collect":
@@ -549,8 +452,7 @@ class StepEditorDialog(QDialog):
                 if not expr:
                     QMessageBox.warning(self, "Thiếu", "Nhập biểu thức."); return
                 params = {"name": name, "expr": expr}
-            self._result = ScenarioStep(action=act, devices=[], params=params, note=note,
-                                        report_tag=self._current_report_tag())
+            self._result = ScenarioStep(action=act, devices=[], params=params, note=note)
             self.accept()
             return
 
@@ -563,8 +465,7 @@ class StepEditorDialog(QDialog):
                                     "Nhập tên điểm thao tác." if act == "label"
                                     else "Chọn điểm thao tác đích."); return
             key = "name" if act == "label" else "target"
-            self._result = ScenarioStep(action=act, devices=[], params={key: name}, note=note,
-                                        report_tag=self._current_report_tag())
+            self._result = ScenarioStep(action=act, devices=[], params={key: name}, note=note)
             self.accept()
             return
 
@@ -582,14 +483,12 @@ class StepEditorDialog(QDialog):
                 s_val = float(w.text().strip()) if isinstance(w, QLineEdit) else 0.5
             except (ValueError, AttributeError):
                 QMessageBox.warning(self, "Sai tham số", "Thời gian chờ phải là số."); return
-            self._result = ScenarioStep(action="wait", devices=[], params={"seconds": s_val}, note=note,
-                                        report_tag=self._current_report_tag())
+            self._result = ScenarioStep(action="wait", devices=[], params={"seconds": s_val}, note=note)
             self.accept()
             return
 
         if model_key == "__break__":
-            self._result = ScenarioStep(action="break", devices=[], params={}, note=note,
-                                        report_tag=self._current_report_tag())
+            self._result = ScenarioStep(action="break", devices=[], params={}, note=note)
             self.accept()
             return
 
@@ -627,8 +526,7 @@ class StepEditorDialog(QDialog):
                         QMessageBox.warning(self, "Sai tham số",
                                             f"'{p.label}' phải là số hoặc =biểu_thức."); return
 
-        self._result = ScenarioStep(action="raw_scpi", devices=devices, params=params, note=note,
-                                    report_tag=self._current_report_tag())
+        self._result = ScenarioStep(action="raw_scpi", devices=devices, params=params, note=note)
         self.accept()
 
     def get_step(self) -> ScenarioStep:
@@ -1177,7 +1075,7 @@ class ScenarioGridWindow(QMainWindow):
                 step_label = node.params.get("__cmd_original__",
                                              node.params.get("__template__", "lệnh thô"))
                 step_desc = node.params.get("__cmd_desc__", "")
-            elif node.action in ("set_var", "compute", "collect"):
+            elif node.action in ("set_var", "compute", "collect", "report_val"):
                 spec = ACTION_SPECS.get(node.action, {})
                 step_label = spec.get("label", node.action)
                 step_desc = node.note          # bước Biến/Tính toán: Mô tả lệnh = Ghi chú
@@ -1186,8 +1084,8 @@ class ScenarioGridWindow(QMainWindow):
                 step_label = spec.get("label", node.action)
                 step_desc = spec.get("desc", "")
             label_text = f"Bước: {step_label}"
-            if node.report_tag:
-                label_text += f"  🏷 {node.report_tag.get('table', '')}/{node.report_tag.get('row_key', '')}"
+            if node.action == "report_val":
+                label_text = f"📊 {label_text}"
             it = self._new_item(parent_item, node.enabled,
                            label_text, step_desc,
                            ", ".join(node.devices) if node.devices else "—",
@@ -1196,6 +1094,12 @@ class ScenarioGridWindow(QMainWindow):
                 warn = QColor(Colors.ACCENT_WARN)
                 for c in range(len(COLS)):
                     it.setForeground(c, warn)
+            elif node.action == "report_val":
+                magenta = QColor(Colors.ACCENT_MAGENTA)
+                bold_font = it.font(0); bold_font.setBold(True)
+                for c in range(len(COLS)):
+                    it.setForeground(c, magenta)
+                    it.setFont(c, bold_font)
         elif kind == "loop":
             it = self._new_item(parent_item, node.enabled,
                                 f"🔁 Lặp {node.count} lần" + (f"  — {node.note}" if node.note else ""),
@@ -1938,23 +1842,21 @@ class ScenarioGridWindow(QMainWindow):
         return out
 
     def highlight_flat_index(self, flat_index: int):
-        """Tô sáng + cuộn tới node theo vị trí phẳng (enumerate_nodes) — dùng
-        để đồng bộ với 1 worker chạy ở cửa sổ khác trên object graph khác
-        (id() không khớp), vd Bước 2 của Phiên Kiểm Định."""
+        """Chỉ tô sáng + cuộn tới node theo vị trí phẳng (enumerate_nodes),
+        KHÔNG cập nhật cột Kết quả/Trạng thái — dùng khi chỉ cần theo dõi vị
+        trí (xem apply_external_result để cập nhật cả kết quả)."""
         item = self._flatidx_to_item.get(flat_index)
         if item is None:
             return
         self.tree.setCurrentItem(item)
         self.tree.scrollToItem(item, QAbstractItemView.EnsureVisible)
 
-    def _on_result(self, res: StepResult):
-        self._last_results.append(res)
-        item = self._id_to_item.get(res.node_id)
-        if item is None:
-            self._log(f"B{res.step_index} {res.summary()}",
-                      Colors.ACCENT_RED if not res.ok else Colors.TEXT_DIM)
-            return
-        self.highlight_flat_index(res.flat_index)
+    def _apply_step_result(self, item, res: StepResult):
+        """Cập nhật cột Kết quả/Trạng thái + tô sáng cho 1 item cây theo
+        StepResult — dùng chung cho tự chạy (_on_result) và khi nhận forward
+        từ cửa sổ khác đang chạy CÙNG file kịch bản (apply_external_result)."""
+        self.tree.setCurrentItem(item)
+        self.tree.scrollToItem(item, QAbstractItemView.EnsureVisible)
         self._loading = True
         key = id(item)
         self._item_results.setdefault(key, []).append(res.result_cell())
@@ -1969,6 +1871,25 @@ class ScenarioGridWindow(QMainWindow):
             item.setText(5, "LỖI" if any_err else "OK")          # cột Trạng thái
             item.setForeground(5, QColor(Colors.ACCENT_RED if any_err else Colors.ACCENT_GREEN))
         self._loading = False
+
+    def apply_external_result(self, res: StepResult):
+        """Nhận 1 StepResult từ worker chạy Ở CỬA SỔ KHÁC (Bước 2 của Phiên
+        Kiểm Định) trên cùng file kịch bản — object graph khác nên đối chiếu
+        qua flat_index (không phải node_id) — cập nhật cột Kết quả/Trạng
+        thái + tô sáng y hệt như khi tự chạy."""
+        item = self._flatidx_to_item.get(res.flat_index)
+        if item is None:
+            return
+        self._apply_step_result(item, res)
+
+    def _on_result(self, res: StepResult):
+        self._last_results.append(res)
+        item = self._id_to_item.get(res.node_id)
+        if item is None:
+            self._log(f"B{res.step_index} {res.summary()}",
+                      Colors.ACCENT_RED if not res.ok else Colors.TEXT_DIM)
+            return
+        self._apply_step_result(item, res)
         self._log(f"B{res.step_index} {res.summary()}",
                   Colors.ACCENT_RED if not res.ok else Colors.ACCENT_GREEN)
 

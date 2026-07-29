@@ -137,6 +137,7 @@ class ReportTable:
     name: str = ""               # "Xác định sai số tần số bộ dao động thạch anh"
     rows: list = field(default_factory=list)   # list[TableRow]
     passed: Optional[bool] = None
+    note: str = ""                # Cảnh báo mapper (vd dư giá trị report_val chưa dùng tới)
 
     def confirmed_rows(self) -> list:
         """Các dòng đã được người dùng rà soát & chọn đưa vào báo cáo."""
@@ -160,6 +161,7 @@ class ReportTable:
             "name": self.name,
             "rows": [r.to_dict() for r in self.rows],
             "passed": self.passed,
+            "note": self.note,
         }
 
     @classmethod
@@ -169,6 +171,7 @@ class ReportTable:
             name=d.get("name", ""),
             rows=[TableRow.from_dict(r) for r in d.get("rows", [])],
             passed=d.get("passed"),
+            note=d.get("note", ""),
         )
 
 

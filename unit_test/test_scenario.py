@@ -108,6 +108,56 @@ def test_loop_validate_errors():
 
 
 # ---------------------------------------------------------------------------
+# report_val — đẩy giá trị vào mảng kết quả tuần tự (thay report_tag cũ).
+# Không cần khai tên bảng đích: 1 lần chạy kịch bản luôn ứng đúng 1 bài
+# test/1 bảng, nên bảng đích do bên gọi map_results() biết trước, không
+# phải do kịch bản tự khai (tránh lỗi khai sai/quên đổi khi tái dùng file
+# kịch bản cho bài test khác).
+# ---------------------------------------------------------------------------
+
+def test_report_val_validate_clean():
+    scn = Scenario(nodes=[
+        ScenarioStep(action="measure_frequency", devices=["CNT91"]),
+        ScenarioStep(action="report_val", params={"value": "$last"}),
+    ])
+    assert validate_scenario(scn) == []
+
+
+def test_report_val_validate_bad_expr():
+    scn = Scenario(nodes=[
+        ScenarioStep(action="report_val", params={"value": "1 +"}),
+    ])
+    probs = validate_scenario(scn)
+    assert probs   # biểu thức hỏng vẫn phải bị báo lỗi
+
+
+def test_report_val_emits_value():
+    scn = Scenario(nodes=[
+        ScenarioStep(action="measure_frequency", devices=["CNT91"]),
+        ScenarioStep(action="report_val", params={"value": "$last"}),
+    ])
+    results = ScenarioRunner(mock=True, settle_wait=False).run(scn)
+    pushes = [r for r in results if r.action == "report_val"]
+    assert len(pushes) == 1
+    assert pushes[0].value is not None
+
+
+def test_report_val_inside_loop_pushes_one_value_per_iteration():
+    """Trước đây report_tag tĩnh trên step khiến mọi vòng lặp ghi đè cùng 1
+    row_key (chỉ giữ được giá trị của lần lặp cuối). report_val giải quyết
+    bằng cách đẩy TUẦN TỰ — mỗi vòng lặp tạo 1 StepResult report_val riêng,
+    result_mapper tự tách theo thứ tự (xem test_result_mapper.py)."""
+    scn = Scenario(nodes=[LoopBlock(count=3, body=[
+        ScenarioStep(action="set_var", params={"name": "x", "expr": "$iter * 100"}),
+        ScenarioStep(action="report_val", params={"value": "x"}),
+    ])])
+    results = ScenarioRunner(mock=True, settle_wait=False).run(scn)
+    pushes = [r for r in results if r.action == "report_val"]
+    assert len(pushes) == 3
+    assert [r.value for r in pushes] == [100.0, 200.0, 300.0]
+
+
+# ---------------------------------------------------------------------------
 # If / điều kiện
 # ---------------------------------------------------------------------------
 

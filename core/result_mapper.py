@@ -4,18 +4,20 @@ core/result_mapper.py
 Chuyển đổi danh sách StepResult (thô từ ScenarioRunner) sang các ReportTable
 có cấu trúc (TableRow theo từng bảng A1–A8 của QTKĐ).
 
-Mỗi StepResult có thể mang trường report_tag = {"table": "A5", "row_key": "5Hz", "field": "freq_measured"}.
-ResultMapper nhóm theo (table, row_key, field) và tính toán các giá trị
-phái sinh (sai số tương đối, đổi đơn vị...).
+Kịch bản đẩy giá trị vào báo cáo bằng action "report_val" (chỉ 1 tham số
+value — không cần khai bảng đích, vì 1 lần chạy kịch bản luôn ứng với đúng
+1 bài test/1 bảng, table_id đã được biết từ bên ngoài khi gọi map_results).
+ResultMapper LẤY TUẦN TỰ (theo đúng thứ tự StepResult được tạo ra, tức đúng
+thứ tự thực thi kịch bản — kể cả trong Loop) mọi giá trị report_val, rồi
+tách theo số giá trị/dòng đã định nghĩa sẵn cho từng bảng để đổ vào từng
+TableRow theo đúng thứ tự dòng của bảng.
 
 Không phụ thuộc Qt và không phụ thuộc report_generator → test được độc lập.
 """
 
 from __future__ import annotations
 
-import math
 import logging
-from collections import defaultdict
 from typing import Optional
 
 from core.session import TableRow, ReportTable
@@ -101,57 +103,40 @@ _TABLE_A8_ROWS = [  # Sai số đo chu kỳ (key, tần số Hz, chu kỳ s, lab
 ]
 
 
-def _dbm_to_mvrms(dbm: float, impedance_ohm: float = 50.0) -> float:
-    """Chuyển công suất (dBm) sang điện áp RMS (mVrms) ở trở kháng đã cho."""
-    p_w = 10 ** (dbm / 10) * 1e-3
-    return math.sqrt(p_w * impedance_ohm) * 1000.0
+def _table_values(step_results) -> list:
+    """Lấy TUẦN TỰ (đúng thứ tự thực thi) mọi giá trị report_val — step_results
+    của 1 bài test luôn chỉ ứng với đúng 1 bảng, không cần lọc theo tên bảng."""
+    return [r.value for r in step_results
+            if r.action == "report_val" and r.ok and r.value is not None]
 
 
-def _group_tagged(step_results) -> dict:
-    """
-    Nhóm StepResult có report_tag theo (table, row_key, field).
-    Trả dict: {(table, row_key, field): [StepResult, ...]} theo thứ tự xuất hiện.
-    """
-    groups: dict = defaultdict(list)
-    for r in step_results:
-        tag = getattr(r, "report_tag", None)
-        if not tag:
-            continue
-        key = (tag.get("table", ""), tag.get("row_key", ""), tag.get("field", ""))
-        groups[key].append(r)
-    return groups
+def _consume(values: list, n: Optional[int]) -> tuple:
+    """Lấy n phần tử đầu (n=None -> lấy hết); trả (chunk, phần còn lại)."""
+    if n is None:
+        return values, []
+    return values[:n], values[n:]
 
 
-def _last_ok_value(groups: dict, table: str, row_key: str, field: str) -> Optional[float]:
-    """Lấy value của StepResult OK cuối cùng trong nhóm (table, row_key, field)."""
-    items = groups.get((table, row_key, field), [])
-    ok = [r for r in items if r.ok and r.value is not None]
-    return ok[-1].value if ok else None
-
-
-def _all_ok_values(groups: dict, table: str, row_key: str, field: str) -> list:
-    """Lấy tất cả value OK trong nhóm."""
-    items = groups.get((table, row_key, field), [])
-    return [r.value for r in items if r.ok and r.value is not None]
+def _leftover_note(table_id: str, leftover: list) -> str:
+    if not leftover:
+        return ""
+    return (f"Kịch bản đẩy dư {len(leftover)} giá trị report_val cho bảng "
+            f"{table_id} không dùng tới — kiểm tra lại kịch bản.")
 
 
 # ---------------------------------------------------------------------------
 # Mapping từng bảng
 # ---------------------------------------------------------------------------
 
-def map_table_a1(groups: dict) -> ReportTable:
+def map_table_a1(step_results) -> ReportTable:
     """Bảng A1 — Sai số tần số bộ dao động thạch anh (10 MHz)."""
+    values = _table_values(step_results)
     rows = []
     table_passed = True
     for row_key, freq_set in _TABLE_A1_ROWS:
-        raws = _all_ok_values(groups, "A1", row_key, "raw_reading")
-        f_avg = _last_ok_value(groups, "A1", row_key, "f_avg")
-        delta_f = _last_ok_value(groups, "A1", row_key, "delta_f")
-
-        if raws and f_avg is None:
-            f_avg = sum(raws) / len(raws)
-        if f_avg is not None and delta_f is None:
-            delta_f = abs(f_avg - freq_set) / freq_set
+        raws, values = _consume(values, None)   # 1 dòng duy nhất -> lấy hết
+        f_avg = sum(raws) / len(raws) if raws else None
+        delta_f = abs(f_avg - freq_set) / freq_set if f_avg is not None else None
 
         passed = delta_f is not None and abs(delta_f) <= _FREQ_LIMIT
         if delta_f is not None and not passed:
@@ -171,21 +156,19 @@ def map_table_a1(groups: dict) -> ReportTable:
     return ReportTable(table_id="A1",
                        name="Xác định sai số tần số bộ dao động thạch anh",
                        rows=rows,
-                       passed=table_passed if rows else None)
+                       passed=table_passed if rows else None,
+                       note=_leftover_note("A1", values))
 
 
 def _map_sensitivity_table(table_id: str, name: str, row_defs: list,
-                            groups: dict, unit: str) -> ReportTable:
-    """Dùng chung cho A2 (kênh A), A3 (kênh B)."""
+                            step_results) -> ReportTable:
+    """Dùng chung cho A2 (kênh A), A3 (kênh B) — 1 giá trị (mVrms)/dòng."""
+    values = _table_values(step_results)
     rows = []
     table_passed = True
     for row_key, freq_set, limit_str in row_defs:
-        sens_mv = _last_ok_value(groups, table_id, row_key, "sensitivity_mv")
-        sens_dbm = _last_ok_value(groups, table_id, row_key, "sensitivity_dbm")
-        check_ok = bool(groups.get((table_id, row_key, "check_ok"), []))
-
-        if sens_mv is None and sens_dbm is not None:
-            sens_mv = _dbm_to_mvrms(sens_dbm)
+        chunk, values = _consume(values, 1)
+        sens_mv = chunk[0] if chunk else None
 
         limit_mv = 15.0 if "15" in limit_str else 25.0
         passed = sens_mv is not None and sens_mv <= limit_mv
@@ -202,25 +185,28 @@ def _map_sensitivity_table(table_id: str, name: str, row_defs: list,
             passed=passed if sens_mv is not None else None,
         ))
     return ReportTable(table_id=table_id, name=name, rows=rows,
-                       passed=table_passed if rows else None)
+                       passed=table_passed if rows else None,
+                       note=_leftover_note(table_id, values))
 
 
-def map_table_a2(groups: dict) -> ReportTable:
+def map_table_a2(step_results) -> ReportTable:
     return _map_sensitivity_table(
-        "A2", "Xác định độ nhạy đầu vào kênh A", _TABLE_A2_ROWS, groups, "mVrms")
+        "A2", "Xác định độ nhạy đầu vào kênh A", _TABLE_A2_ROWS, step_results)
 
 
-def map_table_a3(groups: dict) -> ReportTable:
+def map_table_a3(step_results) -> ReportTable:
     return _map_sensitivity_table(
-        "A3", "Xác định độ nhạy đầu vào kênh B", _TABLE_A3_ROWS, groups, "mVrms")
+        "A3", "Xác định độ nhạy đầu vào kênh B", _TABLE_A3_ROWS, step_results)
 
 
-def map_table_a4(groups: dict) -> ReportTable:
-    """Bảng A4 — Độ nhạy kênh C (dBm)."""
+def map_table_a4(step_results) -> ReportTable:
+    """Bảng A4 — Độ nhạy kênh C (dBm), 1 giá trị/dòng."""
+    values = _table_values(step_results)
     rows = []
     table_passed = True
     for row_key, freq_set, limit_str in _TABLE_A4_ROWS:
-        sens_dbm = _last_ok_value(groups, "A4", row_key, "sensitivity_dbm")
+        chunk, values = _consume(values, 1)
+        sens_dbm = chunk[0] if chunk else None
         limit_dbm = float(limit_str.replace("≤ ", "").replace(" dBm", ""))
         passed = sens_dbm is not None and sens_dbm <= limit_dbm
         if sens_dbm is not None and not passed:
@@ -235,20 +221,21 @@ def map_table_a4(groups: dict) -> ReportTable:
             passed=passed if sens_dbm is not None else None,
         ))
     return ReportTable(table_id="A4", name="Xác định độ nhạy đầu vào kênh C",
-                       rows=rows, passed=table_passed if rows else None)
+                       rows=rows, passed=table_passed if rows else None,
+                       note=_leftover_note("A4", values))
 
 
 def _map_freq_error_table(table_id: str, name: str, row_defs: list,
-                           groups: dict) -> ReportTable:
-    """Dùng chung cho A5 (kênh A), A6 (kênh B), A7 (kênh C)."""
+                           step_results) -> ReportTable:
+    """Dùng chung cho A5 (kênh A), A6 (kênh B), A7 (kênh C) — 1 giá trị/dòng
+    (tần số đo được); sai số đo tự tính từ tần số thiết lập của dòng đó."""
+    values = _table_values(step_results)
     rows = []
     table_passed = True
     for row_key, freq_set in row_defs:
-        f_meas = _last_ok_value(groups, table_id, row_key, "freq_measured")
-        delta_f = _last_ok_value(groups, table_id, row_key, "delta_f")
-
-        if f_meas is not None and delta_f is None:
-            delta_f = abs(f_meas - freq_set) / freq_set
+        chunk, values = _consume(values, 1)
+        f_meas = chunk[0] if chunk else None
+        delta_f = abs(f_meas - freq_set) / freq_set if f_meas is not None else None
 
         passed = delta_f is not None and abs(delta_f) <= _FREQ_LIMIT
         if delta_f is not None and not passed:
@@ -264,34 +251,34 @@ def _map_freq_error_table(table_id: str, name: str, row_defs: list,
             passed=passed if delta_f is not None else None,
         ))
     return ReportTable(table_id=table_id, name=name, rows=rows,
-                       passed=table_passed if rows else None)
+                       passed=table_passed if rows else None,
+                       note=_leftover_note(table_id, values))
 
 
-def map_table_a5(groups: dict) -> ReportTable:
+def map_table_a5(step_results) -> ReportTable:
     return _map_freq_error_table(
-        "A5", "Xác định sai số đo tần số kênh A", _TABLE_A5_ROWS, groups)
+        "A5", "Xác định sai số đo tần số kênh A", _TABLE_A5_ROWS, step_results)
 
 
-def map_table_a6(groups: dict) -> ReportTable:
+def map_table_a6(step_results) -> ReportTable:
     return _map_freq_error_table(
-        "A6", "Xác định sai số đo tần số kênh B", _TABLE_A6_ROWS, groups)
+        "A6", "Xác định sai số đo tần số kênh B", _TABLE_A6_ROWS, step_results)
 
 
-def map_table_a7(groups: dict) -> ReportTable:
+def map_table_a7(step_results) -> ReportTable:
     return _map_freq_error_table(
-        "A7", "Xác định sai số đo tần số kênh C", _TABLE_A7_ROWS, groups)
+        "A7", "Xác định sai số đo tần số kênh C", _TABLE_A7_ROWS, step_results)
 
 
-def map_table_a8(groups: dict) -> ReportTable:
-    """Bảng A8 — Sai số đo chu kỳ."""
+def map_table_a8(step_results) -> ReportTable:
+    """Bảng A8 — Sai số đo chu kỳ, 1 giá trị/dòng."""
+    values = _table_values(step_results)
     rows = []
     table_passed = True
     for row_key, freq_set, period_set, display_label in _TABLE_A8_ROWS:
-        t_meas = _last_ok_value(groups, "A8", row_key, "period_measured")
-        delta_t = _last_ok_value(groups, "A8", row_key, "delta_t")
-
-        if t_meas is not None and delta_t is None:
-            delta_t = abs(t_meas - period_set) / period_set
+        chunk, values = _consume(values, 1)
+        t_meas = chunk[0] if chunk else None
+        delta_t = abs(t_meas - period_set) / period_set if t_meas is not None else None
 
         passed = delta_t is not None and abs(delta_t) <= _FREQ_LIMIT
         if delta_t is not None and not passed:
@@ -307,7 +294,8 @@ def map_table_a8(groups: dict) -> ReportTable:
             passed=passed if delta_t is not None else None,
         ))
     return ReportTable(table_id="A8", name="Xác định sai số đo chu kỳ",
-                       rows=rows, passed=table_passed if rows else None)
+                       rows=rows, passed=table_passed if rows else None,
+                       note=_leftover_note("A8", values))
 
 
 # ---------------------------------------------------------------------------
@@ -325,8 +313,8 @@ TABLE_MAPPERS = {
     "A8": map_table_a8,
 }
 
-# Danh sách row_key/field hợp lệ cho từng bảng — dùng để dựng dropdown gắn
-# report_tag trong Scenario Builder (gui/scenario_grid.py), tránh gõ tay sai.
+# Danh sách row_key hợp lệ cho từng bảng — dùng để dựng dropdown chọn bảng
+# đích cho action report_val trong Scenario Builder (gui/scenario_grid.py).
 TABLE_ROW_KEYS: dict[str, list[str]] = {
     "A1": [r[0] for r in _TABLE_A1_ROWS],
     "A2": [r[0] for r in _TABLE_A2_ROWS],
@@ -336,17 +324,6 @@ TABLE_ROW_KEYS: dict[str, list[str]] = {
     "A6": [r[0] for r in _TABLE_A6_ROWS],
     "A7": [r[0] for r in _TABLE_A7_ROWS],
     "A8": [r[0] for r in _TABLE_A8_ROWS],
-}
-
-TABLE_FIELD_KEYS: dict[str, list[str]] = {
-    "A1": ["raw_reading", "f_avg", "delta_f"],
-    "A2": ["sensitivity_mv", "sensitivity_dbm", "check_ok"],
-    "A3": ["sensitivity_mv", "sensitivity_dbm", "check_ok"],
-    "A4": ["sensitivity_dbm"],
-    "A5": ["freq_measured", "delta_f"],
-    "A6": ["freq_measured", "delta_f"],
-    "A7": ["freq_measured", "delta_f"],
-    "A8": ["period_measured", "delta_t"],
 }
 
 
@@ -361,9 +338,8 @@ def map_results(table_id: str, step_results: list) -> Optional[ReportTable]:
     if mapper is None:
         log.warning("ResultMapper: không có mapper cho bảng %s", table_id)
         return None
-    groups = _group_tagged(step_results)
     try:
-        return mapper(groups)
+        return mapper(step_results)
     except Exception as exc:  # noqa: BLE001
         log.exception("ResultMapper: lỗi map bảng %s: %s", table_id, exc)
         return None

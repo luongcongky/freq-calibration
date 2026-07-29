@@ -2,13 +2,18 @@
 unit_test/test_result_mapper_nrp2.py
 ======================================
 Test cấu trúc bảng A1/A2/A3 của template QTHC 2.515:2021 (NRP2) và hành vi
-khi kịch bản không gắn report_tag (đúng tình trạng thật của
+khi kịch bản không đẩy report_val nào (đúng tình trạng thật của
 scenarios/nrp2/cong_suat.json — mọi ô kết quả phải để trống, không lỗi).
 """
 
 from core.result_mapper_nrp2 import map_results_nrp2, TABLE_MAPPERS_NRP2
 from core.report_templates import list_templates, get_template
 from core.report_templates.qthc_2515_nrp2 import QTHC2515NRP2Template
+from core.scenario_runner import StepResult
+
+
+def _push(value: float) -> StepResult:
+    return StepResult(action="report_val", value=value, ok=True)
 
 
 def test_table_a1_has_one_row():
@@ -33,6 +38,44 @@ def test_table_a3_has_48_rows():
     # 8 tần số x 6 mức công suất
     freqs = {r.freq_set for r in rt.rows}
     assert len(freqs) == 8
+
+
+def test_a1_consumes_exactly_10_fixed_readings():
+    step_results = [_push(1e-3 + i * 1e-6) for i in range(10)]
+    rt = map_results_nrp2("A1", step_results)
+    assert len(rt.rows) == 1
+    assert len(rt.rows[0].raw_readings) == 10
+    assert rt.rows[0].value_measured == sum(rt.rows[0].raw_readings) / 10
+    assert rt.note == ""
+
+
+def test_a1_extra_beyond_10_reported_as_note():
+    step_results = [_push(1e-3) for _ in range(13)]
+    rt = map_results_nrp2("A1", step_results)
+    assert len(rt.rows[0].raw_readings) == 10
+    assert "dư 3" in rt.note
+
+
+def test_a2_binds_5_raw_readings_per_row_in_order():
+    n_rows = 13
+    step_results = []
+    for row_i in range(n_rows):
+        step_results.extend(_push(row_i + k * 0.01) for k in range(5))
+    rt = map_results_nrp2("A2", step_results)
+    assert len(rt.rows) == n_rows
+    for row_i, row in enumerate(rt.rows):
+        assert len(row.raw_readings) == 5
+        assert row.raw_readings[0] == row_i
+        assert row.value_measured == sum(row.raw_readings) / 5
+
+
+def test_a2_partial_last_row_gets_fewer_raw_readings():
+    step_results = [_push(0.0) for _ in range(5 * 12 + 2)]   # thiếu 3 giá trị cho dòng cuối
+    rt = map_results_nrp2("A2", step_results)
+    assert len(rt.rows) == 13
+    assert len(rt.rows[11].raw_readings) == 5
+    assert len(rt.rows[12].raw_readings) == 2
+    assert rt.note == ""
 
 
 def test_unknown_table_id_returns_none():
