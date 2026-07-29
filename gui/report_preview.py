@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QCheckBox, QComboBox, QWidget, QHBoxLayout,
+    QCheckBox, QComboBox, QWidget, QHBoxLayout, QApplication,
 )
 from PyQt5.QtCore import Qt
 
@@ -23,6 +23,40 @@ from core.session import TableRow
 from core.report_generator import (
     _fmt_freq, _fmt_hz_measured, _fmt_period, _fmt_mv, _fmt_dbm, _sci,
 )
+from gui.widgets import CheckBoxHeader
+
+
+class _StatusCombo(QComboBox):
+    """QComboBox thường: khi đặt trong ô đã setSpan() của QTableWidget (bảng
+    A1 gộp nhiều dòng "lần đo" vào 1 combo), widget bị Qt kéo giãn theo toàn
+    bộ vùng gộp — geometry() của combo không còn khớp với vị trí nó THỰC SỰ
+    hiển thị trên màn hình, khiến popup tính theo self.rect() bị lệch xa.
+    Thay vào đó, mở popup ngay tại VỊ TRÍ CHUỘT VỪA CLICK (đáng tin cậy hơn
+    geometry của widget) — ưu tiên mở SANG PHẢI, tự lật sang TRÁI nếu không
+    đủ chỗ tới mép màn hình; lật lên trên nếu không đủ chỗ phía dưới."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._click_pos = None
+
+    def mousePressEvent(self, event):
+        self._click_pos = event.globalPos()
+        super().mousePressEvent(event)
+
+    def showPopup(self):
+        super().showPopup()
+        popup = self.view().window()
+        pos = self._click_pos or self.mapToGlobal(self.rect().bottomLeft())
+        screen = QApplication.screenAt(pos) or self.screen()
+        avail = screen.availableGeometry() if screen else None
+        w, h = popup.width(), popup.height()
+        x, y = pos.x(), pos.y()
+        if avail:
+            if x + w > avail.right():
+                x = pos.x() - w             # không đủ chỗ bên phải -> mở sang trái
+            if y + h > avail.bottom():
+                y = pos.y() - h             # không đủ chỗ phía dưới -> mở lên trên
+        popup.move(x, y)
 
 
 def _new_table(n_rows: int, headers: list[str]) -> QTableWidget:
@@ -56,17 +90,31 @@ def _add_checkbox_column(tbl: QTableWidget, row_groups: list, on_toggle=None, en
     sang phải khi insertColumn(0). row_groups: [(start_row, end_row_excl,
     TableRow), ...] — 1 nhóm có thể trải nhiều dòng lưới (vd bảng đo lặp N
     lần chỉ có 1 TableRow nhưng N dòng hiển thị từng lần đo). enabled=False
-    hiện checkbox nhưng khoá (bài chưa có kết quả thật để xác nhận)."""
+    hiện checkbox nhưng khoá (bài chưa có kết quả thật để xác nhận) — khi đó
+    không gắn checkbox "chọn tất cả" ở header (không có gì để chọn)."""
     tbl.insertColumn(0)
+    checks: list[QCheckBox] = []
+    header = None
+    if enabled:
+        header = CheckBoxHeader(tbl, label="")
+        header.setToolTip("Tick để chọn/bỏ chọn TẤT CẢ vào báo cáo")
+        tbl.setHorizontalHeader(header)
     tbl.setHorizontalHeaderItem(0, QTableWidgetItem("Đưa vào\nbáo cáo"))
+
+    def _update_header():
+        if header:
+            header.setChecked(bool(checks) and all(c.isChecked() for c in checks))
+
     for start, end, r in row_groups:
         chk = QCheckBox()
         chk.setChecked(r.confirmed)
         chk.setEnabled(enabled)
+        checks.append(chk)
 
         def _make_cb(row_obj, checkbox):
             def _cb(_state):
                 row_obj.confirmed = checkbox.isChecked()
+                _update_header()
                 if on_toggle:
                     on_toggle()
             return _cb
@@ -80,6 +128,14 @@ def _add_checkbox_column(tbl: QTableWidget, row_groups: list, on_toggle=None, en
         tbl.setCellWidget(start, 0, cell_w)
         if end - start > 1:
             tbl.setSpan(start, 0, end - start, 1)
+
+    if header:
+        def _toggle_all(checked):
+            for c in checks:
+                c.setChecked(checked)
+        header.toggled_all.connect(_toggle_all)
+        _update_header()
+
     tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
     tbl.setColumnWidth(0, 70)
 
@@ -97,7 +153,7 @@ def _add_status_column(tbl: QTableWidget, row_groups: list, on_change=None, enab
     tbl.setColumnCount(col + 1)
     tbl.setHorizontalHeaderItem(col, QTableWidgetItem("Đạt/\nKhông đạt"))
     for start, end, r in row_groups:
-        combo = QComboBox()
+        combo = _StatusCombo()
         for label, _ in _STATUS_OPTIONS:
             combo.addItem(label)
         combo.setCurrentIndex(_STATUS_INDEX.get(r.passed, 0))

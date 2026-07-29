@@ -7,9 +7,9 @@ Widget dùng chung. ThemeToggle: nút on/off dạng segmented (Classic ⇄ Digit
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QRectF, pyqtSignal
+from PyQt5.QtCore import Qt, QRect, QRectF, pyqtSignal
 from PyQt5.QtGui import QPainter, QPen, QColor, QFont
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtWidgets import QWidget, QHeaderView, QStyle, QStyleOptionButton
 
 from gui.theme import Colors
 
@@ -36,6 +36,62 @@ EXPR_HELP = (
     "• <code>error = abs(f_avg - f_set) / f_set</code><br>"
     "• <code>pw = p_base + 0.5*($iter-1)</code>  → tăng theo vòng"
 )
+
+
+class CheckBoxHeader(QHeaderView):
+    """Header ngang có ô tick ở cột 0 để chọn/bỏ chọn TẤT CẢ dòng cùng lúc —
+    dùng cho cột "Chạy" (Bước 2) và cột "Đưa vào báo cáo" (bảng kết quả
+    WYSIWYG) — cả 2 đều đặt cột checkbox ở vị trí 0."""
+    toggled_all = pyqtSignal(bool)
+
+    def __init__(self, parent=None, label="Bật"):
+        super().__init__(Qt.Horizontal, parent)
+        self._checked = False
+        self._label = label
+        self.setSectionsClickable(True)
+
+    def setChecked(self, checked: bool):
+        if checked != self._checked:
+            self._checked = checked
+            self.updateSection(0)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        # Cột 1+ do QSS vẽ (đã có border-bottom + border-right). Chỉ cột 0 vẽ tay
+        # để chèn ô tick — nên tự vẽ luôn đường ngang dưới + dọc phải cho đồng bộ.
+        if logicalIndex != 0:
+            super().paintSection(painter, rect, logicalIndex)
+            return
+        painter.save()
+        painter.fillRect(rect, QColor(Colors.BG_CARD))
+        painter.setPen(QColor(Colors.BORDER))
+        painter.drawLine(rect.bottomLeft(), rect.bottomRight())   # ngang dưới
+        painter.drawLine(rect.topRight(), rect.bottomRight())     # dọc phải (ngăn cách cột)
+        sz = 15
+        cb = QRect(rect.x() + 6, rect.y() + (rect.height() - sz) // 2, sz, sz)
+        opt = QStyleOptionButton()
+        opt.rect = cb
+        opt.state = QStyle.State_Enabled | (QStyle.State_On if self._checked else QStyle.State_Off)
+        self.style().drawPrimitive(QStyle.PE_IndicatorCheckBox, opt, painter)
+        painter.setPen(QColor(Colors.TEXT_DIM))
+        text_rect = QRect(cb.right() + 6, rect.y(),
+                          rect.width() - (cb.right() + 6 - rect.x()), rect.height())
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, self._label)
+        painter.restore()
+
+    def _checkbox_rect(self) -> QRect:
+        """Vùng hình ô tick ở cột 0 (toạ độ viewport của header)."""
+        sz = 15
+        x0 = self.sectionViewportPosition(0)
+        return QRect(x0 + 6, (self.height() - sz) // 2, sz, sz)
+
+    def mousePressEvent(self, event):
+        # Chỉ bật/tắt "chọn tất cả" khi bấm ĐÚNG vào ô tick. Mọi chỗ khác — kể cả
+        # mép giữa các cột để KÉO RỘNG/HẸP — đều để QHeaderView xử lý như thường.
+        if self._checkbox_rect().contains(event.pos()):
+            self.setChecked(not self._checked)
+            self.toggled_all.emit(self._checked)
+            return
+        super().mousePressEvent(event)
 
 
 class ThemeToggle(QWidget):

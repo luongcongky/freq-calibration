@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QDialog, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QLabel, QLineEdit, QFormLayout, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog,
-    QMessageBox, QTextEdit, QDateEdit, QProgressBar, QSplitter,
+    QMessageBox, QDateEdit, QProgressBar, QSplitter,
     QListWidget, QAbstractItemView, QCheckBox,
     QGroupBox, QScrollArea, QApplication, QFrame, QStackedWidget,
 )
@@ -35,6 +35,7 @@ from core.scenario_runner import ScenarioRunner, StepResult
 from core.report_templates import list_templates, get_template
 from gui.theme import Colors, build_global_qss
 from gui.report_preview import build_wysiwyg_table
+from gui.widgets import CheckBoxHeader
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,20 @@ def _test_status_label(test: SessionTest) -> tuple[str, str]:
             return f"✅ Đã xác nhận ({c}/{n})", Colors.ACCENT_GREEN
         return f"🔶 Đã xác nhận ({c}/{n})", Colors.ACCENT_WARN
     return STATUS_LABELS.get(test.status, (test.status, Colors.TEXT_DIM))
+
+
+def _scaffold_rows(template_id: str, test: SessionTest) -> list:
+    """Bài chưa chạy (result_table=None) -> dựng khung bảng theo đúng mẫu
+    báo cáo (đủ số dòng, giá trị để trống) để xem trước cấu trúc đo, dùng
+    chung cho Bước 2 (_TestReviewTab) và Bước 3 (_ExportTab)."""
+    if not template_id:
+        return []
+    try:
+        tpl = get_template(template_id)
+        rt = tpl.map_test_result(test)
+    except Exception:  # noqa: BLE001
+        return []
+    return rt.rows if rt else []
 
 
 # ============================================================================
@@ -355,6 +370,10 @@ class _TestReviewTab(QWidget):
         left_lay.addWidget(info)
 
         self.table = QTableWidget(0, len(TEST_COLS))
+        self._chk_header = CheckBoxHeader(self.table, label="")
+        self._chk_header.setToolTip("Tick để chọn/bỏ chọn TẤT CẢ bài")
+        self._chk_header.toggled_all.connect(self._toggle_all_enabled)
+        self.table.setHorizontalHeader(self._chk_header)
         self.table.setHorizontalHeaderLabels(TEST_COLS)
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(_COL_CHK,    QHeaderView.Fixed)
@@ -369,7 +388,16 @@ class _TestReviewTab(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet(
+            # ::item:alternate:selected phải khai RIÊNG — nếu chỉ dựa vào
+            # selection-background-color/selection-color ở cấp QTableWidget,
+            # Qt ưu tiên rule ::item:alternate (chỉ có background, không có
+            # color) cho các dòng xen kẽ, khiến chữ dòng đó vẫn đen khi chọn
+            # dù dòng còn lại đã đúng màu (chẵn/lẻ khác nhau).
             f"QTableWidget::item:alternate {{ background-color: #1a1f26; }}"
+            f"QTableWidget::item:selected {{ background-color: {Colors.ACCENT_CYAN};"
+            f" color: {Colors.BG_WINDOW}; }}"
+            f"QTableWidget::item:alternate:selected {{ background-color: {Colors.ACCENT_CYAN};"
+            f" color: {Colors.BG_WINDOW}; }}"
         )
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
@@ -453,13 +481,30 @@ class _TestReviewTab(QWidget):
         for i, t in enumerate(tests):
             self._append_row(i, t)
         self._clear_detail()
+        self._update_chk_header()
+
+    def _make_enabled_cb(self, test: SessionTest):
+        def _cb(state):
+            test.enabled = state != 0
+            self._update_chk_header()
+        return _cb
+
+    def _toggle_all_enabled(self, checked: bool):
+        for row in range(self.table.rowCount()):
+            cell_w = self.table.cellWidget(row, _COL_CHK)
+            chk = cell_w.findChild(QCheckBox) if cell_w else None
+            if chk:
+                chk.setChecked(checked)
+
+    def _update_chk_header(self):
+        self._chk_header.setChecked(bool(self._tests) and all(t.enabled for t in self._tests))
 
     def _append_row(self, index: int, test: SessionTest):
         self.table.insertRow(index)
 
         chk = QCheckBox()
         chk.setChecked(test.enabled)
-        chk.stateChanged.connect(lambda state, t=test: setattr(t, "enabled", state != 0))
+        chk.stateChanged.connect(self._make_enabled_cb(test))
         cell_w = QWidget()
         cell_lay = QHBoxLayout(cell_w)
         cell_lay.addWidget(chk); cell_lay.setAlignment(Qt.AlignCenter)
@@ -493,6 +538,14 @@ class _TestReviewTab(QWidget):
     def refresh_statuses(self):
         for i, t in enumerate(self._tests):
             self._set_status_cell(i, t)
+
+    def set_live_step_count(self, row: int, count: int):
+        """Cập nhật cột Trạng thái theo thời gian thực khi 1 bài đang chạy —
+        hiện số bước đã hoàn thành thay vì chỉ tĩnh 'Đang chạy'."""
+        it = self.table.item(row, _COL_STATUS)
+        if it:
+            it.setText(f"▶ Đang chạy ({count} bước)")
+            it.setForeground(QColor(Colors.ACCENT_CYAN))
 
     def refresh_row(self, index: int):
         if 0 <= index < len(self._tests):
@@ -530,7 +583,8 @@ class _TestReviewTab(QWidget):
         self.btn_run_one.setEnabled(not self._running)
         has_result = test.result_table is not None
         rows = test.result_table.rows if has_result else self._preview_rows(test)
-        self._render_result_table(test.table_id, rows, with_checkbox=has_result)
+        note = test.result_table.note if has_result else ""
+        self._render_result_table(test.table_id, rows, with_checkbox=has_result, note=note)
         self.btn_check_all.setEnabled(has_result and bool(rows))
         self.btn_uncheck_all.setEnabled(has_result and bool(rows))
 
@@ -538,21 +592,19 @@ class _TestReviewTab(QWidget):
         """Bài chưa chạy (result_table=None) -> dựng khung bảng theo đúng mẫu
         báo cáo (đủ số dòng, giá trị để trống) để xem trước cấu trúc đo,
         không cho xác nhận (chưa có gì để xác nhận)."""
-        if not self._template_id:
-            return []
-        try:
-            tpl = get_template(self._template_id)
-            rt = tpl.map_test_result(test)
-        except Exception:  # noqa: BLE001
-            return []
-        return rt.rows if rt else []
+        return _scaffold_rows(self._template_id, test)
 
-    def _render_result_table(self, table_id: str, rows, with_checkbox: bool = True):
+    def _render_result_table(self, table_id: str, rows, with_checkbox: bool = True, note: str = ""):
         while self._result_holder.count():
             item = self._result_holder.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
+        if note:
+            lbl = QLabel(f"⚠ {note}")
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet(f"color:{Colors.ACCENT_WARN}; font-size:11px;")
+            self._result_holder.addWidget(lbl)
         # Luôn HIỆN cả 2 cột (checkbox + Đạt/Không đạt); with_checkbox ở đây
         # chỉ còn ý nghĩa "bài đã có kết quả thật" (interactive) -> nếu bài
         # chưa chạy (khung xem trước rỗng) thì 2 cột vẫn hiện nhưng bị khoá,
@@ -576,7 +628,7 @@ class _TestReviewTab(QWidget):
             return
         for r in test.result_table.rows:
             r.confirmed = value
-        self._render_result_table(test.table_id, test.result_table.rows)
+        self._render_result_table(test.table_id, test.result_table.rows, note=test.result_table.note)
         self._set_status_cell(self._current_index, test)
 
     # -- Chọn file kịch bản -------------------------------------------------
@@ -679,8 +731,11 @@ class _ExportTab(QWidget):
         self.preview_area.setWidgetResizable(True)
         self._preview_inner = QWidget()
         self._preview_lay = QVBoxLayout(self._preview_inner)
-        self._preview_lay.addWidget(QLabel("Bấm 'Xem trước' để xem nội dung sẽ đưa vào báo cáo "
-                                            "(chỉ gồm các dòng đã xác nhận)."))
+        self._preview_lay.addWidget(QLabel(
+            "Chọn 1 bài bên trái rồi bấm 'Xem trước' để chỉ xem đúng bài đó "
+            "(không chọn gì thì xem toàn bộ) — kể cả bài chưa chạy (khung "
+            "trống) hoặc chưa xác nhận đủ dòng. Chỉ những dòng có tick "
+            "'Đưa vào báo cáo' mới thực sự được xuất."))
         self._preview_lay.addStretch()
         self.preview_area.setWidget(self._preview_inner)
         right_lay.addWidget(self.preview_area, 1)
@@ -727,18 +782,22 @@ class _ExportTab(QWidget):
                 n_partial += 1
             self.lst_tests.addItem(f"{icon}  {t.table_id}: {t.name}  ({c}/{n})")
 
+        # Luôn cho phép xem trước/xuất — kể cả khi chưa chạy Bước 2 hoặc dữ
+        # liệu chưa đầy đủ; phần chưa có/chưa xác nhận sẽ để trống trong báo
+        # cáo (report_generator đã tự xử lý an toàn, không crash).
         if all_passed is None:
-            self.lbl_overall.setText("")
-            self.btn_bb.setEnabled(False)
-            self.btn_gcn.setEnabled(False)
+            self.lbl_overall.setText("⏳ Chưa có dòng nào được xác nhận — báo cáo xuất ra "
+                                     "sẽ để trống các phần chưa xác nhận")
+            self.lbl_overall.setStyleSheet(
+                f"font-weight:bold; font-size:13px; color:{Colors.TEXT_DIM};")
         else:
             ok = all_passed is True
             self.lbl_overall.setText("✅ TẤT CẢ (ĐÃ XÁC NHẬN) ĐẠT" if ok else "❌ CÓ BÀI KHÔNG ĐẠT")
             self.lbl_overall.setStyleSheet(
                 f"font-weight:bold; font-size:13px; "
                 f"color:{ Colors.ACCENT_GREEN if ok else Colors.ACCENT_RED };")
-            self.btn_bb.setEnabled(True)
-            self.btn_gcn.setEnabled(True)
+        self.btn_bb.setEnabled(True)
+        self.btn_gcn.setEnabled(True)
 
         if n_partial:
             self.lbl_warning.setText(
@@ -754,25 +813,58 @@ class _ExportTab(QWidget):
             if w:
                 w.deleteLater()
 
+        # Có bài đang được chọn bên trái -> chỉ xem đúng bài đó; không chọn
+        # gì (currentRow() == -1) -> xem toàn bộ như trước.
+        sel_row = self.lst_tests.currentRow()
+        targets = [self._tests[sel_row]] if 0 <= sel_row < len(self._tests) else self._tests
+
         any_shown = False
-        for t in self._tests:
-            if not t.enabled or not t.result_table:
+        for t in targets:
+            if not t.enabled:
+                if len(targets) == 1:
+                    self._preview_lay.addWidget(QLabel(
+                        f"{t.table_id} — {t.name}: bài này đã bị bỏ qua (tắt), "
+                        "không có trong báo cáo."))
+                    any_shown = True
                 continue
-            rows = t.result_table.confirmed_rows()
+            has_result = t.result_table is not None
+            rows = t.result_table.rows if has_result else _scaffold_rows(self._template_id, t)
             if not rows:
                 continue
             any_shown = True
-            title = QLabel(f"{t.table_id} — {t.name}")
+            title_text = f"{t.table_id} — {t.name}"
+            if not has_result:
+                title_text += "  (chưa chạy — khung xem trước)"
+            title = QLabel(title_text)
             title.setStyleSheet(f"font-weight:bold; color:{Colors.ACCENT_CYAN}; font-size:12px;")
             self._preview_lay.addWidget(title)
+            if has_result and t.result_table.note:
+                note_lbl = QLabel(f"⚠ {t.result_table.note}")
+                note_lbl.setWordWrap(True)
+                note_lbl.setStyleSheet(f"color:{Colors.ACCENT_WARN}; font-size:11px;")
+                self._preview_lay.addWidget(note_lbl)
             tbl = build_wysiwyg_table(self._template_id, t.table_id, rows,
                                       with_checkbox=True, on_toggle=self._on_row_edited,
-                                      with_status=True, on_status_change=self._on_row_edited)
-            tbl.setMaximumHeight(34 * (len(rows) + 1) + 16)
+                                      with_status=True, on_status_change=self._on_row_edited,
+                                      interactive=has_result)
+            # Dùng số DÒNG LƯỚI thật của bảng đã dựng (tbl.rowCount()), không
+            # phải len(rows) (số TableRow logic) — bảng A1 gộp raw_readings
+            # của 1 TableRow thành N dòng lưới hiển thị, nên 2 con số này
+            # khác nhau; dùng nhầm len(rows) khiến bảng A1 bị nén chỉ còn đủ
+            # chỗ cho ~2 dòng, cắt mất phần lớn dữ liệu.
+            # setFixedHeight (không phải setMaximumHeight): layout chỉ cấp
+            # đúng bằng sizeHint() nếu không ép cứng chiều cao, mà sizeHint
+            # mặc định của QTableWidget KHÔNG tính theo số dòng thật -> bảng
+            # bị co lại nhỏ hơn maximumHeight rồi tự sinh thanh cuộn dọc
+            # riêng bên trong, dù đã đủ chỗ. Ép cứng chiều cao để hiện đủ
+            # toàn bộ dòng, không cuộn — cuộn tổng thể do QScrollArea bên
+            # ngoài (self.preview_area) đảm nhiệm.
+            tbl.setFixedHeight(34 * (tbl.rowCount() + 1) + 16)
+            tbl.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             self._preview_lay.addWidget(tbl)
 
         if not any_shown:
-            self._preview_lay.addWidget(QLabel("Chưa có dòng kết quả nào được xác nhận."))
+            self._preview_lay.addWidget(QLabel("Chưa có bài test nào để xem trước."))
         self._preview_lay.addStretch()
 
     def _on_row_edited(self):
@@ -902,27 +994,6 @@ class SessionManagerWindow(QMainWindow):
 
         self.rail.step_clicked.connect(self.stack.setCurrentIndex)
         self.stack.currentChanged.connect(self._on_step_changed)
-
-        # ── Log ───────────────────────────────────────────────────────────────
-        log_frame = QFrame()
-        log_frame.setObjectName("log_panel")
-        log_lay = QVBoxLayout(log_frame)
-        log_lay.setContentsMargins(12, 6, 12, 6)
-        log_lay.setSpacing(4)
-
-        log_head = QHBoxLayout()
-        log_head.addWidget(QLabel("Log"))
-        log_head.addStretch()
-        btn_clr = QPushButton("🗑 Xóa log"); btn_clr.clicked.connect(lambda: self.log.clear())
-        log_head.addWidget(btn_clr)
-        log_lay.addLayout(log_head)
-
-        self.log = QTextEdit()
-        self.log.setObjectName("log_console")
-        self.log.setReadOnly(True)
-        self.log.setMaximumHeight(130)
-        log_lay.addWidget(self.log)
-        root.addWidget(log_frame)
 
         self.statusBar().showMessage("Sẵn sàng.")
 
@@ -1238,13 +1309,16 @@ class SessionManagerWindow(QMainWindow):
 
     def _on_step_result(self, res: StepResult):
         self._step_results_current.append(res)
+        if self._current_test_index >= 0:
+            self._step_review.set_live_step_count(
+                self._current_test_index, len(self._step_results_current))
         win = self._scenario_win
         if win and win.isVisible() and self._current_test_index >= 0:
             running_path = self._session.tests[self._current_test_index].scenario_path
             if (win.loaded_path and running_path and
                     os.path.normcase(os.path.abspath(win.loaded_path)) ==
                     os.path.normcase(os.path.abspath(running_path))):
-                win.highlight_flat_index(res.flat_index)
+                win.apply_external_result(res)
 
     def _on_test_done(self, index: int, n_steps: int):
         test = self._session.tests[index]
@@ -1336,8 +1410,9 @@ class SessionManagerWindow(QMainWindow):
                                   self._session.template_id)
 
     def _log(self, msg: str, color: str = Colors.TEXT_DIM):
-        self.log.append(f"<font color='{color}'>{msg}</font>")
+        self.statusBar().setStyleSheet(f"color:{color};")
         self.statusBar().showMessage(msg)
+        logger.info(msg)
 
 
 # ============================================================================

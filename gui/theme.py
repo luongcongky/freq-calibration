@@ -28,10 +28,11 @@ class Colors:
     BG_CARD_HI   = "#21304a"   # GroupBox, elevated card
 
     # ── Accent ────────────────────────────────────────────────────────────
-    ACCENT_CYAN  = "#00d1ff"
-    ACCENT_GREEN = "#65f08d"
-    ACCENT_RED   = "#ff4d4d"
-    ACCENT_WARN  = "#ffaa00"
+    ACCENT_CYAN    = "#00d1ff"
+    ACCENT_GREEN   = "#65f08d"
+    ACCENT_RED     = "#ff4d4d"
+    ACCENT_WARN    = "#ffaa00"
+    ACCENT_MAGENTA = "#ff4fd8"   # nổi bật riêng cho bước ghi báo cáo (report_val)
 
     # ── Text ──────────────────────────────────────────────────────────────
     TEXT_MAIN    = "#e8ecf4"   # Trắng ngà (dễ đọc hơn trắng thuần)
@@ -68,6 +69,13 @@ def build_global_qss() -> str:
                    border: 1px solid {C.BORDER};
                    selection-background-color: {C.ACCENT_CYAN};
                    selection-color: {C.BG_WINDOW}; }}
+        /* selection-background-color/selection-color ở trên chỉ chắc chắn
+           áp dụng khi widget đang có FOCUS — khi focus rời sang nơi khác
+           (vd bấm 1 nút), Qt vẽ dòng đang chọn theo màu "inactive" mặc định
+           (nhạt/gần như mất hẳn màu). Khai rõ ::item:selected:!active để
+           dòng đang chọn LUÔN giữ màu sáng dù đã mất focus. */
+        QListWidget::item:selected, QListWidget::item:selected:!active {{
+                   background-color: {C.ACCENT_CYAN}; color: {C.BG_WINDOW}; }}
         QTreeWidget::item:selected {{
                    background-color: #0e6080; color: {C.TEXT_MAIN}; }}
         QTreeWidget::item:selected:!active {{
@@ -91,7 +99,9 @@ def build_global_qss() -> str:
                    border: none; border-bottom: 2px solid {C.BORDER};
                    border-right: 1px solid {C.BORDER}; padding: 7px; }}
         QTableWidget {{ background-color: {C.BG_INPUT}; gridline-color: {C.BORDER};
-                   border: 1px solid {C.BORDER}; }}
+                   border: 1px solid {C.BORDER};
+                   selection-background-color: {C.ACCENT_CYAN};
+                   selection-color: {C.BG_WINDOW}; }}
 
         /* ── Tab widget ── */
         QTabWidget::pane {{ border: 1px solid {C.BORDER};
