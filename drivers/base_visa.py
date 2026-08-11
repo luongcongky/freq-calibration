@@ -54,6 +54,27 @@ class IdentificationError(InstrumentError):
     """*IDN? trả về model không khớp với driver đang dùng."""
 
 
+_NI_VISA_DOWNLOAD_URL = (
+    "https://www.ni.com/en/support/downloads/drivers/download.ni-visa.html"
+)
+
+
+def _ni_visa_missing_hint(exc: Exception) -> str:
+    """Nếu lỗi bắt nguồn từ việc chưa cài NI-VISA/NI-488.2 (không mở được GPIB,
+    hoặc pyvisa không tìm thấy backend nào), trả về gợi ý tiếng Việt để hiện cho
+    người dùng. Nếu không khớp mẫu này, trả về chuỗi rỗng."""
+    text = str(exc).lower()
+    keywords = ("gpib", "visa implementation", "linux-gpib", "gpib-ctypes",
+                "could not find module", "library not found")
+    if any(k in text for k in keywords):
+        return (
+            "Có thể máy này CHƯA CÀI NI-VISA (driver cho GPIB). "
+            f"Tải và cài NI-VISA tại: {_NI_VISA_DOWNLOAD_URL} "
+            "rồi khởi động lại máy. (Không cần nếu chỉ chạy chế độ MOCK.)"
+        )
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Kết quả đo dùng chung
 # ---------------------------------------------------------------------------
@@ -160,10 +181,12 @@ class VisaInstrument:
             self._inst.timeout = self._timeout_ms
             self._inst.read_termination = "\n"
             self._inst.write_termination = "\n"
-        except pyvisa.VisaIOError as exc:
-            raise ConnectionError_(
-                f"{self.MODEL_NAME}: không kết nối được tới '{self._address}': {exc}"
-            ) from exc
+        except (pyvisa.VisaIOError, ValueError, OSError) as exc:
+            msg = f"{self.MODEL_NAME}: không kết nối được tới '{self._address}': {exc}"
+            hint = _ni_visa_missing_hint(exc)
+            if hint:
+                msg += f"\n\n{hint}"
+            raise ConnectionError_(msg) from exc
 
         self._verify_identity()
 

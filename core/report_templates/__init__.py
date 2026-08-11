@@ -11,23 +11,28 @@ sau đó đăng ký vào REGISTRY bên dưới.
 from __future__ import annotations
 
 from .base import BaseReportTemplate
-from .qtkd_2461_cnt90xl import QTKD2461CNT90XLTemplate
-from .qthc_2515_nrp2 import QTHC2515NRP2Template
+from .generic import GenericReportTemplate, load_generic_meta, discover_generic_template_ids
 
-REGISTRY: dict[str, type[BaseReportTemplate]] = {
-    "QTKD_2461_CNT90XL": QTKD2461CNT90XLTemplate,
-    "QTHC_2515_NRP2": QTHC2515NRP2Template,
-}
+REGISTRY: dict[str, type[BaseReportTemplate]] = {}
 
 
 def get_template(template_id: str) -> BaseReportTemplate:
     cls = REGISTRY.get(template_id)
-    if cls is None:
-        raise KeyError(f"Template không tồn tại: '{template_id}'. "
-                       f"Có sẵn: {list(REGISTRY)}")
-    return cls()
+    if cls is not None:
+        return cls()
+    if load_generic_meta(template_id) is not None:
+        return GenericReportTemplate(template_id)
+    raise KeyError(f"Template không tồn tại: '{template_id}'. "
+                   f"Có sẵn: {list(REGISTRY) + discover_generic_template_ids()}")
 
 
 def list_templates() -> list[tuple[str, str]]:
-    """Trả [(id, display_name), ...] để hiển thị trong combobox."""
-    return [(tid, cls().TEMPLATE_NAME) for tid, cls in REGISTRY.items()]
+    """Trả [(id, display_name), ...] để hiển thị trong combobox — gồm cả
+    template viết tay (REGISTRY) lẫn template data-driven tạo qua luồng
+    quét .docx (templates/<id>/meta.json)."""
+    result = [(tid, cls().TEMPLATE_NAME) for tid, cls in REGISTRY.items()]
+    for tid in discover_generic_template_ids():
+        if tid not in REGISTRY:
+            meta = load_generic_meta(tid)
+            result.append((tid, meta.get("template_name", tid) if meta else tid))
+    return result

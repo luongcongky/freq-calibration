@@ -1,0 +1,12 @@
+{
+  "template_id": "TEMPLATE_FREQ",
+  "template_name": "TEMPLATE_FREQ",
+  "kind": "kiem_dinh",
+  "dut_models": [
+    "CNT-90XL",
+    "CNT-90"
+  ],
+  "standard": "QTKĐ 2.461 : 2018",
+  "measurement_range": "0,002 Hz đến 27 GHz",
+  "dut_manufacturer_default": "Pendulum"
+}

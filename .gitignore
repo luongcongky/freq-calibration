@@ -12,6 +12,9 @@ dist/
 # PyInstaller build artifacts
 *.spec
 
+# Ban dong goi giao khach (sinh ra tu build.ps1, khong commit)
+/release/
+
 # App runtime data (custom command overrides ghi luc chay)
 /data/
 

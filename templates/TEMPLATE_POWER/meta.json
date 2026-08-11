@@ -1,0 +1,11 @@
+{
+  "template_id": "TEMPLATE_POWER",
+  "template_name": "TEMPLATE_POWER",
+  "kind": "hieu_chuan",
+  "dut_models": [
+    "NRP2"
+  ],
+  "standard": "QTHC 2.515 : 2021",
+  "measurement_range": "Dải tần làm việc từ DC đến 110 GHz; dải đo công suất từ (-67 đến 45) dBm",
+  "dut_manufacturer_default": "R&S"
+}

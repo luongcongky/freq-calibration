@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "table_id": "A1",
+  "name": "Xác định độ chính xác mức công suất tại đầu ra chuẩn",
+  "order": 1,
+  "scenario_file": "",
+  "layout": "repeated_rows",
+  "value_unit": "W",
+  "value_format": "w",
+  "rows": [
+    {
+      "key": "1mW_50MHz",
+      "freq_set": 50000000.0,
+      "reference": 0.001,
+      "raw_count": 12,
+      "limit": "",
+      "display_label": "1 mW",
+      "measured_count": 10,
+      "value_format_seq": [
+        "w",
+        "w",
+        "w",
+        "w",
+        "w",
+        "w",
+        "w",
+        "w",
+        "w",
+        "w",
+        "w",
+        "correction_mw"
+      ],
+      "uncertainty_index": 11
+    }
+  ],
+  "columns": [],
+  "pass_rule": {
+    "type": "correction_vs_reference"
+  },
+  "merge": [],
+  "gcn": null
+}

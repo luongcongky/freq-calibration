@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "table_id": "A1",
+  "name": "Xác định sai số tần số bộ dao động thạch anh",
+  "order": 1,
+  "scenario_file": "01_oscillator_error.json",
+  "layout": "repeated_rows",
+  "value_unit": "Hz",
+  "value_format": "hz_measured",
+  "rows": [
+    {
+      "key": "10MHz",
+      "freq_set": 10000000.0,
+      "reference": 10000000.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "hz_measured",
+        "hz_measured",
+        "hz_measured",
+        "hz_measured",
+        "hz_measured",
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    }
+  ],
+  "columns": [],
+  "pass_rule": {
+    "type": "relative_error_vs_fixed_limit",
+    "params": {
+      "fixed_limit": 2.4e-07,
+      "limit_str": "± 2,4×10⁻⁷"
+    }
+  },
+  "merge": [],
+  "gcn": null
+}

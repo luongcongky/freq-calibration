@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "table_id": "A5",
+  "name": "Xác định sai số đo tần số kênh A",
+  "order": 5,
+  "scenario_file": "05_freq_error_chA.json",
+  "layout": "repeated_rows",
+  "value_unit": "Hz",
+  "value_format": "hz_measured",
+  "rows": [
+    {
+      "key": "5Hz",
+      "freq_set": 5,
+      "reference": 5,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "10Hz",
+      "freq_set": 10,
+      "reference": 10,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "100Hz",
+      "freq_set": 100,
+      "reference": 100,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "1kHz",
+      "freq_set": 1000.0,
+      "reference": 1000.0,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "10kHz",
+      "freq_set": 10000.0,
+      "reference": 10000.0,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "100kHz",
+      "freq_set": 100000.0,
+      "reference": 100000.0,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "500kHz",
+      "freq_set": 500000.0,
+      "reference": 500000.0,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "1MHz",
+      "freq_set": 1000000.0,
+      "reference": 1000000.0,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "10MHz",
+      "freq_set": 10000000.0,
+      "reference": 10000000.0,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "100MHz",
+      "freq_set": 100000000.0,
+      "reference": 100000000.0,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "300MHz",
+      "freq_set": 300000000.0,
+      "reference": 300000000.0,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 1,
+      "value_format_seq": [
+        "hz_measured",
+        "sci"
+      ],
+      "uncertainty_index": null
+    }
+  ],
+  "columns": [],
+  "pass_rule": {
+    "type": "relative_error_vs_fixed_limit",
+    "params": {
+      "fixed_limit": 2.4e-07,
+      "limit_str": "± 2,4×10⁻⁷"
+    }
+  },
+  "merge": [],
+  "gcn": null
+}

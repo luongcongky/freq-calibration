@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "table_id": "A4",
+  "name": "Xác định độ nhạy đầu vào kênh C",
+  "order": 4,
+  "scenario_file": "04_sensitivity_chC.json",
+  "layout": "repeated_rows",
+  "value_unit": "dBm",
+  "value_format": "dbm",
+  "rows": [
+    {
+      "key": "400MHz",
+      "freq_set": 400000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "1GHz",
+      "freq_set": 1000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "2GHz",
+      "freq_set": 2000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "5GHz",
+      "freq_set": 5000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "10GHz",
+      "freq_set": 10000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "13GHz",
+      "freq_set": 13000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "16GHz",
+      "freq_set": 16000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "18GHz",
+      "freq_set": 18000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -29 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "19.9GHz",
+      "freq_set": 19900000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -29 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "20GHz",
+      "freq_set": 20000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "22GHz",
+      "freq_set": 22000000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ -27 dBm",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    }
+  ],
+  "columns": [],
+  "pass_rule": {
+    "type": "value_vs_parsed_threshold"
+  },
+  "merge": [],
+  "gcn": null
+}

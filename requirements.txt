@@ -4,4 +4,6 @@ PyQt5
 pandas
 openpyxl
 python-docx
+docxtpl
+send2trash
 pytest

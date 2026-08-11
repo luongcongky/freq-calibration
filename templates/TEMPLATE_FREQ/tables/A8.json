@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "table_id": "A8",
+  "name": "Xác định sai số đo chu kỳ",
+  "order": 8,
+  "scenario_file": "08_period_error.json",
+  "layout": "repeated_rows",
+  "value_unit": "s",
+  "value_format": "period",
+  "rows": [
+    {
+      "key": "5Hz",
+      "freq_set": 5,
+      "reference": 0.2,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "5 Hz (200 ms)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "10Hz",
+      "freq_set": 10,
+      "reference": 0.1,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "10 Hz (100 ms)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "100Hz",
+      "freq_set": 100,
+      "reference": 0.01,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "100 Hz (10 ms)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "1kHz",
+      "freq_set": 1000.0,
+      "reference": 0.001,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "1 kHz (1 ms)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "10kHz",
+      "freq_set": 10000.0,
+      "reference": 0.0001,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "10 kHz (100 µs)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "100kHz",
+      "freq_set": 100000.0,
+      "reference": 1e-05,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "100 kHz (10 µs)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "1MHz",
+      "freq_set": 1000000.0,
+      "reference": 1e-06,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "1 MHz (1 µs)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "2MHz",
+      "freq_set": 2000000.0,
+      "reference": 5e-07,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "2 MHz (0,5 µs)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "10MHz",
+      "freq_set": 10000000.0,
+      "reference": 1e-07,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "10 MHz (100 ns)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "50MHz",
+      "freq_set": 50000000.0,
+      "reference": 2e-08,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "50 MHz (20 ns)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "100MHz",
+      "freq_set": 100000000.0,
+      "reference": 1e-08,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "100 MHz (10 ns)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "200MHz",
+      "freq_set": 200000000.0,
+      "reference": 5e-09,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "200 MHz (5 ns)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    },
+    {
+      "key": "300MHz",
+      "freq_set": 300000000.0,
+      "reference": 3.33e-09,
+      "raw_count": 2,
+      "limit": "",
+      "display_label": "300 MHz (3,33 ns)",
+      "measured_count": 1,
+      "value_format_seq": [
+        "period",
+        "sci"
+      ],
+      "uncertainty_index": null
+    }
+  ],
+  "columns": [],
+  "pass_rule": {
+    "type": "relative_error_vs_fixed_limit",
+    "params": {
+      "fixed_limit": 2.4e-07,
+      "limit_str": "± 2,4×10⁻⁷"
+    }
+  },
+  "merge": [],
+  "gcn": null
+}

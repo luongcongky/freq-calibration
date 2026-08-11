@@ -23,11 +23,13 @@ from typing import Optional
 
 @dataclass
 class DUTInfo:
-    model: str = ""              # "CNT-90XL"
-    serial: str = ""             # Số serial
-    manufacturer: str = ""       # "Pendulum"
-    owner: str = ""              # Đơn vị sử dụng
-    measurement_range: str = ""  # "0,002 Hz đến 27 GHz" (từ template)
+    name: str = ""                # Tên phương tiện ĐL-TN, vd "Máy đếm tần số"
+    model: str = ""               # Ký hiệu/model, vd "CNT-90XL"
+    serial: str = ""              # Số serial
+    manufacturer: str = ""        # "Pendulum"
+    manufacture_year: str = ""    # Năm sản xuất
+    owner: str = ""               # Đơn vị sử dụng
+    measurement_range: str = ""   # "0,002 Hz đến 27 GHz" (từ template)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -46,6 +48,7 @@ class SessionMeta:
     dut: DUTInfo = field(default_factory=DUTInfo)
     operator: str = ""           # Kiểm định viên
     reviewer: str = ""           # Người soát lại
+    manager: str = ""            # Thủ trưởng đơn vị (ký tên, đóng dấu GCN)
     cert_number: str = ""        # Số giấy chứng nhận
     temperature: str = ""        # "23 °C"
     humidity: str = ""           # "55 %"
@@ -90,6 +93,7 @@ class SessionMeta:
             dut=dut,
             operator=d.get("operator", ""),
             reviewer=d.get("reviewer", ""),
+            manager=d.get("manager", ""),
             cert_number=d.get("cert_number", ""),
             temperature=d.get("temperature", ""),
             humidity=d.get("humidity", ""),
@@ -117,6 +121,7 @@ class TableRow:
     passed: Optional[bool] = None
     raw_readings: list = field(default_factory=list)  # Các lần đo riêng lẻ (cho bảng A1)
     confirmed: bool = False      # Người dùng đã rà soát & chọn đưa dòng này vào báo cáo
+    edited: bool = False         # Giá trị đo đã bị kiểm định viên sửa tay (khác giá trị report_val gốc)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -222,7 +227,7 @@ class SessionTest:
 @dataclass
 class CalibrationSession:
     meta: SessionMeta = field(default_factory=SessionMeta)
-    template_id: str = ""        # "QTKD_2461_CNT90XL"
+    template_id: str = ""        # "TEMPLATE_FREQ"
     tests: list = field(default_factory=list)   # list[SessionTest]
 
     @property

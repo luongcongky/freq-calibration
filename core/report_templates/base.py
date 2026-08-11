@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from core.session import CalibrationSession, SessionTest, ReportTable
+from core.paths import SCENARIOS_DIR
 
 
 class BaseReportTemplate(ABC):
@@ -19,6 +20,19 @@ class BaseReportTemplate(ABC):
     DUT_MODELS: list[str] = []       # Các model thiết bị áp dụng
     STANDARD: str = ""               # "QTKĐ 2.461 : 2018"
     MEASUREMENT_RANGE: str = ""      # "0,002 Hz đến 27 GHz"
+
+    GCN_STYLE: str = "same_as_bienban"
+    """Cách GCN thể hiện dữ liệu bảng — dùng bởi gui/template_manager_dialog.py
+    để quyết định có hiện form "gcn.param_name/limit_str" khi thêm 1 bảng
+    vào template ĐÃ CÓ hay không (quản trị viên tự gõ tag trong Word, app
+    không chèn gì cả — field này chỉ ảnh hưởng UI form, không phải ghi file):
+      "same_as_bienban" — mỗi bảng dùng `tables.<ID>.result`/`.report_val()`
+        ngay trong gcnkd.docx (như NRP2, và MỌI template mới đăng ký) —
+        không cần form gcn riêng.
+      "summary_rows" — bảng tổng hợp 1 dòng/bài, vòng lặp Jinja động đọc
+        thẳng `descriptor.gcn` (chỉ CNT90XL, cơ chế cũ giữ nguyên) — gcnkd.docx
+        không dùng cơ chế "tables.X" nên KHÔNG được gõ `tables.<ID>.*` vào
+        đó, chỉ cần điền form gcn.param_name/limit_str."""
 
     @abstractmethod
     def default_tests(self) -> list[SessionTest]:
@@ -54,5 +68,21 @@ class BaseReportTemplate(ABC):
     @property
     def scenarios_dir(self) -> Path:
         """Thư mục chứa các file scenario .json của template này."""
-        here = Path(__file__).parent.parent.parent  # project root
-        return here / "scenarios" / self.TEMPLATE_ID.lower().replace("_", "/", 1).split("/")[-1]
+        return SCENARIOS_DIR / self.TEMPLATE_ID.lower().replace("_", "/", 1).split("/")[-1]
+
+    @property
+    def tables_dir(self) -> Path:
+        """Thư mục chứa descriptor JSON từng bảng — dùng bởi
+        gui/template_manager_dialog.py khi thêm 1 bảng mới vào template ĐÃ CÓ
+        (không cần biết template này viết tay hay data-driven)."""
+        raise NotImplementedError
+
+    @property
+    def bienban_docx_path(self) -> Path:
+        """Đường dẫn file .docx mẫu Biên Bản SỐNG của template này."""
+        raise NotImplementedError
+
+    @property
+    def gcnkd_docx_path(self) -> Path:
+        """Đường dẫn file .docx mẫu GCN SỐNG của template này."""
+        raise NotImplementedError

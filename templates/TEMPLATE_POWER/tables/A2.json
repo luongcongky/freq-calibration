@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "table_id": "A2",
+  "name": "Xác định độ chính xác đo mức công suất tuyệt đối (tại 0 dBm)",
+  "order": 2,
+  "scenario_file": "cong_suat.json",
+  "layout": "repeated_rows",
+  "value_unit": "dBm",
+  "value_format": "dbm",
+  "rows": [
+    {
+      "key": "10MHz",
+      "freq_set": 10000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "50MHz",
+      "freq_set": 50000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "500MHz",
+      "freq_set": 500000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "1GHz",
+      "freq_set": 1000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "5GHz",
+      "freq_set": 5000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "10GHz",
+      "freq_set": 10000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "15GHz",
+      "freq_set": 15000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "20GHz",
+      "freq_set": 20000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "25GHz",
+      "freq_set": 25000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "30GHz",
+      "freq_set": 30000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "35GHz",
+      "freq_set": 35000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "40GHz",
+      "freq_set": 40000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    },
+    {
+      "key": "49GHz",
+      "freq_set": 49000000000.0,
+      "reference": 0.0,
+      "raw_count": 7,
+      "limit": "",
+      "display_label": "",
+      "measured_count": 5,
+      "value_format_seq": [
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "dbm",
+        "correction_db"
+      ],
+      "uncertainty_index": 6
+    }
+  ],
+  "columns": [],
+  "pass_rule": {
+    "type": "correction_vs_reference"
+  },
+  "merge": [],
+  "gcn": null
+}

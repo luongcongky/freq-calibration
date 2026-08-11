@@ -1,24 +1,35 @@
 <#
 .SYNOPSIS
-    Build phần mềm freq-calibration thành thư mục portable (có freq-calibration.exe).
+    Build phan mem freq-calibration va lap rap thu muc giao khach (release/).
 
 .DESCRIPTION
-    Tự tạo venv, cài thư viện + PyInstaller, build kiểu one-dir (portable),
-    copy scenario mẫu cạnh exe, rồi (tuỳ chọn) nén .zip để giao khách.
+    Danh cho NGUOI DONG GOI (dev), khong phai khach hang.
 
-    LƯU Ý: NI-VISA KHÔNG được đóng gói. Máy khách phải tự cài NI-VISA nếu nối
-    thiết bị GPIB thật. Bản .exe vẫn chạy giao diện + chế độ mock mà không cần NI-VISA.
+    Quy trinh:
+      1. Tao venv, cai thu vien + PyInstaller.
+      2. Build PyInstaller kieu one-dir vao dist\freq-calibration
+         (thu muc trung gian, KHONG giao cho khach).
+      3. Lap rap thu muc release\freq-calibration-vX.Y.Z\ = ban HOAN CHINH
+         de giao khach: exe + scenarios + templates + tai lieu huong dan +
+         BUILD_INFO.txt (ghi phien ban + commit de doi chieu khi khach
+         bao loi).
+      4. (Tuy chon -Zip) Nen thu muc release do thanh .zip - DAY LA FILE
+         GUI CHO KHACH, khong gui thu muc dist/.
+
+    LUU Y: NI-VISA KHONG duoc dong goi. May khach phai tu cai NI-VISA neu
+    noi thiet bi GPIB that. Ban .exe van chay giao dien + che do mock ma
+    khong can NI-VISA.
 
 .PARAMETER Console
-    Build kèm cửa sổ console để xem log (dùng khi debug). Mặc định là --windowed.
+    Build kem cua so console de xem log (dung khi debug). Mac dinh la --windowed.
 
 .PARAMETER Zip
-    Nén kết quả thành freq-calibration-portable.zip để giao khách.
+    Nen ket qua trong release\ thanh file .zip de giao khach.
 
 .EXAMPLE
-    .\build.ps1            # build bản giao khách (windowed)
-    .\build.ps1 -Console   # build bản debug (thấy log)
-    .\build.ps1 -Zip       # build + nén .zip
+    .\build.ps1            # build + lap rap thu muc release\ (windowed)
+    .\build.ps1 -Console   # build ban debug (thay log)
+    .\build.ps1 -Zip       # build + lap rap + nen .zip san sang gui khach
 #>
 param(
     [switch]$Console,
@@ -37,32 +48,56 @@ function Assert-LastExit($what) {
 $AppName = "freq-calibration"
 $DistDir = Join-Path $PSScriptRoot "dist\$AppName"
 
-Write-Host "==> [1/4] Chuan bi moi truong ao + thu vien" -ForegroundColor Cyan
+Write-Host "==> [1/5] Chuan bi moi truong ao + thu vien" -ForegroundColor Cyan
 if (-not (Test-Path ".venv")) { python -m venv .venv; Assert-LastExit "Tao venv" }
 . .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip;        Assert-LastExit "Nang cap pip"
 pip install -r requirements.txt;            Assert-LastExit "Cai requirements"
 pip install pyinstaller;                    Assert-LastExit "Cai pyinstaller"
 
-Write-Host "==> [2/4] Build PyInstaller (one-dir)" -ForegroundColor Cyan
+Write-Host "==> [2/5] Build PyInstaller (one-dir, ban trung gian trong dist\)" -ForegroundColor Cyan
 $windowFlag = if ($Console) { "--console" } else { "--windowed" }
 pyinstaller --noconfirm --clean $windowFlag --name $AppName `
     --hidden-import pyvisa_py `
     main.py
 Assert-LastExit "PyInstaller build"
 
-Write-Host "==> [3/4] Copy scenario mau canh exe" -ForegroundColor Cyan
-if (Test-Path "scenarios") {
-    Copy-Item -Recurse -Force "scenarios" (Join-Path $DistDir "scenarios")
+Write-Host "==> [3/5] Lap rap thu muc giao khach (release\)" -ForegroundColor Cyan
+$Version = (Get-Content "VERSION" -Raw).Trim()
+$GitHash = (git rev-parse --short HEAD 2>$null)
+if (-not $GitHash) { $GitHash = "unknown" }
+$ReleaseName = "$AppName-v$Version"
+$ReleaseDir = Join-Path $PSScriptRoot "release\$ReleaseName"
+
+if (Test-Path $ReleaseDir) { Remove-Item -Recurse -Force $ReleaseDir }
+New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
+
+Copy-Item -Recurse -Force "$DistDir\*" $ReleaseDir
+if (Test-Path "scenarios") { Copy-Item -Recurse -Force "scenarios" (Join-Path $ReleaseDir "scenarios") }
+if (Test-Path "templates") { Copy-Item -Recurse -Force "templates" (Join-Path $ReleaseDir "templates") }
+if (Test-Path "Huong_dan_su_dung_freq_calibration.docx") {
+    Copy-Item -Force "Huong_dan_su_dung_freq_calibration.docx" $ReleaseDir
 }
+Copy-Item -Force "packaging\CUSTOMER_README.txt" (Join-Path $ReleaseDir "0_DOC_TRUOC_KHI_CHAY.txt")
 
-Write-Host "==> [4/4] Hoan tat" -ForegroundColor Cyan
-Write-Host "Thu muc portable: $DistDir" -ForegroundColor Green
-Write-Host "Chay thu: $DistDir\$AppName.exe" -ForegroundColor Green
+$buildInfo = @"
+freq-calibration - thong tin ban build
+Phien ban : $Version
+Commit    : $GitHash
+Ngay build: $(Get-Date -Format "yyyy-MM-dd HH:mm")
+"@
+[System.IO.File]::WriteAllText((Join-Path $ReleaseDir "BUILD_INFO.txt"), $buildInfo, [System.Text.Encoding]::UTF8)
 
+Write-Host "==> [4/5] Hoan tat lap rap" -ForegroundColor Cyan
+Write-Host "Thu muc giao khach: $ReleaseDir" -ForegroundColor Green
+Write-Host "Chay thu: $ReleaseDir\$AppName.exe" -ForegroundColor Green
+
+Write-Host "==> [5/5] Nen file .zip (neu co -Zip)" -ForegroundColor Cyan
 if ($Zip) {
-    $zipPath = Join-Path $PSScriptRoot "$AppName-portable.zip"
+    $zipPath = Join-Path $PSScriptRoot "release\$ReleaseName.zip"
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-    Compress-Archive -Path "$DistDir\*" -DestinationPath $zipPath
-    Write-Host "Da nen: $zipPath  (gui file nay cho khach)" -ForegroundColor Green
+    Compress-Archive -Path "$ReleaseDir\*" -DestinationPath $zipPath
+    Write-Host "Da nen: $zipPath  <-- GUI FILE NAY CHO KHACH" -ForegroundColor Green
+} else {
+    Write-Host "(Bo qua nen zip - chay lai voi -Zip de tao file .zip gui khach)" -ForegroundColor DarkYellow
 }

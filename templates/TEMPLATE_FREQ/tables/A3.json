@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "table_id": "A3",
+  "name": "Xác định độ nhạy đầu vào kênh B",
+  "order": 3,
+  "scenario_file": "03_sensitivity_chB.json",
+  "layout": "repeated_rows",
+  "value_unit": "mVrms",
+  "value_format": "mv",
+  "rows": [
+    {
+      "key": "100kHz",
+      "freq_set": 100000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "1MHz",
+      "freq_set": 1000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "10MHz",
+      "freq_set": 10000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "25MHz",
+      "freq_set": 25000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "40MHz",
+      "freq_set": 40000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "60MHz",
+      "freq_set": 60000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "80MHz",
+      "freq_set": 80000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "100MHz",
+      "freq_set": 100000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "150MHz",
+      "freq_set": 150000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 15 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "200MHz",
+      "freq_set": 200000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 25 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "250MHz",
+      "freq_set": 250000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 25 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    },
+    {
+      "key": "300MHz",
+      "freq_set": 300000000.0,
+      "reference": null,
+      "raw_count": 1,
+      "limit": "≤ 25 mVrms",
+      "display_label": "",
+      "measured_count": null,
+      "value_format_seq": null,
+      "uncertainty_index": null
+    }
+  ],
+  "columns": [],
+  "pass_rule": {
+    "type": "value_vs_parsed_threshold"
+  },
+  "merge": [],
+  "gcn": null
+}
