@@ -1,0 +1,69 @@
+{
+  "name": "Kịch bản mới",
+  "description": "",
+  "nodes": [
+    {
+      "action": "set_var",
+      "devices": [],
+      "params": {
+        "name": "sample",
+        "expr": "0"
+      },
+      "note": "",
+      "enabled": true,
+      "type": "step"
+    },
+    {
+      "type": "loop",
+      "count": 20,
+      "note": "",
+      "enabled": true,
+      "mode": "count",
+      "max_iter": 50,
+      "condition": null,
+      "body": [
+        {
+          "action": "set_var",
+          "devices": [],
+          "params": {
+            "name": "sample",
+            "expr": "sample +1"
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "action": "wait",
+          "devices": [],
+          "params": {
+            "seconds": 1.0
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "action": "report_val",
+          "devices": [],
+          "params": {
+            "value": "sample"
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        },
+        {
+          "action": "wait",
+          "devices": [],
+          "params": {
+            "seconds": 1.0
+          },
+          "note": "",
+          "enabled": true,
+          "type": "step"
+        }
+      ]
+    }
+  ]
+}

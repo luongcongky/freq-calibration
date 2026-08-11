@@ -40,6 +40,7 @@ from core.commands import (
 logger = logging.getLogger(__name__)
 
 from gui.theme import Colors, build_global_qss
+from gui.file_dialog_utils import get_open_file_name, get_save_file_name
 from gui.widgets import ThemeToggle, EXPR_HELP, CheckBoxHeader, set_badge, paint_corner_brackets
 
 COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
@@ -1935,7 +1936,7 @@ class ScenarioGridWindow(QMainWindow):
                 self._on_device_changed(self.address_map, self.cmd_delay_s)
 
     def _save(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Lưu kịch bản", "scenario.json", "JSON (*.json)")
+        path, _ = get_save_file_name(self, "Lưu kịch bản", "scenario.json", "JSON (*.json)")
         if path:
             self.scenario.save_json(path)
             self.loaded_path = path
@@ -1943,7 +1944,7 @@ class ScenarioGridWindow(QMainWindow):
             self._log(f"Đã lưu: {path}", Colors.ACCENT_GREEN)
 
     def _load(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Mở kịch bản", "", "JSON (*.json)")
+        path, _ = get_open_file_name(self, "Mở kịch bản", "", "JSON (*.json)")
         if not path:
             return
         self.load_scenario_file(path)
@@ -2083,8 +2084,8 @@ class ScenarioGridWindow(QMainWindow):
         if not self._last_results:
             QMessageBox.information(self, "Chưa có dữ liệu", "Hãy chạy kịch bản trước khi xuất."); return
         from core import scenario_export as sx
-        path, _ = QFileDialog.getSaveFileName(self, "Xuất kết quả", "ket_qua_kich_ban.xlsx",
-                                              "Excel (*.xlsx);;CSV (*.csv)")
+        path, _ = get_save_file_name(self, "Xuất kết quả", "ket_qua_kich_ban.xlsx",
+                                     "Excel (*.xlsx);;CSV (*.csv)")
         if not path:
             return
         meta = {"scenario": self.scenario.name, "mode": self._last_mode,

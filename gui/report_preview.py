@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QCheckBox, QComboBox, QWidget, QHBoxLayout, QApplication, QInputDialog,
+    QCheckBox, QComboBox, QLabel, QWidget, QHBoxLayout, QInputDialog, QMenu,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
@@ -32,39 +32,6 @@ from core.report_generator_nrp2 import _power_set_from_key
 from core import table_layouts as _lay
 from gui.widgets import CheckBoxHeader
 from gui.theme import Colors
-
-
-class _StatusCombo(QComboBox):
-    """QComboBox thường: khi đặt trong ô đã setSpan() của QTableWidget (bảng
-    A1 gộp nhiều dòng "lần đo" vào 1 combo), widget bị Qt kéo giãn theo toàn
-    bộ vùng gộp — geometry() của combo không còn khớp với vị trí nó THỰC SỰ
-    hiển thị trên màn hình, khiến popup tính theo self.rect() bị lệch xa.
-    Thay vào đó, mở popup ngay tại VỊ TRÍ CHUỘT VỪA CLICK (đáng tin cậy hơn
-    geometry của widget) — ưu tiên mở SANG PHẢI, tự lật sang TRÁI nếu không
-    đủ chỗ tới mép màn hình; lật lên trên nếu không đủ chỗ phía dưới."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._click_pos = None
-
-    def mousePressEvent(self, event):
-        self._click_pos = event.globalPos()
-        super().mousePressEvent(event)
-
-    def showPopup(self):
-        super().showPopup()
-        popup = self.view().window()
-        pos = self._click_pos or self.mapToGlobal(self.rect().bottomLeft())
-        screen = QApplication.screenAt(pos) or self.screen()
-        avail = screen.availableGeometry() if screen else None
-        w, h = popup.width(), popup.height()
-        x, y = pos.x(), pos.y()
-        if avail:
-            if x + w > avail.right():
-                x = pos.x() - w             # không đủ chỗ bên phải -> mở sang trái
-            if y + h > avail.bottom():
-                y = pos.y() - h             # không đủ chỗ phía dưới -> mở lên trên
-        popup.move(x, y)
 
 
 def _new_table(n_rows: int, headers: list[str]) -> QTableWidget:
@@ -153,6 +120,69 @@ def _tint_edited(tbl: QTableWidget, cells: list, edited: bool):
         it.setToolTip((tip + "\n" if tip else "") + "Dòng này có giá trị đã sửa tay")
 
 
+def _set_gcn_export_mark(all_rows: list, row_obj: TableRow, field_key: str) -> None:
+    """Đặt field_key làm giá trị xuất GCN cho row_obj, xoá mark ở MỌI dòng
+    khác trong bảng — bất biến "chỉ đúng 1 dòng/bảng được đánh dấu tại 1
+    thời điểm" (xem TableRow.gcn_export_field)."""
+    for r in all_rows:
+        r.gcn_export_field = field_key if r is row_obj else None
+
+
+def _tint_gcn_marked(tbl: QTableWidget, cells: list):
+    for row, col in cells:
+        it = tbl.item(row, col)
+        if it is None:
+            continue
+        it.setBackground(QColor(Colors.ACCENT_RED))
+        it.setForeground(QColor(Colors.BG_WINDOW))
+        tip = it.toolTip()
+        it.setToolTip((tip + "\n" if tip else "") +
+                      "Ô này đang được đánh dấu 'Xuất value trong GCN'")
+
+
+def _handle_gcn_context_menu(tbl: QTableWidget, pos):
+    it = tbl.itemAt(pos)
+    if it is None:
+        return
+    entry = getattr(tbl, "_gcn_markable_items", {}).get(id(it))
+    if entry is None:
+        return
+    all_rows, row_obj, field_key, on_mark_changed = entry
+    is_marked = row_obj.gcn_export_field == field_key
+    menu = QMenu(tbl)
+    action = menu.addAction("Bỏ đánh dấu xuất GCN" if is_marked else "Đánh dấu xuất GCN")
+    chosen = menu.exec_(tbl.viewport().mapToGlobal(pos))
+    if chosen is not action:
+        return
+    if is_marked:
+        row_obj.gcn_export_field = None
+    else:
+        _set_gcn_export_mark(all_rows, row_obj, field_key)
+    if on_mark_changed:
+        on_mark_changed()
+
+
+def _make_gcn_markable(tbl: QTableWidget, row: int, col: int, all_rows: list,
+                       row_obj: TableRow, field_key: str, on_mark_changed=None):
+    """Đăng ký ô (row,col) — 1 giá trị đo (report_val) — click phải để
+    đánh dấu/bỏ đánh dấu "Xuất value trong GCN" cho DÒNG chứa ô này (thấy ở
+    cột readonly cùng tên, xem _add_gcn_export_column). Chỉ ĐÚNG 1 dòng
+    trong CẢ BẢNG được đánh dấu tại 1 thời điểm — đánh dấu 1 ô sẽ tự bỏ
+    đánh dấu ở dòng khác (kể cả ô khác trong CÙNG dòng, do field_key đổi).
+    Đăng ký theo id(item) — cùng lý do với _make_editable (insertColumn(0)
+    của _add_checkbox_column dịch item sang phải, tra theo (row,col) sẽ sai)."""
+    it = tbl.item(row, col)
+    if it is None:
+        return
+    if not hasattr(tbl, "_gcn_markable_items"):
+        tbl._gcn_markable_items = {}
+        tbl.setContextMenuPolicy(Qt.CustomContextMenu)
+        tbl.customContextMenuRequested.connect(lambda pos: _handle_gcn_context_menu(tbl, pos))
+    tbl._gcn_markable_items[id(it)] = (all_rows, row_obj, field_key, on_mark_changed)
+    if row_obj.gcn_export_field == field_key:
+        _tint_gcn_marked(tbl, [(row, col)])
+
+
 def _finish(tbl: QTableWidget) -> QTableWidget:
     tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
     return tbl
@@ -226,7 +256,7 @@ def _add_status_column(tbl: QTableWidget, row_groups: list, on_change=None, enab
     tbl.setColumnCount(col + 1)
     tbl.setHorizontalHeaderItem(col, QTableWidgetItem("Đạt/\nKhông đạt"))
     for start, end, r in row_groups:
-        combo = _StatusCombo()
+        combo = QComboBox()
         for label, _ in _STATUS_OPTIONS:
             combo.addItem(label)
         combo.setCurrentIndex(_STATUS_INDEX.get(r.passed, 0))
@@ -241,6 +271,45 @@ def _add_status_column(tbl: QTableWidget, row_groups: list, on_change=None, enab
 
         combo.currentIndexChanged.connect(_make_cb(r))
         tbl.setCellWidget(start, col, combo)
+        if end - start > 1:
+            tbl.setSpan(start, col, end - start, 1)
+
+
+_GCN_MARK_ON = "●"
+_GCN_MARK_OFF = "○"
+
+
+def _add_gcn_export_column(tbl: QTableWidget, row_groups: list):
+    """Thêm cột 'Xuất value trong GCN' ở CUỐI bảng, NGAY SAU cột Đạt/Không
+    đạt — chỉ đọc, phản ánh TableRow.gcn_export_field (đặt qua click phải 1
+    ô giá trị đo, xem _make_gcn_markable). Rỗng ở MỌI dòng (mặc định) = GCN
+    theo Đạt/Không đạt như cũ; đúng 1 dòng có gcn_export_field != None = GCN
+    xuất giá trị của dòng đó thay vì Đạt/Không đạt (core/table_engine.py::
+    _gcn_export_value_str).
+
+    Dùng QLabel + glyph chấm tròn (●/○) thay vì QRadioButton::indicator —
+    style QSS tuỳ biến cho ::indicator bị Qt clip/méo hình khi cột hẹp (đã
+    thực nghiệm thấy vỡ hình), QLabel tránh hẳn rủi ro đó vì chỉ vẽ 1 ký tự
+    theo font, không có box-model indicator phức tạp."""
+    col = tbl.columnCount()
+    tbl.setColumnCount(col + 1)
+    tbl.setHorizontalHeaderItem(col, QTableWidgetItem("Xuất value\ntrong GCN"))
+    for start, end, r in row_groups:
+        marked = r.gcn_export_field is not None
+        lbl = QLabel(_GCN_MARK_ON if marked else _GCN_MARK_OFF)
+        color = Colors.ACCENT_PRIMARY if marked else Colors.TEXT_DIM
+        lbl.setStyleSheet(f"font-size:15px; color:{color}; background:transparent;")
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setToolTip(
+            "Chỉ đọc — tự bật khi có 1 ô giá trị đo trong dòng này được click "
+            "phải rồi chọn 'Đánh dấu xuất GCN'. Tắt ở mọi dòng = GCN xuất "
+            "Đạt/Không đạt như bình thường.")
+        cell_w = QWidget()
+        lay = QHBoxLayout(cell_w)
+        lay.addWidget(lbl)
+        lay.setAlignment(Qt.AlignCenter)
+        lay.setContentsMargins(4, 0, 4, 0)
+        tbl.setCellWidget(start, col, cell_w)
         if end - start > 1:
             tbl.setSpan(start, col, end - start, 1)
 
@@ -351,6 +420,8 @@ def _build_generic(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
                 if j < len(r.raw_readings) and interactive and recompute_row:
                     _make_editable(tbl, i, col,
                                    *_edit_raw_reading(recompute_row, r, i, j, on_value_edited))
+                if j < len(r.raw_readings):
+                    _make_gcn_markable(tbl, i, col, rows, r, f"raw:{j}", on_value_edited)
                 value_cols.append(col)
                 col += 1
         else:
@@ -382,6 +453,7 @@ def _build_generic(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
     row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
     if with_status:
         _add_status_column(tbl, row_groups, on_status_change, enabled=interactive)
+        _add_gcn_export_column(tbl, row_groups)
     if with_checkbox:
         _add_checkbox_column(tbl, row_groups, on_toggle, enabled=interactive)
     return _finish(tbl)
@@ -415,10 +487,14 @@ def _merge_consecutive_widget(tbl: QTableWidget, col: int, start_row: int, n: in
 
 def _fill_value_slots(tbl: QTableWidget, row: int, col_start: int, r: TableRow, row_index: int,
                       start_idx: int, count: int, unit: str = "",
-                      interactive: bool = True, recompute_row=None, on_value_edited=None) -> list:
+                      interactive: bool = True, recompute_row=None, on_value_edited=None,
+                      all_rows: list | None = None) -> list:
     """Điền `count` ô liên tiếp từ (row, col_start) bằng
     r.raw_readings[start_idx : start_idx+count] — đúng thứ tự report_val()
     kịch bản đã đẩy. Bật sửa tay (double-click) nếu interactive+recompute_row.
+    all_rows (nếu có) bật thêm click-phải "Đánh dấu xuất GCN" cho từng ô
+    (xem _make_gcn_markable) — field_key = "raw:<idx>" khớp đúng chỉ số
+    raw_readings mà core/table_engine.py::_gcn_export_value_str đọc lại.
     Trả về list toạ độ cột đã điền (tô màu 'đã sửa')."""
     cols = []
     for k in range(count):
@@ -429,6 +505,8 @@ def _fill_value_slots(tbl: QTableWidget, row: int, col_start: int, r: TableRow, 
         if idx < len(r.raw_readings) and interactive and recompute_row:
             _make_editable(tbl, row, col,
                            *_edit_raw_reading(recompute_row, r, row_index, idx, on_value_edited))
+        if idx < len(r.raw_readings) and all_rows is not None:
+            _make_gcn_markable(tbl, row, col, all_rows, r, f"raw:{idx}", on_value_edited)
         cols.append(col)
     return cols
 
@@ -440,6 +518,7 @@ def _finish_rows(tbl: QTableWidget, row_groups: list, with_checkbox: bool, on_to
         _tint_edited(tbl, [(i, c) for c in cols], True)
     if with_status:
         _add_status_column(tbl, row_groups, on_status_change, enabled=interactive)
+        _add_gcn_export_column(tbl, row_groups)
     if with_checkbox:
         _add_checkbox_column(tbl, row_groups, on_toggle, enabled=interactive)
     return _finish(tbl)
@@ -467,8 +546,11 @@ def _build_freq_a1(rows, with_checkbox=False, on_toggle=None, with_status=False,
         _set_cell(tbl, i, 1, text)
         if i < len(r.raw_readings) and interactive and recompute_row:
             _make_editable(tbl, i, 1, *_edit_raw_reading(recompute_row, r, 0, i, on_value_edited))
+        if i < len(r.raw_readings):
+            _make_gcn_markable(tbl, i, 1, rows, r, f"raw:{i}", on_value_edited)
         fci_tint_rows.append(i)
-    extra_cols = _fill_value_slots(tbl, n, 2, r, 0, n, 2, unit, interactive, recompute_row, on_value_edited)
+    extra_cols = _fill_value_slots(tbl, n, 2, r, 0, n, 2, unit, interactive, recompute_row, on_value_edited,
+                                   all_rows=rows)
     _set_cell(tbl, n, 4, r.limit or "")
 
     row_groups = [(0, n + 1, r)]
@@ -487,7 +569,8 @@ def _build_freq_sensitivity(rows, with_checkbox=False, on_toggle=None, with_stat
     for i, r in enumerate(rows):
         unit = f" {r.value_unit}" if r.value_unit else ""
         _set_cell(tbl, i, 0, _fmt_freq(r.freq_set))
-        cols = _fill_value_slots(tbl, i, 1, r, i, 0, 1, unit, interactive, recompute_row, on_value_edited)
+        cols = _fill_value_slots(tbl, i, 1, r, i, 0, 1, unit, interactive, recompute_row, on_value_edited,
+                                 all_rows=rows)
         _set_cell(tbl, i, 2, r.limit or "")
         if r.edited:
             tint.append((i, cols))
@@ -506,7 +589,8 @@ def _build_freq_error(channel: str):
         for i, r in enumerate(rows):
             unit = f" {r.value_unit}" if r.value_unit else ""
             _set_cell(tbl, i, 0, _fmt_freq(r.freq_set))
-            cols = _fill_value_slots(tbl, i, 1, r, i, 0, 2, unit, interactive, recompute_row, on_value_edited)
+            cols = _fill_value_slots(tbl, i, 1, r, i, 0, 2, unit, interactive, recompute_row, on_value_edited,
+                                     all_rows=rows)
             if r.edited:
                 tint.append((i, cols))
         if rows:
@@ -525,7 +609,8 @@ def _build_freq_a8(rows, with_checkbox=False, on_toggle=None, with_status=False,
     for i, r in enumerate(rows):
         unit = f" {r.value_unit}" if r.value_unit else ""
         _set_cell(tbl, i, 0, r.key)
-        cols = _fill_value_slots(tbl, i, 1, r, i, 0, 2, unit, interactive, recompute_row, on_value_edited)
+        cols = _fill_value_slots(tbl, i, 1, r, i, 0, 2, unit, interactive, recompute_row, on_value_edited,
+                                 all_rows=rows)
         if r.edited:
             tint.append((i, cols))
     if rows:
@@ -557,7 +642,7 @@ def _build_power_a1(rows, with_checkbox=False, on_toggle=None, with_status=False
     for g in range(n_groups):
         _set_cell(tbl, g, 0, r.key)
         cols = _fill_value_slots(tbl, g, 1, r, 0, g * group, group, unit, interactive,
-                                 recompute_row, on_value_edited)
+                                 recompute_row, on_value_edited, all_rows=rows)
         if r.edited:
             tint.append((g, cols))
     tb_row = n_groups
@@ -565,9 +650,9 @@ def _build_power_a1(rows, with_checkbox=False, on_toggle=None, with_status=False
     # TB ở cột 1 (đầu khối "lần N", giống bảng docx gộp ngang cột 1..group),
     # Độ KĐBĐ ở ĐÚNG cột header "Độ KĐBĐ" (group+1) — KHÔNG liền kề TB.
     tb_cols = _fill_value_slots(tbl, tb_row, 1, r, 0, measured, 1, unit, interactive,
-                                recompute_row, on_value_edited)
+                                recompute_row, on_value_edited, all_rows=rows)
     kdbd_cols = _fill_value_slots(tbl, tb_row, 1 + group, r, 0, measured + 1, 1, unit, interactive,
-                                  recompute_row, on_value_edited)
+                                  recompute_row, on_value_edited, all_rows=rows)
     if r.edited:
         tint.append((tb_row, tb_cols + kdbd_cols))
 
@@ -586,9 +671,10 @@ def _build_power_a2(rows, with_checkbox=False, on_toggle=None, with_status=False
     for i, r in enumerate(rows):
         unit = f" {r.value_unit}" if r.value_unit else ""
         _set_cell(tbl, i, 0, _fmt_freq(r.freq_set))
-        cols = _fill_value_slots(tbl, i, 1, r, i, 0, raw_n, unit, interactive, recompute_row, on_value_edited)
+        cols = _fill_value_slots(tbl, i, 1, r, i, 0, raw_n, unit, interactive, recompute_row, on_value_edited,
+                                 all_rows=rows)
         extra_cols = _fill_value_slots(tbl, i, 1 + raw_n, r, i, raw_n, 2, unit, interactive,
-                                       recompute_row, on_value_edited)
+                                       recompute_row, on_value_edited, all_rows=rows)
         if r.edited:
             tint.append((i, cols + extra_cols))
     row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
@@ -607,9 +693,10 @@ def _build_power_a3(rows, with_checkbox=False, on_toggle=None, with_status=False
         unit = f" {r.value_unit}" if r.value_unit else ""
         power = _power_set_from_key(r.key)
         _set_cell(tbl, i, 1, _fmt_dbm(power) if power is not None else "")
-        cols = _fill_value_slots(tbl, i, 2, r, i, 0, raw_n, unit, interactive, recompute_row, on_value_edited)
+        cols = _fill_value_slots(tbl, i, 2, r, i, 0, raw_n, unit, interactive, recompute_row, on_value_edited,
+                                 all_rows=rows)
         extra_cols = _fill_value_slots(tbl, i, 2 + raw_n, r, i, raw_n, 2, unit, interactive,
-                                       recompute_row, on_value_edited)
+                                       recompute_row, on_value_edited, all_rows=rows)
         if r.edited:
             tint.append((i, cols + extra_cols))
     _merge_consecutive_widget(tbl, 0, 0, len(rows), [_fmt_freq(r.freq_set) for r in rows])

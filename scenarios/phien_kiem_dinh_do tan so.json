@@ -1,0 +1,99 @@
+{
+  "template_id": "TEMPLATE_FREQ",
+  "meta": {
+    "dut": {
+      "name": "",
+      "model": "CNT-90XL",
+      "serial": "",
+      "manufacturer": "",
+      "manufacture_year": "",
+      "owner": "",
+      "measurement_range": "0,002 Hz đến 27 GHz"
+    },
+    "operator": "",
+    "reviewer": "",
+    "manager": "",
+    "cert_number": "",
+    "temperature": "",
+    "humidity": "",
+    "inspection_equipment": "",
+    "date": "2026-08-11",
+    "valid_until": "2027-08-11",
+    "location": "Thành phố Hồ Chí Minh",
+    "conclusion": "Đạt yêu cầu kỹ thuật đo lường"
+  },
+  "tests": [
+    {
+      "table_id": "A1",
+      "name": "Xác định sai số tần số bộ dao động thạch anh",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A2",
+      "name": "Xác định độ nhạy đầu vào kênh A",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A3",
+      "name": "Xác định độ nhạy đầu vào kênh B",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A4",
+      "name": "Xác định độ nhạy đầu vào kênh C",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A5",
+      "name": "Xác định sai số đo tần số kênh A",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A6",
+      "name": "Xác định sai số đo tần số kênh B",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A7",
+      "name": "Xác định sai số đo tần số kênh C",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A8",
+      "name": "Xác định sai số đo chu kỳ",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    }
+  ]
+}

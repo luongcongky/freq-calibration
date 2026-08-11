@@ -40,6 +40,7 @@ from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt
 
 from gui.theme import Colors
+from gui.file_dialog_utils import get_open_file_name
 from gui.widgets import paint_corner_brackets
 from core import table_wizard_io as wio
 from core import table_import as timport
@@ -543,7 +544,7 @@ class TemplateManagerDialog(QDialog):
         return tab
 
     def _replace_docx(self, which: str):
-        path, _ = QFileDialog.getOpenFileName(self, "Chọn file Word đã gắn tag sẵn", "", "Word Document (*.docx)")
+        path, _ = get_open_file_name(self, "Chọn file Word đã gắn tag sẵn", "", "Word Document (*.docx)")
         if not path:
             return
         ids = [d.table_id for d in self._descriptors]

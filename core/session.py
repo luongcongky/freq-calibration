@@ -122,6 +122,14 @@ class TableRow:
     raw_readings: list = field(default_factory=list)  # Các lần đo riêng lẻ (cho bảng A1)
     confirmed: bool = False      # Người dùng đã rà soát & chọn đưa dòng này vào báo cáo
     edited: bool = False         # Giá trị đo đã bị kiểm định viên sửa tay (khác giá trị report_val gốc)
+    gcn_export_field: Optional[str] = None
+    # Đánh dấu "raw:<idx>" -> raw_readings[idx] của DÒNG NÀY là giá trị xuất
+    # ra GCN thay cho Đạt/Không đạt mặc định (xem core/table_engine.py::
+    # _gcn_export_value_str, đặt qua click phải 1 ô giá trị đo trong
+    # gui/report_preview.py::_make_gcn_markable). None (mặc định) = GCN theo
+    # Đạt/Không đạt như cũ. Bất biến: TRONG 1 ReportTable, chỉ ĐÚNG 1 dòng
+    # được set field này tại 1 thời điểm — ràng buộc thực thi ở
+    # _make_gcn_markable, KHÔNG tự kiểm tra lại ở đây.
 
     def to_dict(self) -> dict:
         return asdict(self)

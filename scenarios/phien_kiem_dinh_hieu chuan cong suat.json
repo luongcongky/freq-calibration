@@ -1,0 +1,54 @@
+{
+  "template_id": "TEMPLATE_POWER",
+  "meta": {
+    "dut": {
+      "name": "Thiết bị kiểm tra số 1",
+      "model": "TBKT ABV",
+      "serial": "123656324",
+      "manufacturer": "Việt Nam",
+      "manufacture_year": "2026",
+      "owner": "Nội bộ Lab",
+      "measurement_range": "Dải tần làm việc từ DC đến 110 GHz; dải đo công suất từ (-67 đến 45) dBm"
+    },
+    "operator": "Lương Công Kỳ",
+    "reviewer": "Đăng Văn Cường",
+    "manager": "Nguyễn Văn A",
+    "cert_number": "100/23GCN1",
+    "temperature": "45",
+    "humidity": "30",
+    "inspection_equipment": "Máy kiểm tra TEST DMOE",
+    "date": "2026-08-06",
+    "valid_until": "2028-08-06",
+    "location": "Thành phố Hồ Chí Minh",
+    "conclusion": "Đạt yêu cầu kỹ thuật đo lường"
+  },
+  "tests": [
+    {
+      "table_id": "A1",
+      "name": "Xác định độ chính xác mức công suất tại đầu ra chuẩn",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A2",
+      "name": "Xác định độ chính xác đo mức công suất tuyệt đối (tại 0 dBm)",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    },
+    {
+      "table_id": "A3",
+      "name": "Xác định độ chính xác đo công suất với bộ hiệu chuẩn công suất NRPC50 calibration kit",
+      "scenario_path": "C:/Users/ky.luong/Desktop/scenario_report.json",
+      "enabled": true,
+      "status": "pending",
+      "result_table": null,
+      "error_msg": ""
+    }
+  ]
+}

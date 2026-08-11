@@ -75,6 +75,12 @@ New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
 Copy-Item -Recurse -Force "$DistDir\*" $ReleaseDir
 if (Test-Path "scenarios") { Copy-Item -Recurse -Force "scenarios" (Join-Path $ReleaseDir "scenarios") }
 if (Test-Path "templates") { Copy-Item -Recurse -Force "templates" (Join-Path $ReleaseDir "templates") }
+# gui/logo.png, gui/logo.ico: PyInstaller chi dong goi module .py, khong tu
+# nhan ra day la tai nguyen can cho lenh QIcon("gui/logo.png") (duong dan
+# tuong doi tinh trong code) -> phai copy tay giong scenarios/templates.
+New-Item -ItemType Directory -Force -Path (Join-Path $ReleaseDir "gui") | Out-Null
+Copy-Item -Force "gui\logo.png" (Join-Path $ReleaseDir "gui\logo.png")
+Copy-Item -Force "gui\logo.ico" (Join-Path $ReleaseDir "gui\logo.ico")
 if (Test-Path "Huong_dan_su_dung_freq_calibration.docx") {
     Copy-Item -Force "Huong_dan_su_dung_freq_calibration.docx" $ReleaseDir
 }

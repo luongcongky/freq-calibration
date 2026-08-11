@@ -38,6 +38,7 @@ from core.profile import ConnectionProfile, ProfileEntry
 logger = logging.getLogger(__name__)
 
 from gui.theme import Colors
+from gui.file_dialog_utils import get_open_file_name, get_save_file_name
 from gui.widgets import set_badge, paint_corner_brackets
 
 _COL_NUM    = 0
@@ -459,8 +460,8 @@ class DeviceManagerDialog(QDialog):
         if not prof.entries:
             QMessageBox.warning(self, "Trống", "Chưa có thiết bị nào được gán model.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Lưu profile", "connection_profile.json",
-                                              "JSON (*.json)")
+        path, _ = get_save_file_name(self, "Lưu profile", "connection_profile.json",
+                                     "JSON (*.json)")
         if not path:
             return
         prof.save_json(path)
@@ -468,7 +469,7 @@ class DeviceManagerDialog(QDialog):
         self.lbl_status.setText(f"Đã lưu profile: {path}")
 
     def _load_profile_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Nạp profile", "", "JSON (*.json)")
+        path, _ = get_open_file_name(self, "Nạp profile", "", "JSON (*.json)")
         if not path:
             return
         try:

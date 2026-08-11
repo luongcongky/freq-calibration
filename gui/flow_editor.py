@@ -30,6 +30,7 @@ from PyQt5.QtWidgets import (
 )
 
 from gui.theme import Colors
+from gui.file_dialog_utils import get_open_file_name, get_save_file_name
 from gui.widgets import ThemeToggle, EXPR_HELP
 
 # Thiết bị mẫu (khi mở độc lập). Khi tích hợp sẽ thay bằng ConnectionProfile.
@@ -516,7 +517,7 @@ class ScenarioPickerDialog(QDialog):
         lay.addLayout(btns)
 
     def _browse(self):
-        path, _ = QFileDialog.getOpenFileName(
+        path, _ = get_open_file_name(
             self, "Chọn kịch bản", "", "JSON (*.json)")
         if path:
             self._path = path
@@ -1353,8 +1354,8 @@ class FlowEditorWindow(QMainWindow):
             QMessageBox.information(self, "Đã xuất",
                                    f"Đã nhập {len(scn.nodes)} mục vào Scenario Builder.")
         else:                                    # độc lập -> lưu .json
-            path, _ = QFileDialog.getSaveFileName(self, "Lưu kịch bản", "scenario.json",
-                                                  "JSON (*.json)")
+            path, _ = get_save_file_name(self, "Lưu kịch bản", "scenario.json",
+                                         "JSON (*.json)")
             if path:
                 scn.save_json(path)
                 QMessageBox.information(self, "Đã lưu", f"Đã lưu {len(scn.nodes)} mục:\n{path}")

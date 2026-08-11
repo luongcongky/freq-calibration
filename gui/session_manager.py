@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import os
 import logging
+import tempfile
 from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
 from PyQt5.QtWidgets import (
@@ -36,6 +38,8 @@ from core.report_templates import list_templates, get_template
 from core import table_engine
 from gui.theme import Colors, build_global_qss
 from gui.report_preview import build_wysiwyg_table
+from gui.doc_render import docx_to_page_pixmaps
+from gui.file_dialog_utils import get_open_file_name, get_save_file_name
 from gui.widgets import CheckBoxHeader, set_badge
 
 logger = logging.getLogger(__name__)
@@ -54,9 +58,9 @@ STATUS_LABELS = {
 _COL_CHK    = 0
 _COL_TBL    = 1
 _COL_NAME   = 2
-_COL_FILE   = 3
-_COL_STATUS = 4
-TEST_COLS = ["Chạy", "Bảng", "Tên bài test", "File kịch bản (.json)", "Trạng thái"]
+_COL_STATUS = 3
+_COL_FILE   = 4
+TEST_COLS = ["Chạy", "Bảng", "Tên bài test", "Trạng thái", "File kịch bản (.json)"]
 
 
 def _test_status_label(test: SessionTest) -> tuple[str, str]:
@@ -240,7 +244,7 @@ class _StepRail(QWidget):
 
         # -- Biểu mẫu đang dùng (footer) --
         footer = QFrame()
-        footer.setStyleSheet(f"QFrame {{ border:none; border-top:1px solid {Colors.BORDER}; }}")
+        footer.setStyleSheet("QFrame { border:none; }")
         footer_lay = QVBoxLayout(footer)
         footer_lay.setContentsMargins(16, 14, 16, 14)
         footer_lay.setSpacing(4)
@@ -557,14 +561,18 @@ class _TestReviewTab(QWidget):
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(_COL_CHK,    QHeaderView.Fixed)
         hdr.setSectionResizeMode(_COL_TBL,    QHeaderView.Fixed)
-        hdr.setSectionResizeMode(_COL_NAME,   QHeaderView.Stretch)
-        hdr.setSectionResizeMode(_COL_FILE,   QHeaderView.Stretch)
+        hdr.setSectionResizeMode(_COL_NAME,   QHeaderView.Interactive)
         hdr.setSectionResizeMode(_COL_STATUS, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(_COL_FILE,   QHeaderView.Interactive)
         self.table.setColumnWidth(_COL_CHK,    44)
         self.table.setColumnWidth(_COL_TBL,    52)
+        self.table.setColumnWidth(_COL_NAME,   260)
         self.table.setColumnWidth(_COL_STATUS, 190)
+        self.table.setColumnWidth(_COL_FILE,   220)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.setWordWrap(True)
         self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet(
             # ::item:alternate:selected phải khai RIÊNG — nếu chỉ dựa vào
@@ -583,11 +591,11 @@ class _TestReviewTab(QWidget):
         left_lay.addWidget(self.table, 1)
 
         bar = QHBoxLayout()
-        self.btn_choose = QPushButton("📂 Chọn file…")
-        self.btn_choose.setToolTip("Chọn file .json cho bài test đang được bôi đen")
-        self.btn_choose.clicked.connect(self._choose_file_selected)
-        bar.addWidget(self.btn_choose)
         bar.addStretch()
+        self.btn_run_one = QPushButton("▶ Chạy bài này")
+        self.btn_run_one.setEnabled(False)
+        self.btn_run_one.clicked.connect(self._request_run_one)
+        bar.addWidget(self.btn_run_one)
         self.btn_run = QPushButton("▶ Chạy tất cả")
         self.btn_run.setStyleSheet(
             f"background:{Colors.ACCENT_PRIMARY}; color:{Colors.BG_WINDOW};"
@@ -625,10 +633,6 @@ class _TestReviewTab(QWidget):
         self.btn_choose_detail = QPushButton("📂 Chọn file kịch bản…")
         self.btn_choose_detail.clicked.connect(self._choose_file_detail)
         file_bar.addWidget(self.btn_choose_detail)
-        self.btn_run_one = QPushButton("▶ Chạy bài này")
-        self.btn_run_one.setEnabled(False)
-        self.btn_run_one.clicked.connect(self._request_run_one)
-        file_bar.addWidget(self.btn_run_one)
         right_lay.addLayout(file_bar)
 
         bulk_bar = QHBoxLayout()
@@ -699,6 +703,7 @@ class _TestReviewTab(QWidget):
         for col, text in [(_COL_TBL, test.table_id), (_COL_NAME, test.name)]:
             it = QTableWidgetItem(text)
             it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+            it.setToolTip(text)
             self.table.setItem(index, col, it)
 
         path_it = QTableWidgetItem(os.path.basename(test.scenario_path) if test.scenario_path else "")
@@ -836,13 +841,6 @@ class _TestReviewTab(QWidget):
 
     # -- Chọn file kịch bản -------------------------------------------------
 
-    def _choose_file_selected(self):
-        rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
-        if not rows:
-            QMessageBox.information(self, "Chưa chọn", "Hãy chọn (bôi đen) một bài test trong bảng.")
-            return
-        self._pick_file_for_row(rows[0])
-
     def _choose_file_detail(self):
         if self._current_index is None:
             QMessageBox.information(self, "Chưa chọn", "Hãy chọn một bài test trong bảng bên trái.")
@@ -851,7 +849,7 @@ class _TestReviewTab(QWidget):
 
     def _pick_file_for_row(self, row: int):
         start_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scenarios")
-        path, _ = QFileDialog.getOpenFileName(self, "Chọn file kịch bản", start_dir, "JSON (*.json)")
+        path, _ = get_open_file_name(self, "Chọn file kịch bản", start_dir, "JSON (*.json)")
         if not path:
             return
         test = self._tests[row]
@@ -895,8 +893,7 @@ _AUTO_CONCLUSION_FAIL = "Không đạt yêu cầu kỹ thuật đo lường"
 class _ExportTab(QWidget):
     export_bienban_requested = pyqtSignal()
     export_gcnkd_requested   = pyqtSignal()
-    print_requested          = pyqtSignal()
-    row_edited               = pyqtSignal()   # checkbox/combobox trong bảng xem trước vừa đổi
+    quick_preview_requested  = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1009,11 +1006,6 @@ class _ExportTab(QWidget):
         left_lay.addStretch()
 
         action_row = QHBoxLayout()
-        self.btn_print = QPushButton("🖨 In trực tiếp")
-        self.btn_print.setEnabled(False)
-        self.btn_print.setToolTip("In file vừa xuất gần nhất (chưa xuất lần nào thì chưa in được)")
-        self.btn_print.clicked.connect(self.print_requested)
-        action_row.addWidget(self.btn_print)
         self.btn_export = QPushButton("📤 Xuất tài liệu")
         self.btn_export.setEnabled(False)
         self.btn_export.setStyleSheet(export_btn_style)
@@ -1030,9 +1022,14 @@ class _ExportTab(QWidget):
         right_lay.setContentsMargins(4, 0, 0, 0)
 
         preview_bar = QHBoxLayout()
-        self.btn_preview = QPushButton("🔍 Xem trước nội dung báo cáo")
-        self.btn_preview.clicked.connect(self._build_preview)
-        preview_bar.addWidget(self.btn_preview)
+        self.btn_print = QPushButton("👁 Xem nhanh (không lưu)")
+        self.btn_print.setEnabled(False)
+        self.btn_print.setToolTip(
+            "Sinh nhanh file tạm theo Loại tài liệu đang chọn với dữ liệu hiện tại rồi hiện "
+            "ngay trong khung bên phải (dạng ảnh trang, đúng như file thật) để xem trọn vẹn "
+            "nội dung đã map vào template — không cần chọn nơi lưu, không mở app ngoài.")
+        self.btn_print.clicked.connect(self.quick_preview_requested)
+        preview_bar.addWidget(self.btn_print)
         preview_bar.addStretch()
         right_lay.addLayout(preview_bar)
 
@@ -1062,10 +1059,8 @@ class _ExportTab(QWidget):
         self._preview_inner = QWidget()
         self._preview_lay = QVBoxLayout(self._preview_inner)
         self._preview_lay.addWidget(QLabel(
-            "Chọn 1 bài bên trái rồi bấm 'Xem trước' để chỉ xem đúng bài đó "
-            "(không chọn gì thì xem toàn bộ) — kể cả bài chưa chạy (khung "
-            "trống) hoặc chưa xác nhận đủ dòng. Chỉ những dòng có tick "
-            "'Đưa vào báo cáo' mới thực sự được xuất."))
+            "Bấm 'Xem nhanh (không lưu)' để xem trọn vẹn nội dung sẽ xuất ra "
+            "— đúng như file .docx thật, kể cả header/footer/logo."))
         self._preview_lay.addStretch()
         self.preview_area.setWidget(self._preview_inner)
         right_lay.addWidget(self.preview_area, 1)
@@ -1096,9 +1091,6 @@ class _ExportTab(QWidget):
             self.export_bienban_requested.emit()
         if self._doc_type in ("gcnkd", "both"):
             self.export_gcnkd_requested.emit()
-
-    def set_print_enabled(self, enabled: bool):
-        self.btn_print.setEnabled(enabled)
 
     def _on_conclusion_edited(self, _text: str):
         self._conclusion_manual = True
@@ -1158,6 +1150,7 @@ class _ExportTab(QWidget):
             self.e_conclusion.setText(_AUTO_CONCLUSION_FAIL if all_passed is False
                                       else _AUTO_CONCLUSION_PASS)
         self.btn_export.setEnabled(True)
+        self.btn_print.setEnabled(True)
 
         if n_partial:
             self.lbl_warning.setText(
@@ -1166,7 +1159,7 @@ class _ExportTab(QWidget):
         else:
             self.lbl_warning.setText("")
 
-    def _build_preview(self):
+    def _clear_preview_lay(self):
         while self._preview_lay.count():
             item = self._preview_lay.takeAt(0)
             w = item.widget()
@@ -1174,70 +1167,25 @@ class _ExportTab(QWidget):
                 w.hide()   # ẩn ngay — deleteLater() chỉ xoá thật ở vòng event loop sau
                 w.deleteLater()
 
-        # Có bài đang được chọn bên trái -> chỉ xem đúng bài đó; không chọn
-        # gì (currentRow() == -1) -> xem toàn bộ như trước.
-        sel_row = self.lst_tests.currentRow()
-        targets = [self._tests[sel_row]] if 0 <= sel_row < len(self._tests) else self._tests
-
-        any_shown = False
-        for t in targets:
-            if not t.enabled:
-                if len(targets) == 1:
-                    self._preview_lay.addWidget(QLabel(
-                        f"{t.table_id} — {t.name}: bài này đã bị bỏ qua (tắt), "
-                        "không có trong báo cáo."))
-                    any_shown = True
-                continue
-            has_result = t.result_table is not None
-            rows = t.result_table.rows if has_result else _scaffold_rows(self._template_id, t)
-            if not rows:
-                continue
-            any_shown = True
-            title_text = f"{t.table_id} — {t.name}"
-            if not has_result:
-                title_text += "  (chưa chạy — khung xem trước)"
+    def show_doc_pages(self, sections: list[tuple[str, list]]):
+        """Hiện bản xem nhanh dạng ảnh từng trang PDF (đúng như file .docx thật
+        sẽ in ra, kể cả header/footer/logo) — dùng cho nút 'Xem nhanh
+        (không lưu)'."""
+        self._clear_preview_lay()
+        target_w = max(360, self.preview_area.viewport().width() - 24)
+        for title_text, pixmaps in sections:
             title = QLabel(title_text)
             title.setStyleSheet("font-weight:bold; color:#8a6a10; font-size:12px;")
             self._preview_lay.addWidget(title)
-            if has_result and t.result_table.note:
-                note_lbl = QLabel(f"⚠ {t.result_table.note}")
-                note_lbl.setWordWrap(True)
-                note_lbl.setStyleSheet("color:#a85c00; font-size:11px;")
-                self._preview_lay.addWidget(note_lbl)
-            tbl = build_wysiwyg_table(self._template_id, t.table_id, rows,
-                                      with_checkbox=True, on_toggle=self._on_row_edited,
-                                      with_status=True, on_status_change=self._on_row_edited,
-                                      interactive=has_result,
-                                      on_value_edited=self._build_preview,
-                                      recompute_row=_make_recompute_row(self._template_id, t.table_id),
-                                      measured_counts=_measured_counts_for(self._template_id, t.table_id, len(rows)))
-            # Dùng số DÒNG LƯỚI thật của bảng đã dựng (tbl.rowCount()), không
-            # phải len(rows) (số TableRow logic) — bảng A1 gộp raw_readings
-            # của 1 TableRow thành N dòng lưới hiển thị, nên 2 con số này
-            # khác nhau; dùng nhầm len(rows) khiến bảng A1 bị nén chỉ còn đủ
-            # chỗ cho ~2 dòng, cắt mất phần lớn dữ liệu.
-            # setFixedHeight (không phải setMaximumHeight): layout chỉ cấp
-            # đúng bằng sizeHint() nếu không ép cứng chiều cao, mà sizeHint
-            # mặc định của QTableWidget KHÔNG tính theo số dòng thật -> bảng
-            # bị co lại nhỏ hơn maximumHeight rồi tự sinh thanh cuộn dọc
-            # riêng bên trong, dù đã đủ chỗ. Ép cứng chiều cao để hiện đủ
-            # toàn bộ dòng, không cuộn — cuộn tổng thể do QScrollArea bên
-            # ngoài (self.preview_area) đảm nhiệm.
-            tbl.setFixedHeight(34 * (tbl.rowCount() + 1) + 16)
-            tbl.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self._preview_lay.addWidget(tbl)
-
-        if not any_shown:
-            self._preview_lay.addWidget(QLabel("Chưa có bài test nào để xem trước."))
+            for pix in pixmaps:
+                page_lbl = QLabel()
+                page_lbl.setPixmap(pix.scaledToWidth(target_w, Qt.SmoothTransformation))
+                page_lbl.setAlignment(Qt.AlignHCenter)
+                page_lbl.setStyleSheet("border:1px solid #999999; margin:4px 0;")
+                self._preview_lay.addWidget(page_lbl)
+        if not sections:
+            self._preview_lay.addWidget(QLabel("Không có trang nào để hiện."))
         self._preview_lay.addStretch()
-
-    def _on_row_edited(self):
-        """Checkbox/combobox trong bảng xem trước vừa đổi — chỉ báo lên
-        SessionManagerWindow để làm mới cột tổng hợp bên trái (icon xác
-        nhận, kết luận, nút xuất); KHÔNG tự dựng lại bảng xem trước (tránh
-        dòng biến mất đột ngột ngay dưới con trỏ khi vừa bỏ tick — "Xem
-        trước" vẫn là thao tác thủ công qua nút bấm)."""
-        self.row_edited.emit()
 
 
 # ============================================================================
@@ -1259,7 +1207,6 @@ class SessionManagerWindow(QMainWindow):
         self._current_test_index = -1
         self._step_results_current: list[StepResult] = []
         self._run_mode = "all"   # "all" | "single" — quyết định có chạy tiếp bài kế không
-        self._last_export_path: str = ""
 
         # Kết nối thiết bị — dùng chung với Scenario Builder
         self._profile = None
@@ -1372,8 +1319,7 @@ class SessionManagerWindow(QMainWindow):
         self._step_review.open_scenario_requested.connect(self._open_scenario_for_test)
         self._step_export.export_bienban_requested.connect(self._export_bienban)
         self._step_export.export_gcnkd_requested.connect(self._export_gcnkd)
-        self._step_export.print_requested.connect(self._print_last_export)
-        self._step_export.row_edited.connect(self._refresh_export_tab)
+        self._step_export.quick_preview_requested.connect(self._quick_preview_current_doc)
         self._step_review.row_edited.connect(self._refresh_export_tab)
 
     def _on_step_changed(self, index: int):
@@ -1558,7 +1504,7 @@ class SessionManagerWindow(QMainWindow):
         self._log("Đã tạo phiên mới.", Colors.ACCENT_PRIMARY)
 
     def _load_session(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Mở phiên kiểm định", "", "JSON (*.json)")
+        path, _ = get_open_file_name(self, "Mở phiên kiểm định", "", "JSON (*.json)")
         if not path:
             return
         try:
@@ -1579,8 +1525,8 @@ class SessionManagerWindow(QMainWindow):
 
     def _save_session(self):
         self._sync_meta()
-        path, _ = QFileDialog.getSaveFileName(self, "Lưu phiên kiểm định",
-                                              "phien_kiem_dinh.json", "JSON (*.json)")
+        path, _ = get_save_file_name(self, "Lưu phiên kiểm định",
+                                     "phien_kiem_dinh.json", "JSON (*.json)")
         if not path:
             return
         try:
@@ -1763,7 +1709,7 @@ class SessionManagerWindow(QMainWindow):
 
     def _export_bienban(self):
         self._sync_meta()
-        path, _ = QFileDialog.getSaveFileName(
+        path, _ = get_save_file_name(
             self, "Lưu Biên Bản Kiểm Định",
             f"bien_ban_{datetime.now().strftime('%Y%m%d')}.docx",
             "Word Document (*.docx)")
@@ -1773,15 +1719,13 @@ class SessionManagerWindow(QMainWindow):
             tpl = get_template(self._session.template_id)
             tpl.generate_bienban(self._session, path)
             self._log(f"Đã xuất Biên Bản: {path}", Colors.ACCENT_GREEN)
-            self._last_export_path = path
-            self._step_export.set_print_enabled(True)
             self._open_file(path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi xuất Biên Bản", str(exc))
 
     def _export_gcnkd(self):
         self._sync_meta()
-        path, _ = QFileDialog.getSaveFileName(
+        path, _ = get_save_file_name(
             self, "Lưu Giấy Chứng Nhận Kiểm Định",
             f"gcnkd_{datetime.now().strftime('%Y%m%d')}.docx",
             "Word Document (*.docx)")
@@ -1791,21 +1735,42 @@ class SessionManagerWindow(QMainWindow):
             tpl = get_template(self._session.template_id)
             tpl.generate_gcnkd(self._session, path)
             self._log(f"Đã xuất GCN: {path}", Colors.ACCENT_GREEN)
-            self._last_export_path = path
-            self._step_export.set_print_enabled(True)
             self._open_file(path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi xuất GCN", str(exc))
 
-    def _print_last_export(self):
-        if not self._last_export_path:
-            QMessageBox.information(self, "Chưa có file", "Hãy xuất tài liệu trước khi in.")
-            return
+    _PREVIEW_KIND_LABEL = {"bienban": "Biên Bản", "gcnkd": "GCN"}
+
+    def _quick_preview_current_doc(self):
+        """Sinh nhanh file tạm theo Loại tài liệu đang chọn (không hỏi nơi lưu),
+        convert sang PDF rồi render từng trang ngay trong khung bên phải Bước 3
+        — không lưu chính thức, không gửi lệnh in, không mở app ngoài."""
+        self._sync_meta()
+        doc_type = self._step_export._doc_type
+        kinds = ["bienban", "gcnkd"] if doc_type == "both" else [doc_type]
+        self._step_export.btn_print.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            os.startfile(self._last_export_path, "print")  # noqa: S606
-            self._log(f"Đã gửi lệnh in: {self._last_export_path}", Colors.ACCENT_GREEN)
+            tpl = get_template(self._session.template_id)
+            tmp_dir = Path(tempfile.gettempdir()) / "freq_calibration_preview"
+            tmp_dir.mkdir(exist_ok=True)
+            stamp = datetime.now().strftime("%H%M%S")
+            sections = []
+            for kind in kinds:
+                path = str(tmp_dir / f"xem_nhanh_{kind}_{stamp}.docx")
+                if kind == "bienban":
+                    tpl.generate_bienban(self._session, path)
+                else:
+                    tpl.generate_gcnkd(self._session, path)
+                pixmaps = docx_to_page_pixmaps(path)
+                sections.append((f"{self._PREVIEW_KIND_LABEL[kind]} — {os.path.basename(path)}", pixmaps))
+            self._step_export.show_doc_pages(sections)
+            self._log("Đã dựng bản xem nhanh (chưa lưu chính thức).", Colors.ACCENT_GREEN)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Lỗi in", f"Không in được: {exc}")
+            QMessageBox.critical(self, "Lỗi xem nhanh", str(exc))
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._step_export.btn_print.setEnabled(True)
 
     # -------------------------------------------------------------------------
     # Helpers

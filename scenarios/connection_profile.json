@@ -1,0 +1,20 @@
+{
+  "name": "Cấu hình kết nối",
+  "cmd_delay_ms": 100,
+  "entries": [
+    {
+      "model_key": "CNT90",
+      "address": "GPIB1::10::INSTR",
+      "label": "",
+      "serial": "331438",
+      "idn": "PENDULUM, CNT-90, 331438, V1.30 24 May 2013 08:30"
+    },
+    {
+      "model_key": "SMW200A",
+      "address": "GPIB1::28::INSTR",
+      "label": "",
+      "serial": "1412.0000K02/111417",
+      "idn": "Rohde&Schwarz,SMW200A,1412.0000K02/111417,5.10.035.29"
+    }
+  ]
+}

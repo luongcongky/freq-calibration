@@ -225,15 +225,23 @@ def find_missing_table_ids(docx_path, table_ids: list) -> list:
 
 FORMAT_LABELS_ALL = [
     ("freq", "Tần số (vd '10 MHz')"),
+    ("freq_no_unit", "Tần số — không kèm đơn vị (vd '10')"),
     ("hz_measured", "Tần số đo được (số lẻ đầy đủ)"),
+    ("hz_measured_no_unit", "Tần số đo được — không kèm đơn vị"),
     ("period", "Chu kỳ (s)"),
+    ("period_no_unit", "Chu kỳ — không kèm đơn vị"),
     ("mv", "mVrms"),
+    ("mv_no_unit", "mVrms — không kèm đơn vị"),
     ("dbm", "dBm"),
+    ("dbm_no_unit", "dBm — không kèm đơn vị"),
     ("w", "Công suất (W/mW)"),
+    ("w_no_unit", "Công suất — không kèm đơn vị"),
     ("sci", "Khoa học (vd '2,4×10⁻⁷')"),
     ("sci_signed", "Khoa học có dấu ± "),
     ("correction_mw", "Số hiệu chỉnh (mW)"),
+    ("correction_mw_no_unit", "Số hiệu chỉnh — không kèm đơn vị (mW)"),
     ("correction_db", "Số hiệu chỉnh (dB)"),
+    ("correction_db_no_unit", "Số hiệu chỉnh — không kèm đơn vị (dB)"),
     ("text", "Văn bản (giữ nguyên)"),
 ]
 

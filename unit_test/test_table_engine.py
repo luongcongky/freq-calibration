@@ -146,6 +146,57 @@ def test_result_blank_when_rt_is_none():
     assert ctx["result"] == ""
 
 
+# ---------------------------------------------------------------------------
+# result — ngoại lệ "Xuất value trong GCN" (đánh dấu tay 1 ô giá trị đo ở
+# Bước 2, xem gui/report_preview.py::_make_gcn_markable): thay Đạt/Không đạt
+# bằng ĐÚNG giá trị đo của dòng đã đánh dấu.
+# ---------------------------------------------------------------------------
+
+def test_result_uses_marked_row_value_instead_of_pass_mark():
+    row = _row(raw_readings=[12.3], confirmed=True, passed=True, gcn_export_field="raw:0")
+    rt = ReportTable(table_id="A9", rows=[row])
+    d = _descriptor(value_format="mv")
+    ctx = table_engine.build_cursor_context(d, rt.confirmed_rows(), rt)
+    assert ctx["result"] == table_engine._format("mv", 12.3)
+
+
+def test_result_falls_back_to_pass_mark_when_no_row_marked():
+    row = _row(raw_readings=[12.3], confirmed=True, passed=True, gcn_export_field=None)
+    rt = ReportTable(table_id="A9", rows=[row])
+    ctx = table_engine.build_cursor_context(_descriptor(), rt.confirmed_rows(), rt)
+    assert ctx["result"] == "Đạt"
+
+
+def test_result_ignores_mark_on_unconfirmed_row():
+    """Dòng đánh dấu nhưng CHƯA xác nhận -> bỏ qua, result quay lại theo
+    Đạt/Không đạt như bình thường."""
+    row = _row(raw_readings=[12.3], confirmed=False, gcn_export_field="raw:0")
+    rt = ReportTable(table_id="A9", rows=[row])
+    ctx = table_engine.build_cursor_context(_descriptor(), rt.confirmed_rows(), rt)
+    assert ctx["result"] == ""
+
+
+def test_result_uses_row_specific_value_format_seq():
+    """Dòng có value_format_seq riêng (khác value_format mặc định của bảng)
+    -> phải dùng ĐÚNG format của chính dòng đó, không phải mặc định bảng."""
+    row_def = RowDef(key="row1", value_format_seq=["dbm"])
+    row = _row(raw_readings=[-12.345], confirmed=True, gcn_export_field="raw:0")
+    rt = ReportTable(table_id="A9", rows=[row])
+    d = _descriptor(rows=[row_def], value_format="text")
+    ctx = table_engine.build_cursor_context(d, rt.confirmed_rows(), rt)
+    assert ctx["result"] == table_engine._format("dbm", -12.345)
+
+
+def test_gcn_export_value_str_none_when_index_out_of_range():
+    row = _row(raw_readings=[1.0], confirmed=True, gcn_export_field="raw:5")
+    rt = ReportTable(table_id="A9", rows=[row])
+    assert table_engine._gcn_export_value_str(_descriptor(), rt) is None
+
+
+def test_gcn_export_value_str_none_when_rt_is_none():
+    assert table_engine._gcn_export_value_str(_descriptor(), None) is None
+
+
 def test_build_all_table_contexts_merges_cursor_fields_without_breaking_old_keys():
     """Descriptor kiểu CŨ (không set value_format, giữ columns=[]) vẫn phải
     có cả field CŨ (rows/enabled) LẪN field MỚI (report_val/result)."""

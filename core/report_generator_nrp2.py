@@ -38,17 +38,18 @@ log_name = __name__
 # Định dạng số riêng cho NRP2 (công suất W tại Bảng A1, số hiệu chỉnh)
 # ---------------------------------------------------------------------------
 
-def _fmt_w(w: float) -> str:
+def _fmt_w(w: float, with_unit: bool = True) -> str:
     """0.0010003 -> '1,0003 mW'."""
     mw = w * 1000.0
-    return f"{mw:.4g} mW".replace(".", ",")
+    s = f"{mw:.4g}".replace(".", ",")
+    return f"{s} mW" if with_unit else s
 
 
-def _fmt_correction(value: Optional[float], unit: str) -> str:
+def _fmt_correction(value: Optional[float], unit: str, with_unit: bool = True) -> str:
     if value is None:
         return ""
     s = f"{value:.4g}".replace(".", ",")
-    return f"{s} {unit}"
+    return f"{s} {unit}" if with_unit else s
 
 
 def _find_table(session: CalibrationSession, table_id: str) -> Optional[ReportTable]:

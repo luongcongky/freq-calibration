@@ -24,6 +24,10 @@ VALID_ROLES = {
 VALID_FORMATS = {
     "freq", "hz_measured", "period", "mv", "dbm", "w", "sci", "sci_signed",
     "correction_mw", "correction_db", "text",
+    # Biến thể không kèm đơn vị (xem core/table_engine.py::_FORMATTERS) — cùng
+    # cách làm tròn/định dạng số như bản gốc, chỉ bỏ chữ đơn vị suffix.
+    "freq_no_unit", "hz_measured_no_unit", "period_no_unit", "mv_no_unit",
+    "dbm_no_unit", "w_no_unit", "correction_mw_no_unit", "correction_db_no_unit",
 }
 VALID_SCOPES = {"row", "table"}
 VALID_LAYOUTS = {"repeated_rows", "raw_expand_vertical", "raw_expand_horizontal"}

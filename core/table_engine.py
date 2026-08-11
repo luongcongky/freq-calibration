@@ -241,6 +241,17 @@ _FORMATTERS = {
     "correction_mw": lambda v: _fmt_correction(v, "mW"),
     "correction_db": lambda v: _fmt_correction(v, "dB"),
     "text": lambda v: v if v is not None else "",
+    # Biến thể "không kèm đơn vị" — cùng công thức làm tròn/định dạng số ở
+    # trên, chỉ bỏ chữ đơn vị suffix, dùng khi cần bind giá trị thuần vào
+    # docx (đơn vị đã có sẵn trong text mẫu hoặc không cần hiện).
+    "freq_no_unit": lambda v: _fmt_freq(v, with_unit=False),
+    "hz_measured_no_unit": lambda v: _fmt_hz_measured(v, with_unit=False),
+    "period_no_unit": lambda v: _fmt_period(v, with_unit=False),
+    "mv_no_unit": lambda v: _fmt_mv(v, with_unit=False),
+    "dbm_no_unit": lambda v: _fmt_dbm(v, with_unit=False),
+    "w_no_unit": lambda v: _fmt_w(v, with_unit=False),
+    "correction_mw_no_unit": lambda v: _fmt_correction(v, "mW", with_unit=False),
+    "correction_db_no_unit": lambda v: _fmt_correction(v, "dB", with_unit=False),
 }
 
 
@@ -392,6 +403,12 @@ def _cursor(values: list):
 #   - `result`      — Đạt/Không đạt CHÍNH NGƯỜI DÙNG tự chọn tay ở cột Bước 2
 #                     (gui/report_preview.py::_add_status_column), không
 #                     phải công thức tự động — "người dùng tự quyết định".
+#                     NGOẠI LỆ: nếu có đúng 1 dòng đã xác nhận được đánh dấu
+#                     "Xuất value trong GCN" (click phải 1 ô giá trị đo, xem
+#                     gui/report_preview.py::_make_gcn_markable), `result`
+#                     trả về giá trị đo ĐÃ ĐỊNH DẠNG của ô đó thay vì Đạt/
+#                     Không đạt (_gcn_export_value_str) — mặc định (không
+#                     dòng nào đánh dấu) vẫn là Đạt/Không đạt như cũ.
 #   - `gcn_avg()`   — trung bình các report_val Biên Bản đã đẩy cho 1 dòng
 #                     (TableRow.value_measured, map_table() đã tính sẵn).
 #   - `gcn_error()` — sai số/số hiệu chỉnh tính từ report_val Biên Bản so
@@ -418,16 +435,48 @@ def _report_val_values(descriptor: TableDescriptor, rows: list) -> list:
     return out
 
 
+def _gcn_export_value_str(descriptor: TableDescriptor, rt: Optional[ReportTable]) -> Optional[str]:
+    """Nếu có ĐÚNG 1 dòng đã xác nhận trong `rt` được đánh dấu "Xuất value
+    trong GCN" (TableRow.gcn_export_field = "raw:<idx>") -> trả giá trị đó
+    đã định dạng ĐÚNG NHƯ report_val() sẽ hiện trong Biên Bản (dùng
+    row_def.value_format_seq nếu dòng có, không thì descriptor.value_format).
+    None nếu không có dòng nào đánh dấu -> `result` giữ hành vi cũ (Đạt/
+    Không đạt). Khớp chỉ số rt.rows[i] <-> descriptor.rows[i] theo đúng bất
+    biến của map_table() (1 TableRow/1 RowDef, cùng thứ tự, không lọc)."""
+    if rt is None:
+        return None
+    for i, row in enumerate(rt.rows):
+        if not row.confirmed or not row.gcn_export_field:
+            continue
+        if not row.gcn_export_field.startswith("raw:"):
+            continue
+        try:
+            idx = int(row.gcn_export_field[len("raw:"):])
+        except ValueError:
+            continue
+        if idx < 0 or idx >= len(row.raw_readings):
+            continue
+        fmt = descriptor.value_format
+        if i < len(descriptor.rows):
+            row_def = descriptor.rows[i]
+            if row_def.value_format_seq and idx < len(row_def.value_format_seq):
+                fmt = row_def.value_format_seq[idx]
+        return _format(fmt, row.raw_readings[idx])
+    return None
+
+
 def build_cursor_context(descriptor: TableDescriptor, rows: list,
                           rt: Optional[ReportTable]) -> dict:
     fmt = descriptor.value_format
     error_fmt = _ERROR_FORMAT_BY_VALUE_FORMAT.get(fmt, "sci")
+    export_value = _gcn_export_value_str(descriptor, rt)
+    result = export_value if export_value is not None else (_pass_mark(rt.confirmed_passed) if rt else "")
     return {
         # _format() chỉ ĐỊNH DẠNG HIỂN THỊ (số thực -> chuỗi kiểu Việt Nam,
         # vd 12.3 -> "12,3 mVrms") — KHÔNG tính ra giá trị mới, giá trị vẫn
         # y hệt những gì kịch bản đã đẩy.
         "report_val": _cursor(_report_val_values(descriptor, rows)),
-        "result": _pass_mark(rt.confirmed_passed) if rt else "",
+        "result": result,
         "gcn_avg": _cursor([_format(fmt, r.value_measured) for r in rows]),
         "gcn_error": _cursor([_format(error_fmt, r.error) for r in rows]),
         "gcn_limit": _cursor([r.limit or "" for r in rows]),

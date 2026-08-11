@@ -62,10 +62,10 @@ def _sci(value: float, dec: int = 1) -> str:
     return f"{sign}{m_str}×10{str(exp).translate(_SUP)}"
 
 
-def _fmt_freq(hz: float) -> str:
+def _fmt_freq(hz: float, with_unit: bool = True) -> str:
     """10000000 → '10 MHz', 1500 → '1,5 kHz'"""
     if hz == 0:
-        return "0 Hz"
+        return "0 Hz" if with_unit else "0"
     if hz < 1e3:
         v = hz
         u = "Hz"
@@ -79,43 +79,49 @@ def _fmt_freq(hz: float) -> str:
         v = hz / 1e9
         u = "GHz"
     s = f"{v:g}".replace(".", ",")
-    return f"{s} {u}"
+    return f"{s} {u}" if with_unit else s
 
 
-def _fmt_hz_measured(hz: float) -> str:
+def _fmt_hz_measured(hz: float, with_unit: bool = True) -> str:
     """Định dạng giá trị tần số đo được: 9999999.98765 → '9.999.999,98765 Hz'"""
     int_part = int(abs(hz))
     frac = abs(hz) - int_part
     # Nhóm nghìn bằng dấu chấm
     int_str = f"{int_part:,}".replace(",", ".")
+    unit = " Hz" if with_unit else ""
     if frac > 0:
         frac_str = f"{frac:.7f}"[1:].rstrip("0")  # ".9876500" → ",98765"
         frac_str = frac_str.replace(".", ",")
-        return f"{int_str}{frac_str} Hz"
-    return f"{int_str} Hz"
+        return f"{int_str}{frac_str}{unit}"
+    return f"{int_str}{unit}"
 
 
-def _fmt_period(s: float) -> str:
+def _fmt_period(s: float, with_unit: bool = True) -> str:
     """Định dạng chu kỳ đo được."""
     if s == 0:
-        return "0 s"
+        return "0 s" if with_unit else "0"
     if s >= 1e-1:
-        return f"{s*1e3:.6g} ms".replace(".", ",")
-    if s >= 1e-4:
-        return f"{s*1e6:.6g} µs".replace(".", ",")
-    if s >= 1e-7:
-        return f"{s*1e9:.6g} ns".replace(".", ",")
-    return f"{s:.4e} s".replace(".", ",").replace("e-0", "×10⁻").replace("e-", "×10⁻")
+        txt, u = f"{s*1e3:.6g}".replace(".", ","), "ms"
+    elif s >= 1e-4:
+        txt, u = f"{s*1e6:.6g}".replace(".", ","), "µs"
+    elif s >= 1e-7:
+        txt, u = f"{s*1e9:.6g}".replace(".", ","), "ns"
+    else:
+        txt = f"{s:.4e}".replace(".", ",").replace("e-0", "×10⁻").replace("e-", "×10⁻")
+        u = "s"
+    return f"{txt} {u}" if with_unit else txt
 
 
-def _fmt_mv(mv: float) -> str:
+def _fmt_mv(mv: float, with_unit: bool = True) -> str:
     """14.9 → '14,9 mVrms'"""
-    return f"{mv:.4g} mVrms".replace(".", ",")
+    s = f"{mv:.4g}".replace(".", ",")
+    return f"{s} mVrms" if with_unit else s
 
 
-def _fmt_dbm(dbm: float) -> str:
+def _fmt_dbm(dbm: float, with_unit: bool = True) -> str:
     """-35.1 → '-35,1 dBm'"""
-    return f"{dbm:.2f} dBm".replace(".", ",")
+    s = f"{dbm:.2f}".replace(".", ",")
+    return f"{s} dBm" if with_unit else s
 
 
 def _pass_mark(passed: Optional[bool]) -> str:
