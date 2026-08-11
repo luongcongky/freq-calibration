@@ -29,9 +29,9 @@ import logging
 from dataclasses import asdict
 
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QWidget,
-    QLabel, QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
-    QHeaderView, QLineEdit, QAbstractItemView, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QWidget, QApplication,
+    QLabel, QListWidget, QListWidgetItem, QComboBox, QFrame,
+    QLineEdit, QAbstractItemView, QPushButton,
     QDialogButtonBox, QFormLayout, QMessageBox,
 )
 from PyQt5.QtCore import Qt
@@ -39,9 +39,10 @@ from PyQt5.QtGui import QColor, QFont
 
 from drivers import DEVICE_REGISTRY
 from gui.theme import Colors
+from gui.widgets import paint_corner_brackets
 from core.commands import (
     Cmd, COMMON_COMMANDS, DEVICE_COMMANDS,
-    load_custom, CUSTOM_DATA_PATH,
+    load_custom, CUSTOM_DATA_PATH, parse_cmd,
 )
 
 log = logging.getLogger(__name__)
@@ -59,6 +60,9 @@ _CAT_ORDER = ["generator", "counter", "power"]
 
 _MONO = QFont("Consolas", 9)
 _MONO.setStyleHint(QFont.Monospace)
+
+_MONO_LG = QFont("Consolas", 12, QFont.Bold)
+_MONO_LG.setStyleHint(QFont.Monospace)
 
 
 # ---------------------------------------------------------------------------
@@ -150,16 +154,22 @@ class CommandReferenceDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Tập lệnh thiết bị — Command Reference")
-        self.setMinimumSize(1020, 640)
+        self.setMinimumSize(1150, 680)
 
         self._custom: dict[str, list[dict]] = load_custom()
         self._model_key: str = ""
         # Danh sách đang hiển thị, mỗi phần tử: (src, Cmd)
         # src = "common" | "device" | "custom"
         self._rows: list[tuple[str, Cmd]] = []
+        self._param_widgets: dict[str, QWidget] = {}
+        self._current_template: str = ""
 
         self._build_ui()
         self._populate_device_list()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        paint_corner_brackets(self)
 
     # ------------------------------------------------------------------
     # Xây dựng UI
@@ -171,7 +181,7 @@ class CommandReferenceDialog(QDialog):
 
         splitter = QSplitter(Qt.Horizontal)
 
-        # --- Panel trái ---
+        # --- Panel trái: chọn dòng máy + danh sách lệnh ---
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 6, 0)
@@ -179,82 +189,117 @@ class CommandReferenceDialog(QDialog):
         ll.addWidget(QLabel("Chọn dòng máy:"))
         self.dev_list = QListWidget()
         self.dev_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.dev_list.setMaximumHeight(150)
         # Giữ NGUYÊN màu nền dòng máy đang chọn kể cả khi list mất focus (vd khi
-        # bấm sang bảng lệnh) — tránh cảm giác bị bỏ chọn.
+        # bấm sang danh sách lệnh) — tránh cảm giác bị bỏ chọn.
         self.dev_list.setStyleSheet(
-            f"QListWidget::item:selected {{ background:{Colors.ACCENT_CYAN};"
+            f"QListWidget::item:selected {{ background:{Colors.ACCENT_PRIMARY};"
             f" color:{Colors.BG_WINDOW}; }}")
         self.dev_list.currentRowChanged.connect(self._on_device_changed)
         ll.addWidget(self.dev_list)
-        splitter.addWidget(left)
 
-        # --- Panel phải ---
-        right = QWidget()
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(6, 0, 0, 0)
-        rl.setSpacing(6)
-
-        # Thanh tìm kiếm + nút hành động
         tool_row = QHBoxLayout()
         tool_row.setSpacing(6)
 
-        lbl = QLabel("Tìm:")
-        lbl.setStyleSheet(f"color:{Colors.TEXT_DIM};")
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Nhập lệnh hoặc mô tả…")
-        self.search_edit.textChanged.connect(self._apply_filter)
-        tool_row.addWidget(lbl)
-        tool_row.addWidget(self.search_edit, 1)
-
-        tool_row.addSpacing(12)
-
         def _btn(text, slot, tip=""):
             b = QPushButton(text)
-            b.setFixedHeight(30)
+            b.setFixedHeight(28)
             if tip:
                 b.setToolTip(tip)
             b.clicked.connect(slot)
             tool_row.addWidget(b)
             return b
 
-        _btn("➕ Thêm",   self._add_cmd,      "Thêm lệnh mới vào dòng máy này")
-        self.btn_edit = _btn("✏ Sửa",    self._edit_cmd,     "Sửa lệnh đang chọn (hoặc nhấp đúp)")
-        self.btn_del  = _btn("🗑 Xóa",    self._delete_cmd,   "Xóa lệnh đang chọn")
+        _btn("➕ Thêm", self._add_cmd, "Thêm lệnh mới vào dòng máy này")
         _btn("↩ Mặc định", self._reset_defaults, "Khôi phục lệnh gốc cho dòng máy này")
+        ll.addLayout(tool_row)
 
-        self.btn_edit.setEnabled(False)
-        self.btn_del.setEnabled(False)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Tìm lệnh hoặc mô tả…")
+        self.search_edit.textChanged.connect(self._apply_filter)
+        ll.addWidget(self.search_edit)
 
-        rl.addLayout(tool_row)
-
-        # Bảng lệnh
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Lệnh", "Mô tả", "Ghi chú"])
-        # Interactive = kéo rộng/hẹp tự do. Cột cuối tự dãn lấp chỗ trống.
-        hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.Interactive)
-        hdr.setSectionResizeMode(1, QHeaderView.Interactive)
-        hdr.setSectionResizeMode(2, QHeaderView.Interactive)
-        hdr.setStretchLastSection(True)
-        hdr.setMinimumSectionSize(60)
-        self.table.setColumnWidth(0, 240)
-        self.table.setColumnWidth(1, 360)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setShowGrid(True)
-        self.table.itemSelectionChanged.connect(self._on_selection_changed)
-        self.table.itemDoubleClicked.connect(self._on_double_click)
-        rl.addWidget(self.table)
+        self.cmd_list = QListWidget()
+        self.cmd_list.setSpacing(1)
+        self.cmd_list.setStyleSheet(
+            f"QListWidget::item:selected {{ background:rgba(255,204,68,40);"
+            f" border-left:3px solid {Colors.ACCENT_PRIMARY}; }}")
+        self.cmd_list.currentItemChanged.connect(self._on_selection_changed)
+        self.cmd_list.itemDoubleClicked.connect(self._on_double_click)
+        ll.addWidget(self.cmd_list, 1)
 
         self.status_lbl = QLabel("")
         self.status_lbl.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:9pt;")
-        rl.addWidget(self.status_lbl)
+        ll.addWidget(self.status_lbl)
+        splitter.addWidget(left)
+
+        # --- Panel phải: chi tiết lệnh đang chọn ---
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(10, 0, 0, 0)
+        rl.setSpacing(6)
+
+        self.detail_name = QLabel("Chọn 1 lệnh bên trái để xem chi tiết")
+        self.detail_name.setFont(_MONO_LG)
+        self.detail_name.setStyleSheet(f"color:{Colors.ACCENT_PRIMARY};")
+        rl.addWidget(self.detail_name)
+
+        self.detail_desc = QLabel("")
+        self.detail_desc.setWordWrap(True)
+        self.detail_desc.setStyleSheet(f"color:{Colors.TEXT_MAIN}; font-size:11px;")
+        rl.addWidget(self.detail_desc)
+
+        self.tag_row = QHBoxLayout()
+        self.tag_row.setSpacing(6)
+        self.tag_row.addStretch()
+        rl.addLayout(self.tag_row)
+
+        params_hdr = QLabel("THAM SỐ")
+        params_hdr.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px; font-weight:bold;")
+        rl.addWidget(params_hdr)
+
+        self.param_form = QFormLayout()
+        rl.addLayout(self.param_form)
+        self.no_param_lbl = QLabel("(lệnh không có tham số)")
+        self.no_param_lbl.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:11px;")
+        rl.addWidget(self.no_param_lbl)
+
+        preview_hdr = QLabel("LỆNH SẼ GỬI")
+        preview_hdr.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px; font-weight:bold;")
+        rl.addWidget(preview_hdr)
+        self.preview_lbl = QLabel("")
+        self.preview_lbl.setWordWrap(True)
+        self.preview_lbl.setStyleSheet(
+            f"background:{Colors.BG_DEEP}; border:1px solid {Colors.BORDER}; "
+            f"color:{Colors.ACCENT_GREEN}; padding:8px 10px; font-family:Consolas;")
+        rl.addWidget(self.preview_lbl)
+        rl.addStretch()
+
+        bottom_bar = QHBoxLayout()
+        self.btn_edit = QPushButton("✏ Sửa lệnh")
+        self.btn_edit.clicked.connect(self._edit_cmd)
+        bottom_bar.addWidget(self.btn_edit)
+        self.btn_del = QPushButton("🗑 Xóa lệnh")
+        self.btn_del.clicked.connect(self._delete_cmd)
+        bottom_bar.addWidget(self.btn_del)
+        bottom_bar.addStretch()
+        self.btn_copy = QPushButton("📋 Copy lệnh")
+        self.btn_copy.setToolTip("Copy chuỗi lệnh (đã điền tham số) vào clipboard")
+        self.btn_copy.clicked.connect(self._copy_command)
+        bottom_bar.addWidget(self.btn_copy)
+        btn_close = QPushButton("Đóng")
+        btn_close.clicked.connect(self.accept)
+        bottom_bar.addWidget(btn_close)
+        rl.addLayout(bottom_bar)
+
+        self.btn_edit.setEnabled(False)
+        self.btn_del.setEnabled(False)
+        self.btn_copy.setEnabled(False)
 
         splitter.addWidget(right)
-        splitter.setSizes([230, 790])
+        splitter.setSizes([340, 810])
         root.addWidget(splitter)
+        self._show_detail(None)
 
     # ------------------------------------------------------------------
     # Danh sách thiết bị (trái)
@@ -273,7 +318,7 @@ class CommandReferenceDialog(QDialog):
                 continue
             hdr = QListWidgetItem(f"  {_CAT_LABEL.get(cat, cat).upper()}")
             hdr.setFlags(Qt.NoItemFlags)
-            hdr.setForeground(QColor(Colors.ACCENT_CYAN))
+            hdr.setForeground(QColor(Colors.ACCENT_PRIMARY))
             f = hdr.font(); f.setBold(True); hdr.setFont(f)
             hdr.setBackground(QColor(Colors.BG_CARD))
             self.dev_list.addItem(hdr)
@@ -299,7 +344,7 @@ class CommandReferenceDialog(QDialog):
             return
         self._model_key = item.data(Qt.UserRole)
         self._rebuild_rows()
-        self._rebuild_table()
+        self._rebuild_list()
 
     def _rebuild_rows(self):
         """Tạo lại self._rows từ built-in + custom_commands.json."""
@@ -322,15 +367,14 @@ class CommandReferenceDialog(QDialog):
         )
 
     # ------------------------------------------------------------------
-    # Bảng lệnh (phải)
+    # Danh sách lệnh (trái) + panel chi tiết (phải)
     # ------------------------------------------------------------------
-    def _rebuild_table(self):
+    def _rebuild_list(self):
         self.search_edit.blockSignals(True)
         self.search_edit.clear()
         self.search_edit.blockSignals(False)
-        self.table.setRowCount(0)
-        self.btn_edit.setEnabled(False)
-        self.btn_del.setEnabled(False)
+        self.cmd_list.clear()
+        self._show_detail(None)
 
         cls = DEVICE_REGISTRY.get(self._model_key, {}).get("cls")
         model_name = getattr(cls, "MODEL_NAME", self._model_key) if cls else self._model_key
@@ -338,14 +382,14 @@ class CommandReferenceDialog(QDialog):
         common_rows = [(s, c) for s, c in self._rows if s == "common"]
         device_rows = [(s, c) for s, c in self._rows if s != "common"]
 
-        self._add_section("Lệnh chung IEEE 488.2  —  áp dụng cho mọi dòng máy")
+        self._add_section_header("LỆNH CHUNG IEEE 488.2")
         for src, cmd in common_rows:
-            self._add_cmd_row(src, cmd)
+            self._add_cmd_item(src, cmd)
 
-        self._add_section(f"Lệnh riêng  —  {model_name}")
+        self._add_section_header(f"LỆNH RIÊNG — {model_name}")
         if device_rows:
             for src, cmd in device_rows:
-                self._add_cmd_row(src, cmd)
+                self._add_cmd_item(src, cmd)
         else:
             self._add_empty_note("(Chưa có lệnh riêng — nhấn ➕ Thêm để bổ sung)")
 
@@ -356,60 +400,50 @@ class CommandReferenceDialog(QDialog):
             f"  =  {n_common + n_device} lệnh"
         )
 
-    def _add_section(self, text: str):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        item = QTableWidgetItem(f"  {text}")
-        item.setBackground(QColor(Colors.BG_CARD))
-        item.setForeground(QColor(Colors.ACCENT_CYAN))
-        f = item.font(); f.setBold(True); item.setFont(f)
+    def _add_section_header(self, text: str):
+        item = QListWidgetItem(f"── {text} ──")
         item.setFlags(Qt.NoItemFlags)
+        f = item.font(); f.setBold(True); item.setFont(f)
+        item.setForeground(QColor(Colors.ACCENT_PRIMARY))
+        item.setBackground(QColor(Colors.BG_CARD))
         item.setData(_ROLE_SRC, None)
-        self.table.setItem(row, 0, item)
-        self.table.setSpan(row, 0, 1, 3)
-        self.table.setRowHeight(row, 30)
+        self.cmd_list.addItem(item)
 
-    def _add_cmd_row(self, src: str, cmd: Cmd):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-
+    def _add_cmd_item(self, src: str, cmd: Cmd):
         is_custom = src == "custom"
         is_override = src in ("common", "device") and self._is_overridden(src, cmd)
-
-        col0 = QTableWidgetItem(f"  {cmd.cmd}")
-        col0.setFont(_MONO)
         if is_custom:
-            col0.setForeground(QColor(Colors.ACCENT_WARN))
+            color = Colors.ACCENT_WARN
         elif is_override:
-            col0.setForeground(QColor(Colors.ACCENT_CYAN))
+            color = Colors.ACCENT_PRIMARY
         else:
-            col0.setForeground(QColor(Colors.ACCENT_GREEN))
-        col0.setData(_ROLE_SRC, src)
-        col0.setData(_ROLE_CMD, cmd)
+            color = Colors.ACCENT_GREEN
 
-        col1 = QTableWidgetItem(cmd.desc)
-        col1.setForeground(QColor(Colors.TEXT_MAIN))
-        if is_custom or is_override:
-            f2 = col1.font(); f2.setItalic(True); col1.setFont(f2)
+        item = QListWidgetItem()
+        item.setData(_ROLE_SRC, src)
+        item.setData(_ROLE_CMD, cmd)
+        self.cmd_list.addItem(item)
 
-        col2 = QTableWidgetItem(cmd.note)
-        col2.setForeground(QColor(Colors.TEXT_DIM))
-        col2.setFont(QFont("Segoe UI", 8))
-
-        self.table.setItem(row, 0, col0)
-        self.table.setItem(row, 1, col1)
-        self.table.setItem(row, 2, col2)
-        self.table.setRowHeight(row, 26)
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setSpacing(1)
+        name_lbl = QLabel(cmd.cmd)
+        name_lbl.setFont(_MONO)
+        name_lbl.setStyleSheet(f"color:{color};")
+        lay.addWidget(name_lbl)
+        desc_lbl = QLabel(cmd.desc)
+        desc_lbl.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;")
+        lay.addWidget(desc_lbl)
+        item.setSizeHint(w.sizeHint())
+        self.cmd_list.setItemWidget(item, w)
 
     def _add_empty_note(self, text: str):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        item = QTableWidgetItem(f"  {text}")
+        item = QListWidgetItem(text)
         item.setForeground(QColor(Colors.TEXT_DIM))
         item.setFlags(Qt.NoItemFlags)
         item.setData(_ROLE_SRC, None)
-        self.table.setItem(row, 0, item)
-        self.table.setSpan(row, 0, 1, 3)
+        self.cmd_list.addItem(item)
 
     def _is_overridden(self, src: str, cmd: Cmd) -> bool:
         if src == "common":
@@ -422,49 +456,122 @@ class CommandReferenceDialog(QDialog):
     # Tìm kiếm
     # ------------------------------------------------------------------
     def _apply_filter(self, text: str):
+        # Header/ghi chú trống (_ROLE_CMD is None) LUÔN hiện — chỉ lọc dòng lệnh
+        # thật, giống hành vi bảng cũ (không ẩn tiêu đề nhóm dù rỗng kết quả).
         text_l = text.lower()
-        for row in range(self.table.rowCount()):
-            if self.table.columnSpan(row, 0) > 1:
-                self.table.setRowHidden(row, False)
+        for i in range(self.cmd_list.count()):
+            item = self.cmd_list.item(i)
+            cmd = item.data(_ROLE_CMD)
+            if cmd is None:
+                item.setHidden(False)
                 continue
-            c0 = self.table.item(row, 0)
-            c1 = self.table.item(row, 1)
-            c2 = self.table.item(row, 2)
-            match = (
-                (c0 and text_l in c0.text().lower()) or
-                (c1 and text_l in c1.text().lower()) or
-                (c2 and text_l in c2.text().lower())
-            )
-            self.table.setRowHidden(row, not match if text_l else False)
+            match = not text_l or text_l in cmd.cmd.lower() or text_l in cmd.desc.lower()
+            item.setHidden(not match)
 
     # ------------------------------------------------------------------
-    # Selection
+    # Selection + panel chi tiết
     # ------------------------------------------------------------------
-    def _on_selection_changed(self):
-        row = self.table.currentRow()
-        src = self._row_src(row)
+    def _on_selection_changed(self, current, _prev=None):
+        src = current.data(_ROLE_SRC) if current is not None else None
+        cmd = current.data(_ROLE_CMD) if current is not None else None
         self.btn_edit.setEnabled(src is not None)
         self.btn_del.setEnabled(src is not None)
+        self._show_detail(cmd, src)
 
     def _on_double_click(self, item):
-        if self._row_src(item.row()) is not None:
+        if item.data(_ROLE_SRC) is not None:
             self._edit_cmd()
 
-    def _row_src(self, row: int) -> str | None:
-        if row < 0:
-            return None
-        item = self.table.item(row, 0)
-        if item is None:
-            return None
-        return item.data(_ROLE_SRC)
+    def _current_src(self) -> str | None:
+        item = self.cmd_list.currentItem()
+        return item.data(_ROLE_SRC) if item is not None else None
 
-    def _row_cmd(self, row: int) -> Cmd | None:
-        if row < 0:
-            return None
-        item = self.table.item(row, 0)
-        if item is None:
-            return None
-        return item.data(_ROLE_CMD)
+    def _current_cmd(self) -> Cmd | None:
+        item = self.cmd_list.currentItem()
+        return item.data(_ROLE_CMD) if item is not None else None
+
+    def _show_detail(self, cmd: Cmd | None, src: str | None = None):
+        while self.param_form.rowCount():
+            self.param_form.removeRow(0)
+        self._param_widgets.clear()
+
+        if cmd is None:
+            self.detail_name.setText("Chọn 1 lệnh bên trái để xem chi tiết")
+            self.detail_desc.setText("")
+            self._clear_tags()
+            self._current_template = ""
+            self.no_param_lbl.setVisible(True)
+            self.preview_lbl.setText("")
+            self.btn_copy.setEnabled(False)
+            return
+
+        self.detail_name.setText(cmd.cmd)
+        self.detail_desc.setText(cmd.desc + (f"  ({cmd.note})" if cmd.note else ""))
+
+        template, params, is_query = parse_cmd(cmd)
+        self._current_template = template
+        cls = DEVICE_REGISTRY.get(self._model_key, {}).get("cls")
+        model_name = getattr(cls, "MODEL_NAME", self._model_key) if cls else self._model_key
+        device_tag = "Lệnh chung" if src == "common" else model_name
+        self._set_tags(device_tag, "Query" if is_query else "Set")
+
+        self.no_param_lbl.setVisible(not params)
+        for p in params:
+            if p.ptype == "enum":
+                w = QComboBox()
+                for c in p.choices:
+                    w.addItem(c, c)
+                w.currentIndexChanged.connect(self._update_preview)
+            else:
+                w = QLineEdit(str(p.default))
+                w.textChanged.connect(self._update_preview)
+            label = p.label + (f" ({p.unit})" if p.unit else "") + ":"
+            self.param_form.addRow(label, w)
+            self._param_widgets[p.name] = w
+
+        self.btn_copy.setEnabled(True)
+        self._update_preview()
+
+    def _clear_tags(self):
+        while self.tag_row.count() > 1:   # giữ lại addStretch() ở cuối
+            item = self.tag_row.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _set_tags(self, device_text: str, type_text: str):
+        self._clear_tags()
+        dev_tag = QLabel(device_text)
+        dev_tag.setStyleSheet(
+            "color:#4488ff; border:1px solid #1a3a7a; background:#060e20;"
+            " padding:2px 8px; font-size:10px; font-weight:bold;")
+        type_tag = QLabel(type_text)
+        type_tag.setStyleSheet(
+            "color:#aa88ff; border:1px solid #4a2a7a; background:#0a0618;"
+            " padding:2px 8px; font-size:10px; font-weight:bold;")
+        self.tag_row.insertWidget(0, dev_tag)
+        self.tag_row.insertWidget(1, type_tag)
+
+    def _update_preview(self):
+        if not self._current_template:
+            self.preview_lbl.setText("")
+            return
+        sub = {}
+        for name, w in self._param_widgets.items():
+            if isinstance(w, QComboBox):
+                sub[name] = w.currentData()
+            else:
+                sub[name] = w.text().strip() or "…"
+        try:
+            self.preview_lbl.setText(self._current_template.format(**sub))
+        except (KeyError, ValueError):
+            self.preview_lbl.setText(self._current_template)
+
+    def _copy_command(self):
+        text = self.preview_lbl.text()
+        if text:
+            QApplication.clipboard().setText(text)
+            self.status_lbl.setText(f"Đã copy: {text}")
 
     # ------------------------------------------------------------------
     # Thêm lệnh
@@ -478,15 +585,14 @@ class CommandReferenceDialog(QDialog):
         new_cmd = dlg.get_cmd()
         self._rows.append(("custom", new_cmd))
         self._persist_device_rows()
-        self._rebuild_table()
+        self._rebuild_list()
 
     # ------------------------------------------------------------------
     # Sửa lệnh
     # ------------------------------------------------------------------
     def _edit_cmd(self):
-        row = self.table.currentRow()
-        src = self._row_src(row)
-        old_cmd = self._row_cmd(row)
+        src = self._current_src()
+        old_cmd = self._current_cmd()
         if src is None or old_cmd is None:
             return
 
@@ -507,15 +613,14 @@ class CommandReferenceDialog(QDialog):
         else:
             self._persist_device_rows()
 
-        self._rebuild_table()
+        self._rebuild_list()
 
     # ------------------------------------------------------------------
     # Xóa lệnh
     # ------------------------------------------------------------------
     def _delete_cmd(self):
-        row = self.table.currentRow()
-        src = self._row_src(row)
-        old_cmd = self._row_cmd(row)
+        src = self._current_src()
+        old_cmd = self._current_cmd()
         if src is None or old_cmd is None:
             return
 
@@ -536,7 +641,7 @@ class CommandReferenceDialog(QDialog):
         else:
             self._persist_device_rows()
 
-        self._rebuild_table()
+        self._rebuild_list()
 
     # ------------------------------------------------------------------
     # Khôi phục mặc định
@@ -559,7 +664,7 @@ class CommandReferenceDialog(QDialog):
         self._custom.pop(self._model_key, None)
         _save_custom(self._custom)
         self._rebuild_rows()
-        self._rebuild_table()
+        self._rebuild_list()
 
     # ------------------------------------------------------------------
     # Lưu JSON

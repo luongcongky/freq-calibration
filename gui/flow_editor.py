@@ -76,7 +76,7 @@ class EdgeItem(QGraphicsPathItem):
         self.src = src
         self.dst = dst
         self.setZValue(-1)
-        self.setPen(QPen(QColor(Colors.ACCENT_CYAN), 2))
+        self.setPen(QPen(QColor(Colors.ACCENT_PRIMARY), 2))
         src.edges.append(self)
         dst.edges.append(self)
         # Tự thêm vào scene của node nguồn (nếu chưa) để dây HIỂN THỊ.
@@ -155,7 +155,7 @@ class NodeItem(QGraphicsItem):
         # dòng loại — goto dùng màu amber nổi bật
         type_color = QColor(Colors.ACCENT_WARN) if is_goto else QColor(Colors.TEXT_DIM)
         p.setPen(type_color)
-        f_type = QFont("Segoe UI", 8)
+        f_type = QFont("Consolas", 8)
         if is_goto:
             f_type.setBold(True)
         p.setFont(f_type)
@@ -163,13 +163,13 @@ class NodeItem(QGraphicsItem):
                    Qt.AlignVCenter | Qt.AlignLeft, f"{icon}  {type_label}")
         # dòng tên (đậm, trắng)
         p.setPen(QColor(Colors.TEXT_MAIN))
-        f = QFont("Segoe UI", 10); f.setBold(True); p.setFont(f)
+        f = QFont("Consolas", 10); f.setBold(True); p.setFont(f)
         p.drawText(QRectF(12, 28, NODE_W - 16, 28),
                    Qt.AlignVCenter | Qt.AlignLeft, self.subtitle)
 
         # cổng vào (trái) + ra (phải)
         p.setPen(QPen(QColor(Colors.BORDER), 1))
-        p.setBrush(QBrush(QColor(Colors.ACCENT_CYAN)))
+        p.setBrush(QBrush(QColor(Colors.ACCENT_PRIMARY)))
         p.drawEllipse(QPointF(0, NODE_H / 2), PORT_R, PORT_R)
         p.drawEllipse(QPointF(NODE_W, NODE_H / 2), PORT_R, PORT_R)
 
@@ -179,7 +179,7 @@ class NodeItem(QGraphicsItem):
         elif self._run_state == "error":
             bc = QColor(Colors.ACCENT_RED); sym = "✕"
         elif self._run_state == "running":
-            bc = QColor(Colors.ACCENT_CYAN)
+            bc = QColor(Colors.ACCENT_PRIMARY)
             bc.setAlphaF(0.85 if self._run_pulse else 0.35)
             sym = "…"
         else:
@@ -190,7 +190,7 @@ class NodeItem(QGraphicsItem):
             p.setBrush(QBrush(bc)); p.setPen(Qt.NoPen)
             p.drawEllipse(QPointF(bx, by), br, br)
             p.setPen(QColor(Colors.BG_WINDOW))
-            f2 = QFont("Segoe UI", 7); f2.setBold(True); p.setFont(f2)
+            f2 = QFont("Consolas", 7); f2.setBold(True); p.setFont(f2)
             p.drawText(QRectF(bx - br, by - br, 2 * br, 2 * br), Qt.AlignCenter, sym)
 
     def itemChange(self, change, value):
@@ -263,7 +263,7 @@ class FlowScene(QGraphicsScene):
             if src is not None:
                 self._temp_src = src
                 self._temp_edge = QGraphicsPathItem()
-                self._temp_edge.setPen(QPen(QColor(Colors.ACCENT_CYAN), 2, Qt.DashLine))
+                self._temp_edge.setPen(QPen(QColor(Colors.ACCENT_PRIMARY), 2, Qt.DashLine))
                 self._temp_edge.setZValue(-1)
                 self.addItem(self._temp_edge)
                 ev.accept()
@@ -422,9 +422,9 @@ class Stepper(QWidget):
                 ring = QColor(Colors.ACCENT_GREEN)
                 num_col = ring; lbl_col = ring
             elif cur:
-                ring = QColor(Colors.ACCENT_CYAN)
+                ring = QColor(Colors.ACCENT_PRIMARY)
                 num_col = ring; lbl_col = ring
-                glow = QColor(Colors.ACCENT_CYAN); glow.setAlphaF(0.12)
+                glow = QColor(Colors.ACCENT_PRIMARY); glow.setAlphaF(0.12)
                 p.setBrush(QBrush(glow)); p.setPen(Qt.NoPen)
                 p.drawEllipse(QPointF(x, cy), r + 8, r + 8)
             else:
@@ -435,15 +435,15 @@ class Stepper(QWidget):
             p.setPen(QPen(ring, 3))
             p.drawEllipse(QPointF(x, cy), r, r)
             p.setPen(num_col)
-            f = QFont("Segoe UI", 11); f.setBold(True); p.setFont(f)
+            f = QFont("Consolas", 11); f.setBold(True); p.setFont(f)
             p.drawText(QRectF(x - r, cy - r, 2 * r, 2 * r), Qt.AlignCenter, str(i + 1))
             p.setPen(lbl_col)
-            p.setFont(QFont("Segoe UI", 9))
+            p.setFont(QFont("Consolas", 9))
             p.drawText(QRectF(x - 90, cy + r + 6, 180, 18), Qt.AlignCenter, label)
             if not ena:
                 lock_col = QColor(Colors.TEXT_DIM); lock_col.setAlphaF(0.4)
                 p.setPen(lock_col)
-                p.setFont(QFont("Segoe UI", 8))
+                p.setFont(QFont("Consolas", 8))
                 p.drawText(QRectF(x - 90, cy + r + 22, 180, 14), Qt.AlignCenter, "🔒 Cần kết nối")
 
 
@@ -479,7 +479,7 @@ class ScenarioPickerDialog(QDialog):
             f"QListWidget {{ background:{Colors.BG_INPUT}; color:{Colors.TEXT_MAIN};"
             f" border:1px solid {Colors.BORDER}; border-radius:6px; }}"
             f"QListWidget::item {{ padding:6px 10px; }}"
-            f"QListWidget::item:selected {{ background:{Colors.ACCENT_CYAN};"
+            f"QListWidget::item:selected {{ background:{Colors.ACCENT_PRIMARY};"
             f" color:{Colors.BG_WINDOW}; }}")
         self._list.itemDoubleClicked.connect(self._accept_item)
         lay.addWidget(self._list, 1)
@@ -503,7 +503,7 @@ class ScenarioPickerDialog(QDialog):
         browse.clicked.connect(self._browse)
         ok_btn = QPushButton("✓ Nạp kịch bản")
         ok_btn.setStyleSheet(
-            f"background:{Colors.ACCENT_CYAN}; color:{Colors.BG_WINDOW};"
+            f"background:{Colors.ACCENT_PRIMARY}; color:{Colors.BG_WINDOW};"
             f" font-weight:bold; border:none; border-radius:6px; padding:7px 16px;")
         ok_btn.clicked.connect(self._accept_selected)
         cancel = QPushButton("Hủy")
@@ -628,7 +628,7 @@ class FlowEditorWindow(QMainWindow):
         title.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-weight:bold; font-size:11px;")
         self._left_badge = QLabel("0 Nodes")
         self._left_badge.setStyleSheet(
-            f"color:{Colors.ACCENT_CYAN}; background:{Colors.BG_CARD};"
+            f"color:{Colors.ACCENT_PRIMARY}; background:{Colors.BG_CARD};"
             f" border:1px solid {Colors.BORDER}; border-radius:9px; padding:2px 8px; font-size:10px;")
         head.addWidget(title); head.addStretch(); head.addWidget(self._left_badge)
         lay.addLayout(head)
@@ -778,7 +778,7 @@ class FlowEditorWindow(QMainWindow):
 
         self.btn_save = QPushButton("Lưu cấu hình Node")
         self.btn_save.setStyleSheet(
-            f"background:{Colors.ACCENT_CYAN}; color:{Colors.BG_WINDOW}; font-weight:bold;"
+            f"background:{Colors.ACCENT_PRIMARY}; color:{Colors.BG_WINDOW}; font-weight:bold;"
             f" border:none; border-radius:6px; padding:10px;")
         self.btn_save.clicked.connect(self._save_node)
         lay.addSpacing(6); lay.addWidget(self.btn_save)

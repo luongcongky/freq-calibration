@@ -1,6 +1,6 @@
 # Thiết kế Giao diện (GUI Design)
 
-Giao diện theo phong cách **Engineering Dashboard** (nền tối, accent cyan), gồm 2
+Giao diện theo phong cách **HUD kỹ thuật** (nền navy đậm, accent vàng gold), gồm 2
 cửa sổ chính + 1 module theme dùng chung. Toàn bộ PyQt5.
 
 > Dashboard `.txt` cũ (SMW200A + CNT-90XL) đã được loại bỏ. Màn hình chính nay là
@@ -10,7 +10,7 @@ cửa sổ chính + 1 module theme dùng chung. Toàn bộ PyQt5.
 
 ## 1. `gui/theme.py` — Theme dùng chung
 
-- **`Colors`**: bảng màu (BG_WINDOW, BG_CARD, ACCENT_CYAN, ACCENT_GREEN/RED/WARN…).
+- **`Colors`**: bảng màu (BG_WINDOW, BG_CARD, ACCENT_PRIMARY, ACCENT_GREEN/RED/WARN…).
 - **`build_global_qss()`**: stylesheet **toàn cục** đặt lên `QApplication`, đảm bảo
   mọi popup hệ thống (QInputDialog, QMessageBox, QFileDialog và **dropdown của
   combobox**) đều theo theme tối — tránh nền trắng mặc định.

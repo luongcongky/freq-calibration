@@ -9,9 +9,63 @@ from __future__ import annotations
 
 from PyQt5.QtCore import Qt, QRect, QRectF, pyqtSignal
 from PyQt5.QtGui import QPainter, QPen, QColor, QFont
-from PyQt5.QtWidgets import QWidget, QHeaderView, QStyle, QStyleOptionButton
+from PyQt5.QtWidgets import QWidget, QHeaderView, QStyle, QStyleOptionButton, QLabel
 
 from gui.theme import Colors
+
+
+# ============================================================================
+# Badge trạng thái dạng pill — QLabel[badge="pass|fail|run|warn|pending"]
+# (style thật khai trong gui/theme.py::build_global_qss). Dùng chung cho cột
+# Trạng thái ở Bước 2 (session_manager.py) và cây Scenario Builder
+# (scenario_grid.py) — tránh mỗi nơi tự suy diễn 1 kiểu map màu->badge riêng.
+# ============================================================================
+
+_BADGE_KIND_BY_COLOR = {
+    Colors.ACCENT_GREEN:   "pass",
+    Colors.ACCENT_RED:     "fail",
+    Colors.ACCENT_PRIMARY: "run",
+    Colors.ACCENT_WARN:    "warn",
+}
+
+
+def badge_kind_for_color(color: str) -> str:
+    return _BADGE_KIND_BY_COLOR.get(color, "pending")
+
+
+def set_badge(label: QLabel, text: str, color: str):
+    """Cập nhật 1 QLabel[badge=...] hiện có — đổi property "badge" rồi bắt Qt
+    tính lại style (Qt không tự re-polish khi 1 dynamic property QSS đang
+    dựa vào bị đổi giá trị sau khi widget đã hiển thị)."""
+    label.setText(text)
+    kind = badge_kind_for_color(color)
+    label.setProperty("badge", kind)
+    label.style().unpolish(label)
+    label.style().polish(label)
+
+
+# ============================================================================
+# Viền góc trang trí (corner bracket) — mô phỏng .corner.tl/tr/bl/br của
+# mockup HUD mà không cần frameless window: vẽ đè lên nội dung, dùng trong
+# paintEvent() của dialog: super().paintEvent(ev); paint_corner_brackets(self).
+# ============================================================================
+
+def paint_corner_brackets(widget: QWidget, length: int = 10,
+                          color: str = Colors.ACCENT_PRIMARY,
+                          corners: str = "tl,tr,bl,br"):
+    p = QPainter(widget)
+    p.setPen(QPen(QColor(color), 1))
+    w, h = widget.width(), widget.height()
+    wanted = set(corners.split(","))
+    if "tl" in wanted:
+        p.drawLine(0, 0, length, 0); p.drawLine(0, 0, 0, length)
+    if "tr" in wanted:
+        p.drawLine(w - 1 - length, 0, w - 1, 0); p.drawLine(w - 1, 0, w - 1, length)
+    if "bl" in wanted:
+        p.drawLine(0, h - 1 - length, 0, h - 1); p.drawLine(0, h - 1, length, h - 1)
+    if "br" in wanted:
+        p.drawLine(w - 1 - length, h - 1, w - 1, h - 1); p.drawLine(w - 1, h - 1 - length, w - 1, h - 1)
+    p.end()
 
 
 # Tooltip mô tả cú pháp biểu thức (dùng cho ô Biểu thức/nguồn ở Classic & Digital).
@@ -134,10 +188,10 @@ class ThemeToggle(QWidget):
         hw = r.width() / 2
         ax = r.left() + (hw if self._checked else 0)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(Colors.ACCENT_CYAN))
+        p.setBrush(QColor(Colors.ACCENT_PRIMARY))
         p.drawRoundedRect(QRectF(ax, r.top(), hw, r.height()), rad, rad)
         # nhãn
-        p.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        p.setFont(QFont("Consolas", 9, QFont.Bold))
         lrect = QRectF(r.left(), r.top(), hw, r.height())
         rrect = QRectF(r.left() + hw, r.top(), hw, r.height())
         p.setPen(QColor(Colors.BG_WINDOW if not self._checked else Colors.TEXT_DIM))

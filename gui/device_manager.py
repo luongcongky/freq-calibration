@@ -21,9 +21,10 @@ import logging
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget,
     QTableWidgetItem, QComboBox, QHeaderView, QFileDialog, QMessageBox,
-    QAbstractItemView, QInputDialog, QSpinBox,
+    QAbstractItemView, QInputDialog, QSpinBox, QFrame, QWidget,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QColor
 
 from drivers import DEVICE_REGISTRY
 from core.discovery import (
@@ -37,9 +38,19 @@ from core.profile import ConnectionProfile, ProfileEntry
 logger = logging.getLogger(__name__)
 
 from gui.theme import Colors
+from gui.widgets import set_badge, paint_corner_brackets
 
+_COL_NUM    = 0
+_COL_ADDR   = 1
+_COL_IDN    = 2
+_COL_MATCH  = 3
+_COL_ASSIGN = 4
+_COL_LABEL  = 5
+_COL_SERIAL = 6
+_COL_TEST   = 7
+_COL_STATUS = 8
 
-DM_COLS = ["Địa chỉ VISA", "*IDN?", "Nhận diện", "Gán model",
+DM_COLS = ["#", "Địa chỉ VISA", "*IDN?", "Nhận diện", "Gán model",
            "Tên gợi nhớ", "Serial", "Kiểm tra", "Trạng thái"]
 
 # Danh sách model cho combo (kèm nhóm để dễ chọn).
@@ -77,51 +88,48 @@ class DeviceManagerDialog(QDialog):
                  profile: ConnectionProfile | None = None):
         super().__init__(parent)
         self.setWindowTitle("Quản lý thiết bị — gán địa chỉ VISA")
-        self.setMinimumSize(980, 560)
+        self.setMinimumSize(1150, 680)
         self.profile = profile or ConnectionProfile()
         self._scan_worker: ScanWorker | None = None
 
-        self.setStyleSheet(
-            f"QDialog {{ background:{Colors.BG_WINDOW}; color:{Colors.TEXT_MAIN};"
-            f" font-family:'Segoe UI'; }}"
-            f"QLabel {{ color:{Colors.TEXT_MAIN}; }}"
-            f"QPushButton {{ background:{Colors.BG_CARD}; border:1px solid {Colors.BORDER};"
-            f" border-radius:6px; padding:7px 12px; }}"
-            f"QPushButton:hover {{ border-color:{Colors.ACCENT_CYAN}; }}"
-            f"QTableWidget {{ background:{Colors.BG_INPUT}; gridline-color:{Colors.BORDER};"
-            f" border:1px solid {Colors.BORDER}; }}"
-            f"QHeaderView::section {{ background:{Colors.BG_CARD}; color:{Colors.TEXT_DIM};"
-            f" border:none; border-bottom:2px solid {Colors.BORDER};"
-            f" border-right:1px solid {Colors.BORDER}; padding:7px; }}"
-            f"QComboBox, QLineEdit {{ background:{Colors.BG_CARD}; color:{Colors.TEXT_MAIN};"
-            f" border:1px solid {Colors.BORDER}; border-radius:4px; padding:4px; }}"
-        )
         self._build_ui()
 
         self.spn_delay.setValue(int(getattr(self.profile, "cmd_delay_ms", 100)))
         if self.profile.entries:
             self._load_profile_into_table(self.profile)
 
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        paint_corner_brackets(self)
+
     # ------------------------------------------------------------------
 
     def _build_ui(self):
         root = QVBoxLayout(self)
+        root.setSpacing(8)
 
         # Hướng dẫn ngắn
+        tip_frame = QFrame()
+        tip_frame.setStyleSheet(
+            f"background:{Colors.BG_DEEP}; border-bottom:1px solid {Colors.BORDER};")
+        tip_lay = QVBoxLayout(tip_frame)
+        tip_lay.setContentsMargins(12, 7, 12, 7)
         tip = QLabel(
-            "Cắm thiết bị vào máy tính rồi bấm <b>Scan &amp; Identify</b> để phần mềm "
-            "tự nhận diện. Máy đời cũ không tự khai báo được? Dùng "
-            "<b>Wizard cắm-từng-máy</b>."
+            f"Cắm thiết bị vào máy tính rồi bấm <span style='color:{Colors.ACCENT_PRIMARY};"
+            f"font-weight:bold;'>Scan &amp; Identify</span> để phần mềm tự nhận diện. "
+            f"Máy đời cũ không tự khai báo được? Dùng <span style='color:{Colors.ACCENT_PRIMARY};"
+            f"font-weight:bold;'>Wizard cắm-từng-máy</span>."
         )
         tip.setWordWrap(True)
         tip.setStyleSheet(f"color:{Colors.TEXT_DIM};")
-        root.addWidget(tip)
+        tip_lay.addWidget(tip)
+        root.addWidget(tip_frame)
 
         # Hàng nút
         bar = QHBoxLayout()
         self.btn_scan = QPushButton("🔍 Scan & Identify")
         self.btn_scan.setStyleSheet(
-            f"background:{Colors.ACCENT_CYAN}; color:{Colors.BG_WINDOW};"
+            f"background:{Colors.ACCENT_GREEN}; color:{Colors.BG_WINDOW};"
             f" font-weight:bold; border:none; border-radius:6px; padding:8px 14px;")
         self.btn_scan.clicked.connect(self._scan)
         self.btn_wizard = QPushButton("🔌 Wizard cắm-từng-máy")
@@ -138,7 +146,9 @@ class DeviceManagerDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Interactive)
-        hdr.setSectionResizeMode(1, QHeaderView.Stretch)   # *IDN?
+        hdr.setSectionResizeMode(_COL_NUM, QHeaderView.Fixed)
+        self.table.setColumnWidth(_COL_NUM, 36)
+        hdr.setSectionResizeMode(_COL_IDN, QHeaderView.Stretch)
         root.addWidget(self.table)
 
         # Hàng dưới: profile + xác nhận
@@ -163,7 +173,7 @@ class DeviceManagerDialog(QDialog):
         self.lbl_status = QLabel("")
         self.lbl_status.setStyleSheet(f"color:{Colors.TEXT_DIM};")
         bottom.addWidget(self.lbl_status)
-        btn_ok = QPushButton("✔ Áp dụng")
+        btn_ok = QPushButton("✔ Xác nhận")
         btn_ok.setStyleSheet(
             f"background:{Colors.ACCENT_GREEN}; color:{Colors.BG_WINDOW};"
             f" font-weight:bold; border:none; border-radius:6px; padding:8px 16px;")
@@ -187,21 +197,35 @@ class DeviceManagerDialog(QDialog):
         r = self.table.rowCount()
         self.table.insertRow(r)
 
+        num_it = QTableWidgetItem(str(r + 1))
+        num_it.setFlags(num_it.flags() & ~Qt.ItemIsEditable)
+        num_it.setForeground(QColor(Colors.TEXT_DIM))
+        num_it.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(r, _COL_NUM, num_it)
+
         addr_it = QTableWidgetItem(dev.address)
         addr_it.setFlags(addr_it.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(r, 0, addr_it)
+        self.table.setItem(r, _COL_ADDR, addr_it)
 
-        idn_it = QTableWidgetItem(dev.idn or "—")
-        idn_it.setFlags(idn_it.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(r, 1, idn_it)
+        idn_w = QWidget()
+        idn_lay = QHBoxLayout(idn_w)
+        idn_lay.setContentsMargins(4, 1, 4, 1)
+        idn_lay.setAlignment(Qt.AlignCenter)
+        idn_lbl = QLabel()
+        has_idn = self._has_idn(dev.idn)
+        set_badge(idn_lbl, "OK" if has_idn else "—",
+                 Colors.ACCENT_GREEN if has_idn else Colors.TEXT_DIM)
+        idn_lbl.setToolTip(dev.idn or "")
+        idn_lay.addWidget(idn_lbl)
+        self.table.setCellWidget(r, _COL_IDN, idn_w)
 
         rec_it = QTableWidgetItem(dev.display_model())
         rec_it.setFlags(rec_it.flags() & ~Qt.ItemIsEditable)
         if dev.is_matched:
-            rec_it.setForeground(Qt.green)
+            rec_it.setForeground(QColor(Colors.ACCENT_GREEN))
         elif dev.idn:
-            rec_it.setForeground(Qt.yellow)
-        self.table.setItem(r, 2, rec_it)
+            rec_it.setForeground(QColor(Colors.ACCENT_WARN))
+        self.table.setItem(r, _COL_MATCH, rec_it)
 
         # combo gán model
         combo = QComboBox()
@@ -211,19 +235,33 @@ class DeviceManagerDialog(QDialog):
         idx = combo.findData(target)
         if idx >= 0:
             combo.setCurrentIndex(idx)
-        self.table.setCellWidget(r, 3, combo)
+        self.table.setCellWidget(r, _COL_ASSIGN, combo)
 
-        self.table.setItem(r, 4, QTableWidgetItem(label))           # Tên gợi nhớ (sửa được)
+        self.table.setItem(r, _COL_LABEL, QTableWidgetItem(label))   # Tên gợi nhớ (sửa được)
         ser_it = QTableWidgetItem(dev.serial)
-        self.table.setItem(r, 5, ser_it)
+        self.table.setItem(r, _COL_SERIAL, ser_it)
 
         # nút test
         btn = QPushButton("🧪 Test")
         btn.clicked.connect(lambda _=False, row=r: self._test_row(row))
-        self.table.setCellWidget(r, 6, btn)
+        self.table.setCellWidget(r, _COL_TEST, btn)
 
-        self.table.setItem(r, 7, QTableWidgetItem(""))
+        status_w = QWidget()
+        status_lay = QHBoxLayout(status_w)
+        status_lay.setContentsMargins(4, 1, 4, 1)
+        status_lay.setAlignment(Qt.AlignCenter)
+        status_lbl = QLabel()
+        set_badge(status_lbl, "Chưa kiểm tra", Colors.TEXT_DIM)
+        status_lay.addWidget(status_lbl)
+        self.table.setCellWidget(r, _COL_STATUS, status_w)
         return r
+
+    def _row_idn(self, r: int) -> str:
+        """Đọc lại *IDN? thật (không phải chữ "OK"/"—" hiển thị trên badge) —
+        lưu trong tooltip của badge lúc dựng dòng, xem _add_row()."""
+        w = self.table.cellWidget(r, _COL_IDN)
+        lbl = w.findChild(QLabel) if w else None
+        return lbl.toolTip() if lbl else ""
 
     def _clear_rows(self):
         self.table.setRowCount(0)
@@ -358,23 +396,28 @@ class DeviceManagerDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _test_row(self, r: int):
-        combo: QComboBox = self.table.cellWidget(r, 3)
+        combo: QComboBox = self.table.cellWidget(r, _COL_ASSIGN)
         model_key = combo.currentData()
-        address = self.table.item(r, 0).text()
+        address = self.table.item(r, _COL_ADDR).text()
         if not model_key:
             self._set_status(r, "Chưa gán model", Colors.ACCENT_WARN)
             return
         res = test_connection(model_key, address, mock=False)
         if res.ok:
-            self._set_status(r, f"✅ OK: {res.model}", Colors.ACCENT_GREEN)
+            self._set_status(r, f"OK: {res.model}", Colors.ACCENT_GREEN)
         else:
-            self._set_status(r, f"❌ {res.error[:40]}", Colors.ACCENT_RED)
+            self._set_status(r, f"{res.error[:40]}", Colors.ACCENT_RED, tooltip=res.error)
+            if "NI-VISA" in res.error:
+                QMessageBox.warning(self, "Thiếu driver NI-VISA", res.error)
 
-    def _set_status(self, r: int, text: str, color: str):
-        it = QTableWidgetItem(text)
-        it.setForeground(Qt.green if color == Colors.ACCENT_GREEN
-                         else (Qt.red if color == Colors.ACCENT_RED else Qt.yellow))
-        self.table.setItem(r, 7, it)
+    def _set_status(self, r: int, text: str, color: str, tooltip: str = ""):
+        w = self.table.cellWidget(r, _COL_STATUS)
+        lbl = w.findChild(QLabel) if w else None
+        if lbl is None:
+            return
+        set_badge(lbl, text, color)
+        if tooltip:
+            lbl.setToolTip(tooltip)
 
     # ------------------------------------------------------------------
     # Profile
@@ -384,16 +427,16 @@ class DeviceManagerDialog(QDialog):
         prof = ConnectionProfile(name=self.profile.name,
                                  cmd_delay_ms=int(self.spn_delay.value()))
         for r in range(self.table.rowCount()):
-            combo: QComboBox = self.table.cellWidget(r, 3)
+            combo: QComboBox = self.table.cellWidget(r, _COL_ASSIGN)
             model_key = combo.currentData()
             if not model_key:
                 continue
             prof.set_entry(ProfileEntry(
                 model_key=model_key,
-                address=self.table.item(r, 0).text(),
-                label=(self.table.item(r, 4).text() if self.table.item(r, 4) else ""),
-                serial=(self.table.item(r, 5).text() if self.table.item(r, 5) else ""),
-                idn=(self.table.item(r, 1).text() if self.table.item(r, 1) else ""),
+                address=self.table.item(r, _COL_ADDR).text(),
+                label=(self.table.item(r, _COL_LABEL).text() if self.table.item(r, _COL_LABEL) else ""),
+                serial=(self.table.item(r, _COL_SERIAL).text() if self.table.item(r, _COL_SERIAL) else ""),
+                idn=self._row_idn(r),
             ))
         return prof
 

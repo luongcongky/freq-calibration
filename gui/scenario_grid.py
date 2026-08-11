@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QPushButton, QLabel, QDialog,
     QListWidget, QListWidgetItem, QComboBox, QLineEdit, QFormLayout,
     QDialogButtonBox, QHeaderView, QFileDialog, QMessageBox,
-    QAbstractItemView, QTextEdit, QSpinBox, QFrame,
+    QAbstractItemView, QTextEdit, QSpinBox, QFrame, QSplitter,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPointF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF, QPixmap, QIcon
@@ -40,7 +40,7 @@ from core.commands import (
 logger = logging.getLogger(__name__)
 
 from gui.theme import Colors, build_global_qss
-from gui.widgets import ThemeToggle, EXPR_HELP, CheckBoxHeader
+from gui.widgets import ThemeToggle, EXPR_HELP, CheckBoxHeader, set_badge, paint_corner_brackets
 
 COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
 
@@ -96,6 +96,10 @@ class ScenarioTree(QTreeWidget):
             painter.drawPolygon(QPolygonF(pts))
             painter.restore()
 
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        paint_corner_brackets(self, corners="tl,tr")
+
 
 # ===========================================================================
 # Dialog: soạn bước đơn
@@ -108,8 +112,8 @@ class StepEditorDialog(QDialog):
         self._connected = connected_keys or set()
         self._labels = labels or []          # tên các điểm thao tác (label) cấp ngoài cùng
         self.setWindowTitle("Soạn bước")
-        self.setMinimumWidth(560)
-        self.setMinimumHeight(520)
+        self.setMinimumWidth(1000)
+        self.setMinimumHeight(620)
         self._param_widgets: dict[str, object] = {}
         self._parsed_params: list = []
         self._current_template: str = ""
@@ -119,25 +123,32 @@ class StepEditorDialog(QDialog):
         root = QVBoxLayout(self)
         root.setSpacing(6)
 
-        # Chọn loại bước: lệnh thiết bị (SCPI) hoặc biến/tính toán.
+        # Chọn loại bước: lệnh thiết bị (SCPI) / biến-tính toán / điều khiển luồng.
+        self._mode = "device"
+        self._mode_btns: dict[str, QPushButton] = {}
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Loại bước:"))
-        self.step_mode = QComboBox()
-        self.step_mode.addItem("Lệnh thiết bị (SCPI)", "device")
-        self.step_mode.addItem("Biến / Tính toán", "var")
-        self.step_mode.addItem("Nhãn / Goto", "ctrl")
-        self.step_mode.currentIndexChanged.connect(self._update_mode)
-        mode_row.addWidget(self.step_mode, 1)
+        for key, text in (("device", "Lệnh thiết bị"), ("var", "Biến / Tính toán"),
+                          ("ctrl", "Điều khiển luồng")):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.clicked.connect(lambda _c=False, m=key: self._set_mode(m))
+            mode_row.addWidget(b)
+            self._mode_btns[key] = b
+        mode_row.addStretch()
         root.addLayout(mode_row)
 
         # ----- Panel lệnh thiết bị -----
         self.device_panel = QWidget()
-        dp = QVBoxLayout(self.device_panel); dp.setContentsMargins(0, 0, 0, 0); dp.setSpacing(6)
+        dp_outer = QVBoxLayout(self.device_panel); dp_outer.setContentsMargins(0, 0, 0, 0)
+        device_splitter = QSplitter(Qt.Horizontal)
+
+        dev_col = QWidget()
+        dp = QVBoxLayout(dev_col); dp.setContentsMargins(0, 0, 6, 0); dp.setSpacing(6)
         dp.addWidget(QLabel("Thiết bị (chọn 1 hoặc nhiều — chạy cùng bước):"))
         dp.addWidget(QLabel("🟢 = đang kết nối   ·   ○ = chưa thấy"))
         self.dev_list = QListWidget()
         self.dev_list.setSelectionMode(QAbstractItemView.NoSelection)
-        self.dev_list.setMaximumHeight(150)
         ordered = sorted(DEVICE_REGISTRY.items(),
                          key=lambda kv: (kv[0] not in self._connected, kv[0]))
         for key, entry in ordered:
@@ -151,32 +162,46 @@ class StepEditorDialog(QDialog):
             it.setForeground(QColor(Colors.ACCENT_GREEN) if is_conn else QColor(Colors.TEXT_DIM))
             self.dev_list.addItem(it)
         self.dev_list.itemChanged.connect(lambda *_: self._refresh_commands())
-        dp.addWidget(self.dev_list)
+        dp.addWidget(self.dev_list, 1)
+        device_splitter.addWidget(dev_col)
 
+        cmd_col = QWidget()
+        cp = QVBoxLayout(cmd_col); cp.setContentsMargins(6, 0, 0, 0); cp.setSpacing(6)
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("Lệnh:"))
         self.cmd_search = QLineEdit()
         self.cmd_search.setPlaceholderText("Tìm lệnh…")
         self.cmd_search.textChanged.connect(self._filter_commands)
         search_row.addWidget(self.cmd_search)
-        dp.addLayout(search_row)
+        cp.addLayout(search_row)
 
         self.cmd_list = QListWidget()
         self.cmd_list.setMinimumHeight(160)
         self.cmd_list.setStyleSheet(
-            f"QListWidget::item:selected {{ background:{Colors.ACCENT_CYAN};"
+            f"QListWidget::item:selected {{ background:{Colors.ACCENT_PRIMARY};"
             f" color:{Colors.BG_WINDOW}; }}"
         )
         self.cmd_list.currentItemChanged.connect(self._on_cmd_selected)
-        dp.addWidget(self.cmd_list)
+        cp.addWidget(self.cmd_list, 1)
 
         self.cmd_info = QLabel("")
         self.cmd_info.setWordWrap(True)
-        self.cmd_info.setStyleSheet("color: #a0a5ad; font-size: 11px;")
-        dp.addWidget(self.cmd_info)
+        self.cmd_info.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:11px;")
+        cp.addWidget(self.cmd_info)
 
         self.param_form = QFormLayout()
-        dp.addLayout(self.param_form)
+        cp.addLayout(self.param_form)
+
+        self.cmd_preview = QLabel("")
+        self.cmd_preview.setWordWrap(True)
+        self.cmd_preview.setStyleSheet(
+            f"background:{Colors.BG_DEEP}; border:1px solid {Colors.BORDER}; "
+            f"color:{Colors.ACCENT_GREEN}; padding:6px 8px; font-family:Consolas;")
+        cp.addWidget(self.cmd_preview)
+
+        device_splitter.addWidget(cmd_col)
+        device_splitter.setSizes([280, 640])
+        dp_outer.addWidget(device_splitter)
         root.addWidget(self.device_panel)
 
         # ----- Panel biến / tính toán -----
@@ -232,7 +257,11 @@ class StepEditorDialog(QDialog):
         self._refresh_commands()
         if step is not None:
             self._load_step(step)
-        self._update_mode()
+        self._set_mode(self._mode)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        paint_corner_brackets(self)
 
     # ── helpers ────────────────────────────────────────────────────────────
 
@@ -250,8 +279,23 @@ class StepEditorDialog(QDialog):
         is_report_val = self.var_action.currentData() == "report_val"
         self._show_row(self.var_name, not is_report_val)
 
+    def _set_mode(self, mode: str):
+        self._mode = mode
+        for key, btn in self._mode_btns.items():
+            sel = key == mode
+            btn.setChecked(sel)
+            if sel:
+                btn.setStyleSheet(
+                    f"color:{Colors.ACCENT_PRIMARY}; border:1px solid #6a5010;"
+                    f" background:#1e1a08; font-weight:bold; padding:5px 16px;")
+            else:
+                btn.setStyleSheet(
+                    f"color:{Colors.TEXT_DIM}; border:1px solid {Colors.BORDER};"
+                    f" background:{Colors.BG_CARD_HI}; padding:5px 16px;")
+        self._update_mode()
+
     def _update_mode(self):
-        mode = self.step_mode.currentData()
+        mode = self._mode
         self.device_panel.setVisible(mode == "device")
         self.var_panel.setVisible(mode == "var")
         self.ctrl_panel.setVisible(mode == "ctrl")
@@ -356,19 +400,62 @@ class StepEditorDialog(QDialog):
                 w = QComboBox()
                 for c in p.choices:
                     w.addItem(c, c)
+                w.currentIndexChanged.connect(self._update_preview)
             else:
                 w = QLineEdit(str(p.default))
                 w.setPlaceholderText("số hoặc =biến")
                 w.setToolTip("Nhập số cố định (vd: 1000) hoặc =tên_biến / =biểu_thức (vd: =freq_start, =freq_start*2)")
+                w.textChanged.connect(self._update_preview)
             label = p.label + (f" ({p.unit})" if p.unit else "") + ":"
             self.param_form.addRow(label, w)
             self._param_widgets[p.name] = w
+        self._update_preview()
+
+    # ── preview lệnh sẽ gửi ──────────────────────────────────────────────────
+
+    def _collect_param_values(self, strict: bool = False) -> dict:
+        """Đọc giá trị hiện tại từ self._param_widgets theo self._parsed_params.
+        strict=True (dùng khi Lưu bước): raise ValueError kèm thông báo tiếng
+        Việt nếu sai kiểu. strict=False (dùng khi cập nhật preview lúc đang gõ
+        dở): gán None cho giá trị chưa đọc được thay vì raise."""
+        values: dict = {}
+        for p in self._parsed_params:
+            w = self._param_widgets.get(p.name)
+            if w is None:
+                continue
+            if isinstance(w, QComboBox):
+                values[p.name] = w.currentData()
+                continue
+            raw = w.text().strip()
+            if raw.startswith("="):
+                values[p.name] = raw   # runtime sẽ eval qua _resolve_params
+                continue
+            try:
+                values[p.name] = int(float(raw)) if p.ptype == "int" else float(raw)
+            except ValueError:
+                if strict:
+                    kind = "số nguyên" if p.ptype == "int" else "số"
+                    raise ValueError(f"'{p.label}' phải là {kind} hoặc =biểu_thức.")
+                values[p.name] = None
+        return values
+
+    def _update_preview(self):
+        if not self._current_template:
+            self.cmd_preview.setText("")
+            return
+        values = self._collect_param_values(strict=False)
+        sub = {k: (v if v is not None else "…") for k, v in values.items()}
+        try:
+            text = self._current_template.format(**sub)
+        except (KeyError, ValueError):
+            text = self._current_template
+        self.cmd_preview.setText(text)
 
     # ── load existing step ──────────────────────────────────────────────────
 
     def _load_step(self, step: ScenarioStep):
         if step.action in ("set_var", "compute", "collect", "report_val"):
-            self.step_mode.setCurrentIndex(max(0, self.step_mode.findData("var")))
+            self._mode = "var"
             self.var_action.setCurrentIndex(max(0, self.var_action.findData(step.action)))
             if step.action == "collect":
                 self.var_name.setText(step.params.get("var", ""))
@@ -383,7 +470,7 @@ class StepEditorDialog(QDialog):
             return
 
         if step.action in ("label", "goto"):
-            self.step_mode.setCurrentIndex(max(0, self.step_mode.findData("ctrl")))
+            self._mode = "ctrl"
             self.ctrl_action.setCurrentIndex(max(0, self.ctrl_action.findData(step.action)))
             self.ctrl_name.setCurrentText(step.params.get("name") or step.params.get("target", ""))
             self.note_edit.setText(step.note)
@@ -435,7 +522,7 @@ class StepEditorDialog(QDialog):
         note = self.note_edit.text().strip()
 
         # --- Chế độ Biến / Tính toán ---
-        if self.step_mode.currentData() == "var":
+        if self._mode == "var":
             act = self.var_action.currentData()
             expr = self.var_expr.text().strip()
             if act == "report_val":
@@ -457,7 +544,7 @@ class StepEditorDialog(QDialog):
             return
 
         # --- Chế độ Nhãn / Goto ---
-        if self.step_mode.currentData() == "ctrl":
+        if self._mode == "ctrl":
             act = self.ctrl_action.currentData()
             name = self.ctrl_name.currentText().strip()
             if not name:
@@ -496,35 +583,18 @@ class StepEditorDialog(QDialog):
         if not devices:
             QMessageBox.warning(self, "Thiếu thiết bị", "Chọn ít nhất 1 thiết bị cho lệnh này."); return
 
+        try:
+            param_values = self._collect_param_values(strict=True)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Sai tham số", str(exc)); return
+
         params = {
             "__template__":     self._current_template,
             "__is_query__":     self._current_is_query,
             "__cmd_original__": cmd.cmd,
             "__cmd_desc__":     cmd.desc,
         }
-
-        for p in self._parsed_params:
-            w = self._param_widgets.get(p.name)
-            if w is None:
-                continue
-            if isinstance(w, QComboBox):
-                params[p.name] = w.currentData()
-            else:
-                raw = w.text().strip()
-                if raw.startswith("="):
-                    params[p.name] = raw  # runtime sẽ eval qua _resolve_params
-                elif p.ptype == "int":
-                    try:
-                        params[p.name] = int(float(raw))
-                    except ValueError:
-                        QMessageBox.warning(self, "Sai tham số",
-                                            f"'{p.label}' phải là số nguyên hoặc =biểu_thức."); return
-                else:
-                    try:
-                        params[p.name] = float(raw)
-                    except ValueError:
-                        QMessageBox.warning(self, "Sai tham số",
-                                            f"'{p.label}' phải là số hoặc =biểu_thức."); return
+        params.update(param_values)
 
         self._result = ScenarioStep(action="raw_scpi", devices=devices, params=params, note=note)
         self.accept()
@@ -581,6 +651,10 @@ class LoopEditorDialog(QDialog):
             self.max_iter.setValue(getattr(loop, "max_iter", 50))
         self._refresh_cond(); self._update_visibility()
 
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        paint_corner_brackets(self)
+
     def _refresh_cond(self):
         self.cond_lbl.setText(self._condition.describe() if self._condition else "(chưa đặt)")
 
@@ -627,33 +701,47 @@ class ConditionDialog(QDialog):
         self.kind.addItem("Biểu thức (vd: error)", "expr")
         self.kind.addItem("Theo trạng thái bước trước (OK/Lỗi)", "status")
         self.kind.currentIndexChanged.connect(self._update_visibility)
+        self.kind.currentIndexChanged.connect(self._update_preview)
         self._form.addRow("Loại điều kiện:", self.kind)
 
         self.device = QComboBox()
         self.device.addItem("(đo gần nhất — bất kỳ)", "")
         for k in (device_choices or list(DEVICE_REGISTRY.keys())):
             self.device.addItem(k, k)
+        self.device.currentIndexChanged.connect(self._update_preview)
         self._form.addRow("Thiết bị nguồn:", self.device)
 
         self.expr = QLineEdit()
         self.expr.setPlaceholderText("vd: error  hoặc  abs(f_avg - f_set)/f_set")
+        self.expr.textChanged.connect(self._update_preview)
         self._form.addRow("Biểu thức:", self.expr)
 
         self.op = QComboBox()
         for o in OPERATORS:
             self.op.addItem(f"{o}  ({OP_LABELS[o]})", o)
         self.op.currentIndexChanged.connect(self._update_visibility)
+        self.op.currentIndexChanged.connect(self._update_preview)
         self._form.addRow("Toán tử:", self.op)
 
         self.val = QLineEdit("0")
+        self.val.textChanged.connect(self._update_preview)
         self._form.addRow("Ngưỡng:", self.val)
         self.val2 = QLineEdit("0")
+        self.val2.textChanged.connect(self._update_preview)
         self._form.addRow("Ngưỡng 2 (khoảng):", self.val2)
 
         self.status = QComboBox()
         self.status.addItem("OK", "ok"); self.status.addItem("LỖI", "error")
+        self.status.currentIndexChanged.connect(self._update_preview)
         self._form.addRow("Trạng thái:", self.status)
         root.addLayout(self._form)
+
+        self.preview_lbl = QLabel("…")
+        self.preview_lbl.setWordWrap(True)
+        self.preview_lbl.setStyleSheet(
+            f"background:{Colors.BG_DEEP}; border:1px solid #1a4030; "
+            f"color:{Colors.ACCENT_GREEN}; padding:6px 10px; font-family:Consolas;")
+        root.addWidget(self.preview_lbl)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self._on_accept); bb.rejected.connect(self.reject)
@@ -662,6 +750,11 @@ class ConditionDialog(QDialog):
         if condition is not None:
             self._load(condition)
         self._update_visibility()
+        self._update_preview()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        paint_corner_brackets(self)
 
     def _load(self, c: Condition):
         self.kind.setCurrentIndex(max(0, self.kind.findData(c.kind)))
@@ -690,21 +783,37 @@ class ConditionDialog(QDialog):
         self._show_row(self.status, kind == "status")
         self.adjustSize()
 
-    def _on_accept(self):
+    def _build_condition(self, strict: bool = True) -> Condition | None:
+        """Dựng Condition từ giá trị form hiện tại — strict=True (Lưu) raise
+        ValueError kèm thông báo tiếng Việt nếu thiếu/sai; strict=False (cập
+        nhật preview lúc đang gõ dở) trả None thay vì raise."""
         kind = self.kind.currentData()
         if kind in ("measure", "expr"):
             try:
                 v = float(self.val.text().strip()); v2 = float(self.val2.text().strip() or 0)
             except ValueError:
-                QMessageBox.warning(self, "Sai", "Ngưỡng phải là số."); return
+                if strict:
+                    raise ValueError("Ngưỡng phải là số.")
+                return None
             if kind == "expr" and not self.expr.text().strip():
-                QMessageBox.warning(self, "Thiếu", "Nhập biểu thức điều kiện."); return
-            self._result = Condition(
+                if strict:
+                    raise ValueError("Nhập biểu thức điều kiện.")
+                return None
+            return Condition(
                 kind=kind, device=self.device.currentData(),
                 expr=self.expr.text().strip(),
                 op=self.op.currentData(), value=v, value2=v2)
-        else:
-            self._result = Condition(kind="status", status=self.status.currentData())
+        return Condition(kind="status", status=self.status.currentData())
+
+    def _update_preview(self):
+        cond = self._build_condition(strict=False)
+        self.preview_lbl.setText(cond.describe() if cond else "…")
+
+    def _on_accept(self):
+        try:
+            self._result = self._build_condition(strict=True)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Sai/thiếu điều kiện", str(exc)); return
         self.accept()
 
     def get_condition(self) -> Condition:
@@ -871,6 +980,7 @@ class ScenarioGridWindow(QMainWindow):
         self._id_to_item: dict = {}
         self._item_results: dict = {}
         self._flatidx_to_item: dict = {}
+        self._status_badges: dict = {}   # id(item) -> QLabel[badge=...] cột Trạng thái
 
         self._build_ui()
         self._refresh_tree()
@@ -927,26 +1037,63 @@ class ScenarioGridWindow(QMainWindow):
                 b.setStyleSheet(f"background:{color}; color:{Colors.BG_WINDOW}; font-weight:bold;"
                                 f" border:none; border-radius:6px; padding:8px 14px;")
             bar.addWidget(b); return b
+
+        def sep():
+            line = QFrame()
+            line.setFrameShape(QFrame.VLine)
+            line.setFixedWidth(1)
+            line.setStyleSheet(f"background:{Colors.BORDER}; border:none;")
+            bar.addWidget(line)
+
         self._btn_device = mkbtn("🔌 Thiết bị", self._open_device_manager)
         # Label thay thế nút Thiết bị khi mở từ Phiên Kiểm Định (ẩn mặc định)
         self._lbl_device_info = QLabel("")
-        self._lbl_device_info.setStyleSheet(f"color:{Colors.ACCENT_GREEN}; font-size:11px;")
+        self._lbl_device_info.setStyleSheet(
+            f"color:{Colors.ACCENT_GREEN}; font-size:11px; padding:4px 10px;"
+            f" border:1px solid {Colors.ACCENT_GREEN};")
         self._lbl_device_info.setVisible(False)
         bar.addWidget(self._lbl_device_info)
+        sep()
         mkbtn("➕ Bước", self._add_step)
         mkbtn("🔁 Loop", self._add_loop)
         mkbtn("❓ If", self._add_if)
+        sep()
         mkbtn("⧉ Nhân bản", self._dup_node)
         mkbtn("🗑 Xóa", self._del_node)
         mkbtn("▲", lambda: self._move(-1))
         mkbtn("▼", lambda: self._move(1))
+        sep()
         mkbtn("📖 Tập lệnh", self._open_command_reference)
         bar.addStretch()
         mkbtn("📂 Mở", self._load); mkbtn("💾 Lưu", self._save)
-        self.btn_run = mkbtn("▶ CHẠY", self._run, Colors.ACCENT_CYAN)
+        sep()
+        self.btn_run = mkbtn("▶ CHẠY", self._run, Colors.ACCENT_PRIMARY)
         self.btn_stop = mkbtn("■ DỪNG", self._stop, Colors.ACCENT_RED); self.btn_stop.setEnabled(False)
         self.btn_export = mkbtn("📤 Xuất", self._export_results); self.btn_export.setEnabled(False)
         root.addWidget(tool_frame)
+
+        # ── Thanh tên kịch bản ────────────────────────────────────────────────
+        scn_frame = QFrame()
+        scn_frame.setObjectName("scenario_bar")
+        scn_frame.setStyleSheet(
+            f"QFrame#scenario_bar {{ background:{Colors.BG_DEEP}; "
+            f"border-bottom:1px solid {Colors.BORDER}; }}")
+        scn_lay = QHBoxLayout(scn_frame)
+        scn_lay.setContentsMargins(16, 5, 16, 5)
+        scn_lay.setSpacing(10)
+        scn_lbl = QLabel("KỊCH BẢN:")
+        scn_lbl.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:10px;")
+        scn_lay.addWidget(scn_lbl)
+        self._lbl_scn_name = QLabel("")
+        self._lbl_scn_name.setStyleSheet(
+            f"color:{Colors.ACCENT_PRIMARY}; font-size:13px; font-weight:bold;")
+        scn_lay.addWidget(self._lbl_scn_name)
+        self._lbl_scn_path = QLabel("")
+        self._lbl_scn_path.setStyleSheet(f"color:{Colors.BORDER}; font-size:10px;")
+        scn_lay.addWidget(self._lbl_scn_path)
+        scn_lay.addStretch()
+        root.addWidget(scn_frame)
+        self._update_scenario_bar()
 
         # ── Tree (content area) ───────────────────────────────────────────────
         content = QWidget()
@@ -997,11 +1144,15 @@ class ScenarioGridWindow(QMainWindow):
         self.log = QTextEdit()
         self.log.setObjectName("log_console")
         self.log.setReadOnly(True)
-        self.log.setMaximumHeight(140)
+        self.log.setMaximumHeight(148)
         log_lay.addWidget(self.log)
         root.addWidget(log_frame)
 
         self.statusBar().showMessage("Sẵn sàng.")
+
+    def _update_scenario_bar(self):
+        self._lbl_scn_name.setText(self.scenario.name or "(chưa đặt tên)")
+        self._lbl_scn_path.setText(self.loaded_path or "(chưa lưu)")
 
     # ------------------------------------------------------------------
     # Dựng cây
@@ -1031,7 +1182,7 @@ class ScenarioGridWindow(QMainWindow):
     def _refresh_tree(self):
         self._loading = True
         self.tree.clear()
-        self._id_to_item.clear(); self._item_results.clear()
+        self._id_to_item.clear(); self._item_results.clear(); self._status_badges.clear()
         root = self.tree.invisibleRootItem()
         for node in self.scenario.nodes:
             self._add_node_item(node, root, None)
@@ -1066,7 +1217,22 @@ class ScenarioGridWindow(QMainWindow):
         it.setData(0, ROLE_PARENT, parent_obj)
         if obj is not None:
             self._id_to_item[id(obj)] = it
+        self._install_status_badge(it)
         return it
+
+    def _install_status_badge(self, item):
+        """Badge pill 'Chờ' mặc định ở cột Trạng thái — _apply_step_result()
+        cập nhật lại (OK/LỖI) khi có kết quả thật; loop/if/branch không nhận
+        StepResult nên giữ nguyên 'Chờ' (không có progress sống để hiện)."""
+        wrap = QWidget()
+        lay = QHBoxLayout(wrap)
+        lay.setContentsMargins(4, 1, 4, 1)
+        lay.setAlignment(Qt.AlignCenter)
+        lbl = QLabel()
+        set_badge(lbl, "Chờ", Colors.TEXT_DIM)
+        lay.addWidget(lbl)
+        self.tree.setItemWidget(item, 5, wrap)
+        self._status_badges[id(item)] = lbl
 
     def _add_node_item(self, node, parent_item, parent_obj):
         kind = node_kind(node)
@@ -1771,7 +1937,10 @@ class ScenarioGridWindow(QMainWindow):
     def _save(self):
         path, _ = QFileDialog.getSaveFileName(self, "Lưu kịch bản", "scenario.json", "JSON (*.json)")
         if path:
-            self.scenario.save_json(path); self._log(f"Đã lưu: {path}", Colors.ACCENT_GREEN)
+            self.scenario.save_json(path)
+            self.loaded_path = path
+            self._update_scenario_bar()
+            self._log(f"Đã lưu: {path}", Colors.ACCENT_GREEN)
 
     def _load(self):
         path, _ = QFileDialog.getOpenFileName(self, "Mở kịch bản", "", "JSON (*.json)")
@@ -1791,7 +1960,8 @@ class ScenarioGridWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi mở file", str(exc)); return False
         self.loaded_path = path
-        self._refresh_tree(); self._log(f"Đã mở: {path}", Colors.ACCENT_GREEN)
+        self._refresh_tree(); self._update_scenario_bar()
+        self._log(f"Đã mở: {path}", Colors.ACCENT_GREEN)
         return True
 
     # ------------------------------------------------------------------
@@ -1807,7 +1977,10 @@ class ScenarioGridWindow(QMainWindow):
         self.btn_export.setEnabled(False)
         self._loading = True
         for it in self._all_items():
-            it.setText(4, ""); it.setText(5, "")   # xóa Kết quả + Trạng thái
+            it.setText(4, "")   # xóa Kết quả
+            badge = self._status_badges.get(id(it))
+            if badge is not None:
+                set_badge(badge, "Chờ", Colors.TEXT_DIM)   # reset Trạng thái
         self._loading = False
 
         mock = False                       # đã bỏ MOCK — luôn chạy với thiết bị thật
@@ -1821,7 +1994,7 @@ class ScenarioGridWindow(QMainWindow):
 
         self.btn_run.setEnabled(False); self.btn_stop.setEnabled(True)
         self._last_mode = "REAL"
-        self._log(f"--- Bắt đầu chạy ({self._last_mode}) ---", Colors.ACCENT_CYAN)
+        self._log(f"--- Bắt đầu chạy ({self._last_mode}) ---", Colors.ACCENT_PRIMARY)
         self.worker = ScenarioWorker(self.scenario, mock=mock, address_map=self.address_map,
                                      cmd_delay_s=self.cmd_delay_s)
         self.worker.result_ready.connect(self._on_result)
@@ -1868,8 +2041,10 @@ class ScenarioGridWindow(QMainWindow):
         item.setText(4, "  |  ".join(collapsed))   # cột Kết quả
         if res.kind != "control":
             any_err = any("LỖI" in s for s in self._item_results[key])
-            item.setText(5, "LỖI" if any_err else "OK")          # cột Trạng thái
-            item.setForeground(5, QColor(Colors.ACCENT_RED if any_err else Colors.ACCENT_GREEN))
+            badge = self._status_badges.get(key)
+            if badge is not None:
+                set_badge(badge, "LỖI" if any_err else "OK",
+                         Colors.ACCENT_RED if any_err else Colors.ACCENT_GREEN)
         self._loading = False
 
     def apply_external_result(self, res: StepResult):
@@ -1896,7 +2071,7 @@ class ScenarioGridWindow(QMainWindow):
     def _on_finished(self, total):
         self.btn_run.setEnabled(True); self.btn_stop.setEnabled(False)
         self.btn_export.setEnabled(bool(self._last_results))
-        self._log(f"--- Hoàn tất: {total} kết quả ---", Colors.ACCENT_CYAN)
+        self._log(f"--- Hoàn tất: {total} kết quả ---", Colors.ACCENT_PRIMARY)
         self.statusBar().showMessage(f"Hoàn tất: {total} kết quả.")
 
     def _on_failed(self, msg):
