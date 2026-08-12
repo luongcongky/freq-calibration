@@ -16,7 +16,6 @@ import os
 import shutil
 import subprocess
 
-import pymupdf as fitz  # "fitz" la ten cu, da doi thanh "pymupdf" tu ban 1.24 - import kieu nay tranh warning deprecated ma khong phai doi ten bien fitz.* ben duoi
 from PyQt5.QtGui import QImage, QPixmap
 
 _WD_EXPORT_FORMAT_PDF = 17  # wdExportFormatPDF
@@ -83,6 +82,11 @@ def docx_to_pdf(docx_path: str, pdf_path: str) -> None:
 
 
 def render_pdf_pages(pdf_path: str, dpi: int = 150) -> list[QPixmap]:
+    # import lazy: pymupdf keo theo DLL MuPDF khá nặng — chỉ nạp khi thực sự
+    # xem nhanh tài liệu (Bước 3), không phải ngay lúc khởi động app (module
+    # này bị session_manager.py import từ đầu, nếu để "import pymupdf" ở
+    # top-level sẽ nạp DLL đó ngay cả khi user chưa bao giờ bấm "Xem nhanh").
+    import pymupdf as fitz  # "fitz" la ten cu, da doi thanh "pymupdf" tu ban 1.24
     pixmaps: list[QPixmap] = []
     pdf = fitz.open(pdf_path)
     try:

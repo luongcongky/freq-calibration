@@ -1800,4 +1800,13 @@ def run_session_manager():
     app.setStyleSheet(build_global_qss())
     win = SessionManagerWindow()
     win.show()
+    try:
+        # pyi_splash chỉ tồn tại trong bản đóng gói PyInstaller có --splash
+        # (xem build.ps1) — đóng splash ngay khi cửa sổ chính đã hiện, tránh
+        # đè lên UI thật. Chạy python main.py bình thường (dev) không có
+        # module này -> bỏ qua.
+        import pyi_splash
+        pyi_splash.close()
+    except ImportError:
+        pass
     app.exec_()

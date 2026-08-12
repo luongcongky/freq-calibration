@@ -57,8 +57,13 @@ pip install pyinstaller;                    Assert-LastExit "Cai pyinstaller"
 
 Write-Host "==> [2/5] Build PyInstaller (one-dir, ban trung gian trong dist\)" -ForegroundColor Cyan
 $windowFlag = if ($Console) { "--console" } else { "--windowed" }
+# --splash: hien anh ngay tu bootloader (truoc khi Python/Qt kip nap), giup
+# nguoi dung thay phan hoi tuc thi ngay ca khi lan dau chay bi Windows
+# Defender quet cham (van la nguyen nhan chinh, splash chi giam cam giac
+# "treo" chu khong lam qua trinh quet nhanh hon).
 pyinstaller --noconfirm --clean $windowFlag --name $AppName `
     --hidden-import pyvisa_py `
+    --splash "packaging\splash.png" `
     main.py
 Assert-LastExit "PyInstaller build"
 
