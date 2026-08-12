@@ -1809,4 +1809,11 @@ def run_session_manager():
         pyi_splash.close()
     except ImportError:
         pass
+    # Đóng splash xong mới raise/activate: splash luôn nổi TOPMOST trong lúc
+    # hiện, nên win.show() ở trên có thể bị vẽ ra SAU nó — khi splash biến
+    # mất, Windows không tự chuyển foreground sang cửa sổ Qt (trả về cửa sổ
+    # trước đó đang active), khiến app mở xong lại nằm dưới cùng thay vì lên
+    # trước mặt người dùng. Ép lại foreground rõ ràng ở đây.
+    win.raise_()
+    win.activateWindow()
     app.exec_()
