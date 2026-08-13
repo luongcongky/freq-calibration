@@ -309,22 +309,33 @@ def _identify_subprocess(
 
     Thứ tự thử: *IDN? → PROBE_CMD fallback.
     Trả "" nếu cả hai đều thất bại hoặc subprocess crash/timeout.
+
+    LƯU Ý bản đóng gói (PyInstaller, sys.frozen=True): sys.executable lúc đó
+    trỏ vào chính freq-calibration.exe, KHÔNG phải python.exe, nên không thể
+    gọi "sys.executable -c <code>" (sẽ chỉ mở thêm một cửa sổ app mới thay vì
+    chạy đoạn code). Thay vào đó gọi lại chính .exe với cờ nội bộ
+    --identify-probe (xử lý trong main.py, không mở GUI) để vẫn giữ được cô
+    lập tiến trình.
     """
-    code = (
-        f"import sys; sys.path.insert(0, {_ROOT!r})\n"
-        "from core.discovery import identify_resource, _probe_identify\n"
-        "import json\n"
-        f"addr = {address!r}\n"
-        f"idn = identify_resource(addr, mock=False,"
-        f" timeout_ms={timeout_ms}, visa_backend={visa_backend!r})\n"
-        f"if not idn:\n"
-        f"    idn = _probe_identify(addr,"
-        f" timeout_ms={timeout_ms}, visa_backend={visa_backend!r})\n"
-        "print(json.dumps(idn))\n"
-    )
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "--identify-probe", address, str(timeout_ms), visa_backend]
+    else:
+        code = (
+            f"import sys; sys.path.insert(0, {_ROOT!r})\n"
+            "from core.discovery import identify_resource, _probe_identify\n"
+            "import json\n"
+            f"addr = {address!r}\n"
+            f"idn = identify_resource(addr, mock=False,"
+            f" timeout_ms={timeout_ms}, visa_backend={visa_backend!r})\n"
+            f"if not idn:\n"
+            f"    idn = _probe_identify(addr,"
+            f" timeout_ms={timeout_ms}, visa_backend={visa_backend!r})\n"
+            "print(json.dumps(idn))\n"
+        )
+        cmd = [sys.executable, "-c", code]
     try:
         r = subprocess.run(
-            [sys.executable, "-c", code],
+            cmd,
             capture_output=True,
             text=True,
             timeout=timeout_ms / 1000 + 8,
