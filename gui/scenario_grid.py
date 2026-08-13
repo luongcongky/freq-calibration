@@ -34,6 +34,7 @@ from core.scenario import (
     enumerate_nodes,
 )
 from core.scenario_runner import ScenarioRunner, StepResult
+from core.paths import get_app_version
 from core.commands import (
     parse_cmd, get_commands_for, get_common_commands, load_custom, WAIT_CMD, BREAK_CMD,
 )
@@ -963,7 +964,7 @@ class ScenarioGridWindow(QMainWindow):
                  cmd_delay_s: float | None = None,
                  on_device_changed=None):
         super().__init__(parent)
-        self.setWindowTitle("FREQ-CAL PRO :: Scenario Builder")
+        self.setWindowTitle(f"FREQ-CAL PRO v{get_app_version()} :: Scenario Builder")
         self.setWindowIcon(QIcon("gui/logo.png"))
         self.resize(1600, 900)
         self.setMinimumSize(1150, 680)

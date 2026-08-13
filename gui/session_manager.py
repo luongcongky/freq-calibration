@@ -36,6 +36,7 @@ from core.scenario import Scenario
 from core.scenario_runner import ScenarioRunner, StepResult
 from core.report_templates import list_templates, get_template
 from core import table_engine
+from core.paths import get_app_version
 from gui.theme import Colors, build_global_qss
 from gui.report_preview import build_wysiwyg_table
 from gui.doc_render import docx_to_page_pixmaps
@@ -1197,7 +1198,7 @@ class SessionManagerWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FREQ-CAL PRO :: Phiên Kiểm Định")
+        self.setWindowTitle(f"FREQ-CAL PRO v{get_app_version()} :: Phiên Kiểm Định")
         self.setWindowIcon(QIcon("gui/logo.png"))
         self.resize(1600, 900)
         self.setMinimumSize(1100, 680)

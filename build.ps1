@@ -86,6 +86,10 @@ if (Test-Path "templates") { Copy-Item -Recurse -Force "templates" (Join-Path $R
 New-Item -ItemType Directory -Force -Path (Join-Path $ReleaseDir "gui") | Out-Null
 Copy-Item -Force "gui\logo.png" (Join-Path $ReleaseDir "gui\logo.png")
 Copy-Item -Force "gui\logo.ico" (Join-Path $ReleaseDir "gui\logo.ico")
+# VERSION: core/paths.py::get_app_version() doc file nay canh .exe de hien
+# so phien ban len tieu de cua so (session_manager.py/scenario_grid.py) --
+# copy tay giong logo.png/logo.ico, PyInstaller khong tu dong goi.
+Copy-Item -Force "VERSION" (Join-Path $ReleaseDir "VERSION")
 if (Test-Path "Huong_dan_su_dung_freq_calibration.docx") {
     Copy-Item -Force "Huong_dan_su_dung_freq_calibration.docx" $ReleaseDir
 }

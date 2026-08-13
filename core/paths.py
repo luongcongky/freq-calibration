@@ -27,3 +27,13 @@ else:
 
 TEMPLATES_DIR = APP_BASE_DIR / "templates"
 SCENARIOS_DIR = APP_BASE_DIR / "scenarios"
+
+
+def get_app_version() -> str:
+    """Đọc số phiên bản từ file VERSION cạnh app (build.ps1 copy sang khi
+    đóng gói, xem PACKAGING.md) — '?' nếu thiếu file (không nên xảy ra,
+    nhưng không vì thiếu 1 dòng chữ mà crash UI)."""
+    try:
+        return (APP_BASE_DIR / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "?"
