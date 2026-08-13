@@ -252,6 +252,9 @@ _FORMATTERS = {
     "w_no_unit": lambda v: _fmt_w(v, with_unit=False),
     "correction_mw_no_unit": lambda v: _fmt_correction(v, "mW", with_unit=False),
     "correction_db_no_unit": lambda v: _fmt_correction(v, "dB", with_unit=False),
+    # Dự phòng khi Đơn vị giá trị đo không khớp 1 trong 5 đơn vị chuẩn — số
+    # thập phân kiểu Việt Nam (dấu phẩy), 6 chữ số có nghĩa, không đơn vị.
+    "generic_no_unit": lambda v: f"{v:.6g}".replace(".", ","),
 }
 
 

@@ -28,6 +28,10 @@ VALID_FORMATS = {
     # cách làm tròn/định dạng số như bản gốc, chỉ bỏ chữ đơn vị suffix.
     "freq_no_unit", "hz_measured_no_unit", "period_no_unit", "mv_no_unit",
     "dbm_no_unit", "w_no_unit", "correction_mw_no_unit", "correction_db_no_unit",
+    # Dự phòng cho form đơn giản (gui/template_manager_dialog.py::TableFormDialog)
+    # khi Đơn vị giá trị đo không khớp 1 trong 5 đơn vị chuẩn (Hz/mVrms/dBm/s/W)
+    # — số thập phân kiểu Việt Nam chung chung, không đơn vị.
+    "generic_no_unit",
 }
 VALID_SCOPES = {"row", "table"}
 VALID_LAYOUTS = {"repeated_rows", "raw_expand_vertical", "raw_expand_horizontal"}

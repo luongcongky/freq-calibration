@@ -219,6 +219,161 @@ def find_missing_table_ids(docx_path, table_ids: list) -> list:
 
 
 # ---------------------------------------------------------------------------
+# "Đọc bảng từ Word" — khách đã tự dựng SẴN bảng thật (đủ dòng/cột, đủ nhãn/
+# ngưỡng tĩnh) trong file .docx của họ, chỉ CHỪA TRỐNG ô sẽ chứa giá trị đo.
+# Khác hẳn cơ chế "row-surgery" đã bỏ (không tự dựng/sửa số dòng, số cột, gộp
+# ô nào cả) — chỉ ĐỌC text ô có sẵn để suy ra dữ liệu dòng, và GHI ĐÈ đúng
+# text của những ô khách đã đánh dấu là "giá trị đo" thành tag report_val(),
+# không đụng gì khác trong file.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DetectedDocxTable:
+    index: int                # vị trí bảng trong doc.tables (0-based) — dùng lại khi ghi tag
+    n_rows: int
+    n_cols: int
+    grid: list                # list[list[str]] — text từng ô, nguyên văn đọc từ Word
+    already_tagged: bool      # True nếu trong bảng đã có chữ "report_val()" hoặc "{{ tables."
+
+
+def scan_docx_tables(docx_path) -> list:
+    """Đọc TOÀN BỘ bảng vật lý cấp cao nhất (doc.tables — không gồm bảng lồng
+    trong ô) của 1 file .docx, trả về list[DetectedDocxTable] theo đúng thứ
+    tự xuất hiện trong tài liệu. CHỈ ĐỌC, không sửa gì trong file."""
+    doc = Document(str(docx_path))
+    result = []
+    for i, tbl in enumerate(doc.tables):
+        grid = [[cell.text.strip() for cell in row.cells] for row in tbl.rows]
+        flat = " ".join(c for r in grid for c in r)
+        already_tagged = "report_val()" in flat or "{{ tables." in flat
+        result.append(DetectedDocxTable(
+            index=i, n_rows=len(grid), n_cols=(len(grid[0]) if grid else 0),
+            grid=grid, already_tagged=already_tagged,
+        ))
+    return result
+
+
+COLUMN_ROLE_CHOICES = [
+    ("none", "(Không dùng)"),
+    ("freq_set", "Tần số / điểm đo thiết lập"),
+    ("reference", "Chuẩn dùng để tính"),
+    ("limit", "Ngưỡng"),
+    ("display_label", "Nhãn hiển thị"),
+    ("measured", "★ Giá trị đo (phần mềm tự điền tag report_val() — chọn NHIỀU cột nếu 1 dòng có nhiều lần đo)"),
+]
+
+_ROLE_KEYWORDS = [
+    # Thứ tự ưu tiên — kiểm tra "measured"/"limit" TRƯỚC "freq_set" vì tiêu
+    # đề dạng "Tần số đo được" chứa cả "tần số" lẫn "đo được".
+    ("measured", ["đo được", "giá trị đo", "kết quả đo", "kết quả"]),
+    ("limit", ["ngưỡng", "giới hạn", "sai số cho phép"]),
+    ("reference", ["chuẩn"]),
+    ("freq_set", ["tần số", "chu kỳ", "danh định", "thiết lập"]),
+    ("display_label", ["stt", "điểm đo", "nhãn", "tên", "vị trí", "ký hiệu"]),
+]
+
+
+def guess_column_role(header_text: str) -> str:
+    """Đoán vai trò 1 cột theo TỪ KHOÁ trong chữ tiêu đề — CHỈ để gợi ý điền
+    sẵn dropdown, người dùng luôn xác nhận/sửa lại trước khi lưu (giống
+    scan_meta_paragraphs, best-effort)."""
+    t = (header_text or "").lower()
+    for role, keywords in _ROLE_KEYWORDS:
+        if any(kw in t for kw in keywords):
+            return role
+    return "none"
+
+
+def build_rows_from_grid(grid: list, role_map: dict, header_row_index: int = 0) -> list:
+    """Dựng list[WizardRowSpec] từ lưới text đã đọc (scan_docx_tables) theo
+    role_map {cột 0-based: role}, bỏ qua dòng tiêu đề. Số dòng == số dòng dữ
+    liệu thật trong bảng Word (không cần khách gõ lại)."""
+    col_by_role = {role: col for col, role in role_map.items() if role and role != "none"}
+
+    def _cell(row: list, role: str) -> str:
+        col = col_by_role.get(role)
+        if col is None or col >= len(row):
+            return ""
+        return row[col].strip()
+
+    rows = []
+    for r_i, row in enumerate(grid):
+        if r_i == header_row_index:
+            continue
+        label = _cell(row, "display_label")
+        freq_text = _cell(row, "freq_set")
+        ref_text = _cell(row, "reference")
+        limit_text = _cell(row, "limit")
+        key = label or freq_text or f"dòng {r_i + 1}"
+        rows.append(WizardRowSpec(
+            key=key,
+            freq_set=guess_bare_number(freq_text) if freq_text else None,
+            reference=guess_bare_number(ref_text) if ref_text else None,
+            limit=limit_text,
+            display_label=label,
+        ))
+    return rows
+
+
+def insert_report_val_tags(docx_path, table_index: int, measured_cols, table_id: str,
+                            header_row_index: int = 0) -> int:
+    """Gõ ĐÈ text của 1 hoặc nhiều cột (measured_cols) trong đúng 1 bảng
+    (table_index) thành tag `{{ tables.<table_id>.report_val() }}`, mỗi dòng
+    dữ liệu 1 tag/cột (bỏ qua dòng tiêu đề) — KHÔNG thêm/bớt dòng/cột, KHÔNG
+    đụng ô nào khác. measured_cols DUYỆT THEO THỨ TỰ CỘT TĂNG DẦN — khớp
+    đúng thứ tự report_val() cursor tiêu thụ (docxtpl đọc tài liệu trái->
+    phải), nên hỗ trợ luôn trường hợp 1 dòng có NHIỀU lần đo (raw_count>1,
+    xem core/table_descriptor.py::RowDef.raw_count). Trả về tổng số tag đã
+    gắn (số dòng × số cột)."""
+    if isinstance(measured_cols, int):
+        measured_cols = [measured_cols]
+    cols = sorted(measured_cols)
+    doc = Document(str(docx_path))
+    tbl = doc.tables[table_index]
+    tag = "{{ tables.%s.report_val() }}" % table_id
+    count = 0
+    for r_i, row in enumerate(tbl.rows):
+        if r_i == header_row_index:
+            continue
+        for col in cols:
+            row.cells[col].text = tag
+            count += 1
+    doc.save(str(docx_path))
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Định dạng giá trị — form ĐƠN GIẢN (TableFormDialog) KHÔNG bắt khách chọn 1
+# trong 19 format nữa (khách phản hồi: quá kỹ thuật, không hiểu) — tự suy
+# thẳng từ Đơn vị giá trị đo (khách đã quen — Hz/mVrms/dBm/s/W), LUÔN dùng
+# biến thể "không kèm đơn vị" (đơn vị khách tự gõ chữ tĩnh cạnh tag trong
+# Word). Chỉ còn 1 lựa chọn phụ: có hiển thị dạng khoa học (×10ⁿ) hay không
+# — dùng cho sai số rất nhỏ. FORMAT_LABELS_ALL (19 lựa chọn) vẫn giữ nguyên
+# cho RowAdvancedDialog (mỗi report_val() của 1 dòng "nâng cao" có thể cần
+# định dạng khác nhau — vd đo được vs sai số kịch bản tự tính) — đó là màn
+# hình khác, dành cho ai chủ động bấm "nâng cao", không phải luồng chính.
+# ---------------------------------------------------------------------------
+
+_UNIT_TO_FORMAT_NO_UNIT = {
+    "Hz": "hz_measured_no_unit",
+    "mVrms": "mv_no_unit",
+    "dBm": "dbm_no_unit",
+    "s": "period_no_unit",
+    "W": "w_no_unit",
+}
+
+
+def resolve_value_format(value_unit: str, scientific: bool) -> str:
+    """Suy value_format từ Đơn vị giá trị đo — scientific=True ưu tiên hiển
+    thị dạng khoa học (×10ⁿ) bất kể đơn vị gì (dùng cho sai số/độ lệch rất
+    nhỏ); ngược lại tra theo đơn vị, đơn vị lạ (khách tự gõ) rơi về
+    'generic_no_unit' (số thập phân kiểu Việt Nam, không đơn vị)."""
+    if scientific:
+        return "sci"
+    return _UNIT_TO_FORMAT_NO_UNIT.get(value_unit.strip(), "generic_no_unit")
+
+
+# ---------------------------------------------------------------------------
 # Hằng số hiển thị (nhãn tiếng Việt) dùng chung cho màn hình review — thuần
 # dữ liệu, không phải code Qt, để ở đây cho gần các hàm dùng chúng.
 # ---------------------------------------------------------------------------

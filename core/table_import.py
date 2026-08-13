@@ -111,6 +111,19 @@ def copy_table(tables_dir, source_id: str, new_id: str, new_name: str = "") -> P
     return wio.write_descriptor_json(new_descriptor, tables_dir)
 
 
+def delete_table(tables_dir, table_id: str) -> None:
+    """Xoá 1 bảng khỏi mẫu — chuyển file JSON descriptor vào Thùng rác
+    Windows qua send2trash (khôi phục được nếu lỡ tay), KHÔNG đụng
+    bienban.docx/gcnkd.docx — tag report_val() còn lại trong file Word (nếu
+    có) quản trị viên tự xoá tay ngoài luồng app."""
+    from send2trash import send2trash
+    tables_dir = Path(tables_dir)
+    json_path = tables_dir / f"{table_id}.json"
+    if not json_path.exists():
+        raise ValueError(f"Bảng '{table_id}' không tồn tại.")
+    send2trash(str(json_path))
+
+
 def apply_table_to_existing(tables_dir, descriptor: TableDescriptor) -> Path:
     """Ghi 1 bảng (mới HOẶC sửa đè bảng đã có, tuỳ table_id trùng hay
     không) vào biểu mẫu ĐÃ CÓ — CHỈ ghi file JSON descriptor. KHÔNG đụng
