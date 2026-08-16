@@ -15,7 +15,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "hz_measured",
         "hz_measured",
@@ -24,8 +23,7 @@
         "hz_measured",
         "hz_measured",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     }
   ],
   "columns": [],

@@ -50,27 +50,21 @@ class RowDef:
     raw_count: Optional[int] = None       # số giá trị report_val tiêu thụ cho dòng này; None = lấy hết còn lại
     limit: str = ""                       # chỉ dùng khi pass_rule=value_vs_parsed_threshold
     display_label: str = ""               # override `key` khi hiển thị trong báo cáo (vd A8: "5 Hz (200 ms)")
-    measured_count: Optional[int] = None  # số phần tử ĐẦU của raw_readings dùng để tính value_measured/
-                                           # error/passed (core/table_engine.py::apply_pass_rule) — phần
-                                           # CÒN LẠI là giá trị kịch bản TỰ TÍNH SẴN (vd sai số) chỉ để
-                                           # hiển thị lại đúng những gì đã đẩy, KHÔNG dùng lại trong công
-                                           # thức (phần mềm tính error/passed độc lập, không đọc lại các
-                                           # slot này). None (mặc định) = dùng HẾT raw_readings (hành vi
-                                           # cũ, mọi bảng không cần nhiều field/dòng).
     value_format_seq: Optional[list] = None  # định dạng riêng cho TỪNG report_val() liên tiếp của 1 dòng
                                               # (vd A5: ["hz_measured", "sci"] = giá trị đo rồi đến sai số
                                               # đã tính sẵn) — độ dài PHẢI khớp raw_count. None (mặc định)
                                               # = mọi report_val() của bảng dùng chung descriptor.value_format
                                               # (hành vi cũ).
-    uncertainty_index: Optional[int] = None  # vị trí (0-based) trong raw_readings chứa Độ KĐBĐ kịch bản
-                                              # TỰ TÍNH rồi đẩy thêm (vd QTHC 2.515 — Độ KĐBĐ không tính
-                                              # được từ công thức, phải do kỹ sư hiệu chuẩn tự nhập theo
-                                              # ngân sách bất định của họ) — core/table_engine.py::
-                                              # apply_pass_rule ghi giá trị đã định dạng (theo
-                                              # value_format_seq[uncertainty_index]) vào TableRow.limit, để
-                                              # GCN (gcn_limit()) đọc lại được ĐÚNG giá trị này (không chỉ
-                                              # report_val() ở Biên Bản). None (mặc định) = không có cột
-                                              # Độ KĐBĐ nào cần lộ ra ngoài report_val().
+                                              #
+                                              # Phần mềm KHÔNG tự tính trung bình/Độ KĐBĐ nữa (bỏ measured_count/
+                                              # uncertainty_index) — report_val() ĐẦU TIÊN của mỗi dòng LUÔN
+                                              # là giá trị dùng cho công thức Đạt/Không đạt (core/table_engine.py::
+                                              # apply_pass_rule); mọi report_val() SAU đó chỉ hiển thị lại
+                                              # NGUYÊN VĂN những gì kịch bản đã tự tính rồi đẩy — kịch bản chịu
+                                              # trách nhiệm tính trung bình/Độ KĐBĐ trước khi gọi report_val().
+                                              # Với bảng pass_rule=correction_vs_reference, report_val() CUỐI
+                                              # CÙNG của dòng (nếu >1) tự động trở thành Độ KĐBĐ hiện ra GCN
+                                              # qua gcn_limit() — không cần cấu hình vị trí nữa.
 
     @classmethod
     def from_dict(cls, d: dict) -> "RowDef":
@@ -81,9 +75,7 @@ class RowDef:
             raw_count=d.get("raw_count"),
             limit=d.get("limit", ""),
             display_label=d.get("display_label", ""),
-            measured_count=d.get("measured_count"),
             value_format_seq=d.get("value_format_seq"),
-            uncertainty_index=d.get("uncertainty_index"),
         )
 
     def to_dict(self) -> dict:
@@ -169,7 +161,7 @@ def validate_descriptor(d: TableDescriptor) -> list:
     """Kiểm tra 1 TableDescriptor đã dựng trong bộ nhớ (chưa/đã ghi file đều
     được) — trả về danh sách lỗi dạng chuỗi (rỗng = hợp lệ). Dùng chung bởi
     _validate() (khi load từ JSON) và bởi GUI sửa trực tiếp (gui/
-    template_manager_dialog.py::TableDetailDialog) để chặn lưu dữ liệu sai
+    template_manager_dialog.py::TableFormDialog) để chặn lưu dữ liệu sai
     TRƯỚC khi ghi đè file."""
     errs = []
     if d.layout not in VALID_LAYOUTS:
@@ -196,9 +188,6 @@ def validate_descriptor(d: TableDescriptor) -> list:
             if r.raw_count is not None and len(r.value_format_seq) != r.raw_count:
                 errs.append(f"dòng '{r.key}': value_format_seq (len={len(r.value_format_seq)}) "
                             f"phải khớp raw_count ({r.raw_count})")
-            if r.measured_count is not None and r.measured_count > len(r.value_format_seq):
-                errs.append(f"dòng '{r.key}': measured_count ({r.measured_count}) vượt quá "
-                             f"số phần tử value_format_seq ({len(r.value_format_seq)})")
     if not d.rows:
         errs.append("thiếu 'rows' (bảng phải có ít nhất 1 dòng định nghĩa)")
     return errs

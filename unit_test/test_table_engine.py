@@ -70,8 +70,7 @@ def test_report_val_uses_per_row_value_format_seq_when_set():
     bản tự tính sẵn) -> mỗi report_val() dùng ĐÚNG format khai báo cho vị
     trí đó (row_def.value_format_seq), không dùng chung 1 format cho cả
     bảng như mặc định."""
-    row_def = RowDef(key="r0", raw_count=2, measured_count=1,
-                      value_format_seq=["freq", "sci"])
+    row_def = RowDef(key="r0", raw_count=2, value_format_seq=["freq", "sci"])
     descriptor = _descriptor(rows=[row_def], value_format="text")
     rows = [_row(raw_readings=[1000000.0, 2.4e-7])]
     ctx = table_engine.build_cursor_context(descriptor, rows, rt=None)
@@ -286,6 +285,21 @@ def test_map_table_value_vs_parsed_threshold():
     assert rt.passed is False
 
 
+def test_map_table_value_vs_parsed_threshold_works_for_any_unit():
+    """_parse_le_limit() lấy phần số ở đầu chuỗi ngưỡng, không giới hạn ở
+    hậu tố mVrms/dBm -> value_vs_parsed_threshold dùng được cho mọi đơn vị
+    (vd Hz, W, hay không ghi đơn vị nào)."""
+    d = _descriptor(value_unit="Hz", rows=[
+        RowDef(key="r1", limit="≤ 1000 Hz", raw_count=1),
+        RowDef(key="r2", limit="5", raw_count=1),          # không ghi đơn vị
+        RowDef(key="r3", limit="≤ -10 W", raw_count=1),
+    ], pass_rule={"type": "value_vs_parsed_threshold"})
+    rt = table_engine.map_table(d, _step_results(999.0, 6.0, -12.0))
+    assert rt.rows[0].passed is True    # 999 <= 1000
+    assert rt.rows[1].passed is False   # 6 > 5
+    assert rt.rows[2].passed is True    # -12 <= -10
+
+
 def test_map_table_correction_vs_reference_never_has_pass_fail():
     """Bảng hiệu chuẩn (kiểu QTHC 2.515) — error = chuẩn - đo được, KHÔNG có
     khái niệm Đạt/Không đạt, dù đo lệch bao nhiêu."""
@@ -297,22 +311,24 @@ def test_map_table_correction_vs_reference_never_has_pass_fail():
     assert rt.passed is None
 
 
-def test_map_table_raw_count_averages_multiple_readings():
+def test_map_table_raw_count_does_not_average_multiple_readings():
+    """Phần mềm KHÔNG tự tính trung bình nữa (bỏ measured_count) — dù dòng
+    đẩy nhiều report_val(), value_measured LUÔN là report_val() ĐẦU TIÊN;
+    kịch bản phải tự tính trung bình trước khi đẩy nếu cần."""
     d = _descriptor(rows=[RowDef(key="r1", reference=10.0, raw_count=3)],
                      pass_rule={"type": "none"})
     rt = table_engine.map_table(d, _step_results(9.0, 10.0, 11.0))
-    assert rt.rows[0].value_measured == 10.0
+    assert rt.rows[0].value_measured == 9.0
     assert rt.rows[0].raw_readings == [9.0, 10.0, 11.0]
 
 
-def test_map_table_measured_count_excludes_extra_slots_from_formula():
+def test_map_table_only_first_report_val_drives_formula():
     """Dòng đẩy 2 report_val (giá trị đo rồi đến sai số kịch bản tự tính sẵn,
-    vd Bảng A5 QTKĐ 2.461) -> raw_count=2 nhưng measured_count=1 phải khiến
-    value_measured/error/passed chỉ tính từ giá trị đo (slot đầu), KHÔNG
-    trộn lẫn với slot sai số (chỉ để report_val() hiển thị lại, không phải
-    nguồn công thức)."""
+    vd Bảng A5 QTKĐ 2.461) -> value_measured/error/passed LUÔN tính từ
+    report_val() ĐẦU TIÊN, report_val() sau chỉ hiển thị lại (không phải
+    nguồn công thức) — không cần cấu hình measured_count nữa."""
     d = _descriptor(rows=[
-        RowDef(key="f1", freq_set=1e6, reference=1e6, raw_count=2, measured_count=1,
+        RowDef(key="f1", freq_set=1e6, reference=1e6, raw_count=2,
                value_format_seq=["freq", "sci"]),
     ], pass_rule={"type": "relative_error_vs_fixed_limit",
                   "params": {"fixed_limit": 2.4e-7, "limit_str": "± 2,4×10⁻⁷"}})
@@ -321,6 +337,20 @@ def test_map_table_measured_count_excludes_extra_slots_from_formula():
     assert rt.rows[0].value_measured == 1_000_000.1
     assert rt.rows[0].raw_readings == [1_000_000.1, 1e-7]
     assert rt.rows[0].passed is True   # 0.1/1e6 = 1e-7 <= 2.4e-7, tính từ ĐÚNG slot đo được
+
+
+def test_map_table_correction_vs_reference_last_slot_becomes_gcn_limit():
+    """Bảng hiệu chuẩn (correction_vs_reference) đẩy >1 report_val() (vd TB
+    rồi Độ KĐBĐ kịch bản tự tính) -> report_val() CUỐI CÙNG tự động trở
+    thành `limit`, để gcn_limit() đọc lại đúng giá trị này — không cần
+    uncertainty_index nữa."""
+    d = _descriptor(rows=[
+        RowDef(key="1mW", reference=1.0, raw_count=3,
+               value_format_seq=["w", "w", "correction_mw"]),
+    ], pass_rule={"type": "correction_vs_reference"})
+    rt = table_engine.map_table(d, _step_results(0.98, 0.99, 0.015))
+    assert rt.rows[0].value_measured == 0.98
+    assert rt.rows[0].limit == table_engine._format("correction_mw", 0.015)
 
 
 def test_map_table_leftover_values_produce_note():

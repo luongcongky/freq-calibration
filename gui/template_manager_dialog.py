@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox, QWidget,
     QTabWidget, QScrollArea, QSizePolicy, QTextEdit, QDialogButtonBox, QFrame,
     QListWidget, QListWidgetItem, QSplitter, QStackedWidget, QCheckBox,
+    QHeaderView,
 )
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt
@@ -47,7 +48,6 @@ from core import table_import as timport
 from core.report_templates import list_templates
 from core.report_templates.generic import TEMPLATES_DIR, template_summary
 from core.table_descriptor import RowDef, TableDescriptor, load_table_descriptors, validate_descriptor
-from dataclasses import replace as _dc_replace
 
 SYNTAX_CHEAT_SHEET = """\
 FIELD TĨNH (1 lần/tài liệu) — lấy từ "Thông tin phiên":
@@ -98,19 +98,20 @@ TỔNG KẾT 1 DÒNG/BÀI TEST trong Giấy chứng nhận (GCN) — chọn 1 tr
         1.Xác định sai số bộ dao động thạch anh | {{ tables.A1.result }} | ± 2,4×10⁻⁷
         {%tr endif %}
 
-  (b) {{ tables.<Mã bảng>.gcn_avg() }}     trung bình các lần đo của dòng
-      {{ tables.<Mã bảng>.gcn_error() }}   số hiệu chỉnh (chuẩn − trung bình)
+  (b) {{ tables.<Mã bảng>.gcn_avg() }}     report_val() ĐẦU TIÊN của dòng
+      {{ tables.<Mã bảng>.gcn_error() }}   số hiệu chỉnh (chuẩn − giá trị trên)
       {{ tables.<Mã bảng>.gcn_limit() }}   ngưỡng của dòng (nếu có khai báo)
       Dùng cho văn bản HIỆU CHUẨN (pass_rule correction_vs_reference) —
-      phần mềm tự tổng hợp lại từ ĐÚNG report_val() Biên Bản đã đẩy.
+      phần mềm KHÔNG tự tính trung bình nữa, chỉ đọc lại ĐÚNG report_val()
+      Biên Bản đã đẩy (kịch bản tự tính trung bình trước khi đẩy, nếu cần).
 
       Ví dụ minh hoạ — mẫu TEMPLATE_POWER, bảng A1 (pass_rule
-      correction_vs_reference, value_format "w", dòng "1 mW" có
-      uncertainty_index nên gcn_limit() ở đây trả về ĐÚNG giá trị Độ KĐBĐ
-      kịch bản đã đẩy, không phải ngưỡng tĩnh):
-        {{ tables.A1.gcn_avg() }}     -> TB 10 report_val() đo thật, format "w" (vd "0,001021 W")
+      correction_vs_reference, value_format "w", dòng "1 mW" đẩy >1
+      report_val() nên gcn_limit() ở đây trả về ĐÚNG report_val() CUỐI CÙNG
+      (Độ KĐBĐ kịch bản đã tự tính rồi đẩy thêm), không phải ngưỡng tĩnh):
+        {{ tables.A1.gcn_avg() }}     -> report_val() đầu tiên, format "w" (vd "0,001021 W")
         {{ tables.A1.gcn_error() }}   -> tự format correction_mw (auto suy từ value_format="w")
-        {{ tables.A1.gcn_limit() }}   -> Độ KĐBĐ = report_val() thứ 12/12 kịch bản tự tính
+        {{ tables.A1.gcn_limit() }}   -> Độ KĐBĐ = report_val() CUỐI CÙNG kịch bản tự tính
 """
 
 _KIND_LABELS = [("kiem_dinh", "Kiểm định"), ("hieu_chuan", "Hiệu chuẩn")]
@@ -178,6 +179,7 @@ class TemplateManagerDialog(QDialog):
         self.setWindowTitle("Quản lý mẫu báo cáo")
         self.setMinimumSize(1200, 700)
         self.changed = False   # True nếu có bất kỳ thay đổi nào cần refresh combobox chọn mẫu
+        self.changed_ids: set[str] = set()  # mã các mẫu THỰC SỰ bị sửa nội dung (không tính sao chép)
         self.template_id: str | None = None
         self._just_copied_id: str | None = None
 
@@ -217,9 +219,9 @@ class TemplateManagerDialog(QDialog):
         self.lbl_warn.setWordWrap(True)
         rl.addWidget(self.lbl_warn)
         self.tabs = QTabWidget()
-        self.tabs.addTab(QWidget(), "Thông tin chung")
-        self.tabs.addTab(QWidget(), "Bảng dữ liệu")
-        self.tabs.addTab(QWidget(), "File Word")
+        self.tabs.addTab(QWidget(), "1. Thông tin chung")
+        self.tabs.addTab(QWidget(), "2. File Word")
+        self.tabs.addTab(QWidget(), "3. Bảng dữ liệu")
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
 
@@ -318,6 +320,7 @@ class TemplateManagerDialog(QDialog):
             QMessageBox.critical(self, "Lỗi khi xoá", str(exc))
             return
         self.changed = True
+        self.changed_ids.add(tid)
         self.template_id = None
         self._reload_list()
 
@@ -343,9 +346,17 @@ class TemplateManagerDialog(QDialog):
         self.btn_delete.setEnabled(True)
         self._meta = json.loads((self.tpl_dir / "meta.json").read_text(encoding="utf-8"))
         self._descriptors = load_table_descriptors(self.tables_dir)
-        self._swap_tab(0, self._build_meta_tab(), "Thông tin chung")
-        self._swap_tab(1, self._build_tables_tab(), f"Bảng dữ liệu ({len(self._descriptors)})")
-        self._swap_tab(2, self._build_docx_tab(), "File Word")
+        # _swap_tab() dựng lại tab bằng removeTab()+insertTab() — nếu tab
+        # đang ACTIVE nằm trong số bị dựng lại (vd tab 2 "Bảng dữ liệu" sau
+        # khi Xoá 1 bảng), Qt mất dấu tab hiện tại lúc removeTab() và rơi về
+        # tab liền trước thay vì quay lại đúng tab -> phải tự lưu/khôi phục
+        # currentIndex().
+        current = self.tabs.currentIndex()
+        self._swap_tab(0, self._build_meta_tab(), "1. Thông tin chung")
+        self._swap_tab(1, self._build_docx_tab(), "2. File Word")
+        self._swap_tab(2, self._build_tables_tab(), f"3. Bảng dữ liệu ({len(self._descriptors)})")
+        if current >= 0:
+            self.tabs.setCurrentIndex(current)
         just_copied = template_id == self._just_copied_id
         self.lbl_warn.setText(
             "" if just_copied else
@@ -365,6 +376,8 @@ class TemplateManagerDialog(QDialog):
 
     def _mark_changed(self):
         self.changed = True
+        if self.template_id:
+            self.changed_ids.add(self.template_id)
 
     # -- Tab 1: Thông tin chung ------------------------------------------
 
@@ -443,8 +456,8 @@ class TemplateManagerDialog(QDialog):
         toolbar.addStretch()
         lay.addLayout(toolbar)
 
-        tbl = QTableWidget(len(self._descriptors), 7)
-        tbl.setHorizontalHeaderLabels(["Mã", "Tên bài test", "Độ phức tạp", "", "", "", ""])
+        tbl = QTableWidget(len(self._descriptors), 5)
+        tbl.setHorizontalHeaderLabels(["Mã", "Tên bài test", "", "", ""])
         tbl.horizontalHeader().setStretchLastSection(False)
         tbl.horizontalHeader().setSectionResizeMode(1, tbl.horizontalHeader().Stretch)
         tbl.verticalHeader().setVisible(False)
@@ -453,40 +466,25 @@ class TemplateManagerDialog(QDialog):
         for i, d in enumerate(self._descriptors):
             tbl.setItem(i, 0, QTableWidgetItem(d.table_id))
             tbl.setItem(i, 1, QTableWidgetItem(d.name))
-            advanced = wio.is_advanced_table(d)
-            tbl.setItem(i, 2, QTableWidgetItem("⚙ Nâng cao" if advanced else "✓ Đơn giản"))
 
-            btn_detail = QPushButton("👁 Chi tiết")
-            btn_detail.clicked.connect(lambda _c=False, tid=d.table_id: self._show_detail(tid))
-            tbl.setCellWidget(i, 3, btn_detail)
-
-            btn = QPushButton("Xem JSON" if advanced else "✏️ Sửa")
-            if advanced:
-                btn.clicked.connect(lambda _c=False, tid=d.table_id: _open_path(self.tables_dir / f"{tid}.json"))
-            else:
-                btn.clicked.connect(lambda _c=False, tid=d.table_id: self._edit_table(tid))
-            tbl.setCellWidget(i, 4, btn)
+            btn = QPushButton("✏️ Sửa")
+            btn.clicked.connect(lambda _c=False, tid=d.table_id: self._edit_table(tid))
+            tbl.setCellWidget(i, 2, btn)
 
             btn_copy = QPushButton("📋 Copy")
             btn_copy.setToolTip("Sao chép bảng này thành bảng mới")
             btn_copy.clicked.connect(lambda _c=False, tid=d.table_id, name=d.name: self._copy_table(tid, name))
-            tbl.setCellWidget(i, 5, btn_copy)
+            tbl.setCellWidget(i, 3, btn_copy)
 
             btn_del = QPushButton("🗑 Xoá")
             btn_del.setToolTip("Xoá bảng này")
             btn_del.setStyleSheet(f"color:{Colors.ACCENT_RED};")
             btn_del.clicked.connect(lambda _c=False, tid=d.table_id, name=d.name: self._delete_table(tid, name))
-            tbl.setCellWidget(i, 6, btn_del)
+            tbl.setCellWidget(i, 4, btn_del)
 
         tbl.resizeColumnsToContents()
         _fit_table_height(tbl)
         lay.addWidget(tbl)
-
-        hint = QLabel("⚙ Nâng cao = bảng có field kịch bản tự tính thêm (sai số, TB, Độ KĐBĐ) — "
-                       "form hiện chưa biểu diễn được, mở bằng ứng dụng mặc định để sửa file JSON.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:11px;")
-        lay.addWidget(hint)
 
         lay.addStretch()
 
@@ -500,7 +498,21 @@ class TemplateManagerDialog(QDialog):
         existing = next((d for d in self._descriptors if d.table_id == table_id), None)
         if existing is None:
             return
-        dlg = TableFormDialog(self.tables_dir, wio.descriptor_to_spec(existing), parent=self)
+        # raw_count/value_format_seq giữ ĐÚNG NGUYÊN theo từng dòng đã có
+        # (không còn bắt buộc đồng nhất giữa các dòng — 1 dòng tổng hợp gộp
+        # ô có thể có raw_count khác các dòng còn lại, xem
+        # core/table_wizard_io.py::raw_counts_for_measured_cols) — form vẫn
+        # sửa được bình thường, chỉ ẩn nút "Sửa cấu trúc report_val()" nếu
+        # các dòng không cùng 1 số (TableFormDialog tự xử lý).
+        raw_counts = [r.raw_count or 1 for r in existing.rows]
+        row_value_format_seqs = [list(r.value_format_seq) if r.value_format_seq else None
+                                  for r in existing.rows]
+        row_advanced = None
+        if len(set(raw_counts)) == 1 and raw_counts and raw_counts[0] > 1:
+            row_advanced = {"value_format_seq": row_value_format_seqs[0]}
+        dlg = TableFormDialog(self.tables_dir, wio.descriptor_to_spec(existing),
+                               raw_counts=raw_counts, row_advanced=row_advanced,
+                               row_value_format_seqs=row_value_format_seqs, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             self._mark_changed()
             self._load_template(self.template_id)
@@ -513,16 +525,6 @@ class TemplateManagerDialog(QDialog):
         dlg = ImportTableFromWordDialog(self.tables_dir, docx_path, self._descriptors, parent=self)
         dlg.exec_()
         if dlg.imported_any:
-            self._mark_changed()
-            self._load_template(self.template_id)
-
-    def _show_detail(self, table_id: str):
-        d = next((d for d in self._descriptors if d.table_id == table_id), None)
-        if d is None:
-            return
-        dlg = TableDetailDialog(d, self.tables_dir, parent=self)
-        dlg.exec_()
-        if dlg.changed:
             self._mark_changed()
             self._load_template(self.template_id)
 
@@ -745,87 +747,45 @@ class CopyTableDialog(QDialog):
 
 def _describe_row_structure(row_def) -> str:
     """Diễn giải bằng tiếng Việt cách 1 dòng tiêu thụ report_val() — bảng
-    đơn giản chỉ 1 câu ngắn, bảng nâng cao giải thích rõ bao nhiêu report_val()
-    là lần đo thật vs field kịch bản tự tính, và Độ KĐBĐ (nếu có) nằm ở đâu."""
+    đơn giản chỉ 1 câu ngắn, bảng nâng cao giải thích rõ report_val() nào
+    dùng cho công thức Đạt/Không đạt, report_val() nào chỉ hiển thị lại
+    (kịch bản đã tự tính sẵn — phần mềm không tự tính trung bình/Độ KĐBĐ
+    nữa, xem core/table_engine.py::apply_pass_rule)."""
     raw_count = row_def.raw_count
-    if (row_def.measured_count is None and row_def.value_format_seq is None
-            and row_def.uncertainty_index is None):
-        if raw_count is None:
-            return "Lấy HẾT report_val() còn lại của bảng (không giới hạn số lần đo)."
-        if raw_count == 1:
-            return "1 report_val() = 1 lần đo thật."
-        return f"{raw_count} report_val() liên tiếp, TẤT CẢ đều là lần đo thật (tính trung bình)."
-
-    total = raw_count if raw_count is not None else (row_def.measured_count or 0)
-    measured = row_def.measured_count if row_def.measured_count is not None else total
-    extra = total - measured
-    text = f"{measured} report_val() ĐẦU là lần đo thật (dùng tính trung bình/công thức)"
-    if extra > 0:
-        text += f"; {extra} report_val() SAU do KỊCH BẢN TỰ TÍNH rồi đẩy thêm (vd sai số, TB, Độ KĐBĐ)"
-    if row_def.uncertainty_index is not None:
-        text += f". Độ KĐBĐ = report_val() thứ {row_def.uncertainty_index + 1}/{total}, hiện ra GCN qua gcn_limit()"
-    return text + "."
-
-
-def _parse_float_or_none(text: str, field_label: str, row_label: str):
-    text = text.strip()
-    if text in ("", "—"):
-        return None
-    try:
-        return float(text.replace(",", "."))
-    except ValueError:
-        raise ValueError(f"Dòng '{row_label}': {field_label} '{text}' không phải số hợp lệ.")
-
-
-def _parse_int_or_none(text: str, field_label: str, row_label: str):
-    text = text.strip()
-    if text in ("", "—", "hết còn lại"):
-        return None
-    try:
-        return int(text)
-    except ValueError:
-        raise ValueError(f"Dòng '{row_label}': {field_label} '{text}' không phải số nguyên hợp lệ.")
+    if raw_count is None:
+        return "Lấy HẾT report_val() còn lại của bảng (không giới hạn số lần đo)."
+    if raw_count == 1:
+        return "1 report_val() = 1 giá trị đo dùng cho công thức Đạt/Không đạt."
+    return (f"{raw_count} report_val() liên tiếp — report_val() ĐẦU TIÊN dùng cho công thức "
+            f"Đạt/Không đạt; {raw_count - 1} report_val() SAU chỉ hiển thị lại nguyên văn (kịch bản "
+            f"đã tự tính sẵn, vd trung bình/sai số). Nếu bảng dùng quy tắc 'Tính số hiệu chỉnh', "
+            f"report_val() CUỐI CÙNG tự động là Độ KĐBĐ hiện ra GCN qua gcn_limit().")
 
 
 class RowAdvancedDialog(QDialog):
-    """Sửa 3 field 'nâng cao' của 1 dòng — measured_count/value_format_seq/
-    uncertainty_index (core/table_descriptor.py::RowDef) — tách riêng khỏi
-    bảng chính vì value_format_seq là 1 DANH SÁCH (1 định dạng/report_val()),
-    không gõ vừa trong 1 ô bảng thường được."""
+    """Sửa định dạng riêng (value_format_seq) cho 1 dòng nhận NHIỀU
+    report_val() liên tiếp (core/table_descriptor.py::RowDef) — tách riêng
+    khỏi bảng chính vì value_format_seq là 1 DANH SÁCH (1 định dạng/
+    report_val()), không gõ vừa trong 1 ô bảng thường được.
+
+    Phần mềm KHÔNG tự tính trung bình/Độ KĐBĐ nữa: report_val() ĐẦU TIÊN
+    luôn là giá trị dùng cho công thức Đạt/Không đạt, các report_val() sau
+    chỉ hiển thị lại nguyên văn (kịch bản đã tự tính sẵn)."""
 
     def __init__(self, row_key: str, raw_count: int, adv: dict, default_format: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Cấu trúc nâng cao — dòng '{row_key}'")
-        self.setMinimumSize(1500, 800)
+        self.setWindowTitle(f"Định dạng report_val() — dòng '{row_key}'")
+        self.setMinimumSize(900, 320)
         self.raw_count = raw_count
         lay = QVBoxLayout(self)
 
-        info = QLabel(f"Dòng này tiêu thụ {raw_count} report_val() liên tiếp.")
+        info = QLabel(f"Dòng này tiêu thụ {raw_count} report_val() liên tiếp — report_val() ĐẦU TIÊN "
+                       f"dùng cho công thức Đạt/Không đạt, các report_val() sau chỉ hiển thị lại nguyên "
+                       f"văn (kịch bản đã tự tính sẵn).")
         info.setWordWrap(True)
         lay.addWidget(info)
 
-        # -- measured_count --
-        self.chk_all_measured = QRadioButton("Dùng HẾT report_val() để tính (không có phần kịch bản tự tính thêm)")
-        self.chk_partial_measured = QRadioButton("Chỉ 1 số report_val() ĐẦU là đo thật, phần còn lại kịch bản tự tính")
-        grp = QButtonGroup(self)
-        grp.addButton(self.chk_all_measured)
-        grp.addButton(self.chk_partial_measured)
-        lay.addWidget(self.chk_all_measured)
-        lay.addWidget(self.chk_partial_measured)
-        mc_form = QFormLayout()
-        self.sp_measured = QSpinBox()
-        self.sp_measured.setRange(0, raw_count)
-        self.sp_measured.setValue(adv["measured_count"] if adv["measured_count"] is not None else raw_count)
-        mc_form.addRow("Số report_val() ĐẦU là đo thật:", self.sp_measured)
-        lay.addLayout(mc_form)
-        is_partial = adv["measured_count"] is not None
-        self.chk_partial_measured.setChecked(is_partial)
-        self.chk_all_measured.setChecked(not is_partial)
-        self.sp_measured.setEnabled(is_partial)
-        self.chk_partial_measured.toggled.connect(self.sp_measured.setEnabled)
-
         # -- value_format_seq --
-        lay.addWidget(QLabel(""))
         self.chk_default_format = QRadioButton("Dùng ĐÚNG 1 định dạng mặc định của bảng cho mọi report_val()")
         self.chk_custom_format = QRadioButton("Đặt định dạng riêng cho từng report_val()")
         grp2 = QButtonGroup(self)
@@ -855,12 +815,7 @@ class RowAdvancedDialog(QDialog):
         seq_box.setEnabled(has_custom)
         self.chk_custom_format.toggled.connect(seq_box.setEnabled)
 
-        # -- uncertainty_index --
-        ui_form = QFormLayout()
-        ui_items = [(None, "Không có")] + [(i, f"Vị trí {i + 1}") for i in range(raw_count)]
-        self.cb_uncertainty = _combo(ui_items, current=adv["uncertainty_index"])
-        ui_form.addRow("Độ KĐBĐ nằm ở report_val() nào:", self.cb_uncertainty)
-        lay.addLayout(ui_form)
+        lay.addStretch()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -872,286 +827,11 @@ class RowAdvancedDialog(QDialog):
         paint_corner_brackets(self)
 
     def result_values(self) -> dict:
-        measured_count = self.sp_measured.value() if self.chk_partial_measured.isChecked() else None
         if self.chk_custom_format.isChecked():
             value_format_seq = [cb.currentData() for cb in self.format_combos]
         else:
             value_format_seq = None
-        uncertainty_index = self.cb_uncertainty.currentData()
-        return {
-            "measured_count": measured_count,
-            "value_format_seq": value_format_seq,
-            "uncertainty_index": uncertainty_index,
-        }
-
-
-class TableDetailDialog(QDialog):
-    """Xem VÀ SỬA chi tiết 1 bảng — mục tiêu giúp người dùng hiểu Ý NGHĨA
-    từng thuộc tính cấu hình (pass_rule, measured_count, value_format_seq,
-    uncertainty_index...) mà không cần tự đọc/đoán JSON thô, đồng thời sửa
-    trực tiếp giá trị từng dòng (kể cả cấu trúc nâng cao) mà không cần mở
-    file JSON bằng tay. 'Khoá' giữ CỐ ĐỊNH (không cho sửa) vì Scenario
-    Builder tham chiếu tới field này — đổi sẽ làm gãy kịch bản đã gán."""
-
-    def __init__(self, descriptor, tables_dir, parent=None):
-        super().__init__(parent)
-        self.descriptor = descriptor
-        self.tables_dir = Path(tables_dir)
-        self.changed = False
-        self.setWindowTitle(f"Chi tiết bảng {descriptor.table_id}")
-        self.setMinimumSize(1500, 800)
-        layout = QVBoxLayout(self)
-
-        info = QFormLayout()
-        info.addRow("Mã bảng:", QLabel(descriptor.table_id))
-
-        self.e_name = QLineEdit(descriptor.name)
-        info.addRow("Tên bài test:", self.e_name)
-
-        self.sp_order = QSpinBox()
-        self.sp_order.setRange(1, 999)
-        self.sp_order.setValue(descriptor.order)
-        info.addRow("Thứ tự hiển thị:", self.sp_order)
-
-        self.e_value_unit = QComboBox()
-        self.e_value_unit.setEditable(True)
-        self.e_value_unit.addItems(["Hz", "mVrms", "dBm", "s", "W"])
-        self.e_value_unit.setEditText(descriptor.value_unit)
-        info.addRow("Đơn vị giá trị đo:", self.e_value_unit)
-
-        self.e_value_format = _combo(wio.FORMAT_LABELS_ALL, current=descriptor.value_format)
-        info.addRow("Định dạng giá trị mặc định:", self.e_value_format)
-        layout.addLayout(info)
-
-        # -- quy tắc Đạt/Không đạt (giống TableFormDialog) --
-        layout.addWidget(QLabel("Quy tắc Đạt/Không đạt:"))
-        self.pr_group = QButtonGroup(self)
-        self.pr_widgets = {}
-        current_pr = descriptor.pass_rule.get("type", "none")
-        for key, desc in wio.PASS_RULE_CHOICES:
-            rb = QRadioButton(desc)
-            rb.setProperty("pr_key", key)
-            self.pr_group.addButton(rb)
-            layout.addWidget(rb)
-            extra = QWidget()
-            extra_lay = QFormLayout(extra)
-            extra.setVisible(False)
-            if key == "relative_error_vs_fixed_limit":
-                params = descriptor.pass_rule.get("params", {}) if current_pr == key else {}
-                e_limit = QLineEdit(str(params.get("fixed_limit", "2.4e-7")))
-                e_str = QLineEdit(params.get("limit_str", "± 2,4×10⁻⁷"))
-                extra_lay.addRow("Ngưỡng sai số tương đối:", e_limit)
-                extra_lay.addRow("Chuỗi hiển thị:", e_str)
-                self.pr_widgets[key] = {"fixed_limit": e_limit, "limit_str": e_str, "extra": extra, "radio": rb}
-            else:
-                self.pr_widgets[key] = {"extra": extra, "radio": rb}
-            rb.setChecked(key == current_pr)
-            rb.toggled.connect(lambda checked, ex=extra: ex.setVisible(checked))
-            extra.setVisible(key == current_pr)
-            layout.addWidget(extra)
-        if current_pr not in self.pr_widgets:
-            self.pr_widgets["none"]["radio"].setChecked(True)
-
-        self.advanced = wio.is_advanced_table(descriptor)
-        self.note = QLabel()
-        self.note.setWordWrap(True)
-        self._refresh_note()
-        layout.addWidget(self.note)
-
-        edit_hint = QLabel("Sửa trực tiếp các ô bên dưới rồi bấm \"💾 Lưu thay đổi\". "
-                            "'Khoá' giữ cố định (Scenario Builder tham chiếu tới field này).")
-        edit_hint.setWordWrap(True)
-        edit_hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:11px;")
-        layout.addWidget(edit_hint)
-
-        self.tbl = QTableWidget(len(descriptor.rows), 8)
-        self.tbl.setHorizontalHeaderLabels(
-            ["Khoá", "Nhãn hiển thị", "Tần số thiết lập", "Chuẩn dùng để tính", "Ngưỡng",
-             "Số report_val()", "Diễn giải", ""])
-        self.tbl.verticalHeader().setVisible(False)
-        self.tbl.horizontalHeader().setSectionResizeMode(6, self.tbl.horizontalHeader().Stretch)
-        self.tbl.horizontalHeader().setSectionResizeMode(7, self.tbl.horizontalHeader().Fixed)
-        self.tbl.horizontalHeader().resizeSection(7, 44)
-
-        self._row_advanced = []
-        for i, r in enumerate(descriptor.rows):
-            key_item = QTableWidgetItem(r.key)
-            key_item.setFlags(key_item.flags() & ~Qt.ItemIsEditable)
-            key_item.setToolTip("Khoá không sửa được — Scenario Builder tham chiếu tới field này.")
-            self.tbl.setItem(i, 0, key_item)
-            self.tbl.setItem(i, 1, QTableWidgetItem(r.display_label))
-            self.tbl.setItem(i, 2, QTableWidgetItem(_num_str(r.freq_set) if r.freq_set is not None else ""))
-            self.tbl.setItem(i, 3, QTableWidgetItem(_num_str(r.reference) if r.reference is not None else ""))
-            self.tbl.setItem(i, 4, QTableWidgetItem(r.limit))
-            self.tbl.setItem(i, 5, QTableWidgetItem(str(r.raw_count) if r.raw_count is not None else ""))
-
-            self._row_advanced.append({
-                "measured_count": r.measured_count,
-                "value_format_seq": list(r.value_format_seq) if r.value_format_seq else None,
-                "uncertainty_index": r.uncertainty_index,
-            })
-
-            memo = QTextEdit()
-            memo.setReadOnly(True)
-            memo.setPlainText(_describe_row_structure(r))
-            memo.setFrameShape(QFrame.NoFrame)
-            memo.setLineWrapMode(QTextEdit.WidgetWidth)
-            memo.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            memo.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            memo.setStyleSheet("background: transparent;")
-            self.tbl.setCellWidget(i, 6, memo)
-            self.tbl.setRowHeight(i, 70)
-
-            btn_adv = QPushButton("⚙")
-            btn_adv.setToolTip("Sửa cấu trúc nâng cao (measured_count/value_format_seq/uncertainty_index)")
-            btn_adv.setFixedWidth(36)
-            btn_adv.clicked.connect(lambda _c=False, row=i: self._edit_advanced(row))
-            self.tbl.setCellWidget(i, 7, btn_adv)
-
-        self.tbl.itemChanged.connect(self._on_item_changed)
-        layout.addWidget(self.tbl, 1)
-
-        nav = QHBoxLayout()
-        nav.addStretch()
-        btn_save = QPushButton("💾 Lưu thay đổi")
-        btn_save.clicked.connect(self._save)
-        nav.addWidget(btn_save)
-        btn_close = QPushButton("Đóng")
-        btn_close.clicked.connect(self.accept)
-        nav.addWidget(btn_close)
-        layout.addLayout(nav)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        paint_corner_brackets(self)
-
-    def _refresh_note(self):
-        self.note.setText(
-            "⚙ Bảng NÂNG CAO — có dòng nhận NHIỀU report_val() (không chỉ 1 lần đo/dòng). "
-            "Xem cột \"Diễn giải\" bên dưới để biết rõ từng report_val() dùng vào việc gì."
-            if self.advanced else
-            "✓ Bảng ĐƠN GIẢN — mỗi dòng nhận đúng 1 report_val() (1 lần đo)."
-        )
-        self.note.setStyleSheet(
-            f"color:{Colors.ACCENT_WARN if self.advanced else Colors.ACCENT_GREEN}; font-size:11px; padding:4px 0;")
-
-    def _row_label(self, i: int) -> str:
-        item = self.tbl.item(i, 1)
-        label = item.text().strip() if item else ""
-        return label or self.tbl.item(i, 0).text()
-
-    def _raw_count_of_row(self, i: int):
-        try:
-            return _parse_int_or_none(self.tbl.item(i, 5).text(), "Số report_val()", self._row_label(i))
-        except ValueError:
-            return None
-
-    def _edit_advanced(self, i: int):
-        raw_count = self._raw_count_of_row(i)
-        if raw_count is None:
-            QMessageBox.warning(self, "Chưa thể sửa",
-                                 "Đặt trước 'Số report_val()' (số cụ thể, khác 'hết còn lại') "
-                                 "cho dòng này rồi mới sửa được cấu trúc nâng cao.")
-            return
-        dlg = RowAdvancedDialog(self._row_label(i), raw_count, self._row_advanced[i],
-                                 self.descriptor.value_format, parent=self)
-        if dlg.exec_() == QDialog.Accepted:
-            self._row_advanced[i] = dlg.result_values()
-            self._refresh_row_memo(i)
-
-    def _refresh_row_memo(self, i: int):
-        try:
-            row_def = self._current_row_def(i)
-        except ValueError:
-            return
-        memo = self.tbl.cellWidget(i, 6)
-        memo.setPlainText(_describe_row_structure(row_def))
-
-        advanced = False
-        for r in range(self.tbl.rowCount()):
-            try:
-                rd = self._current_row_def(r)
-            except ValueError:
-                continue
-            if rd.measured_count is not None or rd.value_format_seq is not None or rd.uncertainty_index is not None:
-                advanced = True
-                break
-        self.advanced = advanced
-        self._refresh_note()
-
-    def _on_item_changed(self, item):
-        self._refresh_row_memo(item.row())
-
-    def _current_row_def(self, i: int) -> RowDef:
-        original = self.descriptor.rows[i]
-        adv = self._row_advanced[i]
-        return RowDef(
-            key=original.key,
-            freq_set=_parse_float_or_none(self.tbl.item(i, 2).text(), "Tần số thiết lập", self._row_label(i)),
-            reference=_parse_float_or_none(self.tbl.item(i, 3).text(), "Chuẩn dùng để tính", self._row_label(i)),
-            raw_count=_parse_int_or_none(self.tbl.item(i, 5).text(), "Số report_val()", self._row_label(i)),
-            limit=self.tbl.item(i, 4).text().strip(),
-            display_label=self.tbl.item(i, 1).text().strip(),
-            measured_count=adv["measured_count"],
-            value_format_seq=list(adv["value_format_seq"]) if adv["value_format_seq"] else None,
-            uncertainty_index=adv["uncertainty_index"],
-        )
-
-    def _save(self):
-        try:
-            new_rows = [self._current_row_def(i) for i in range(self.tbl.rowCount())]
-        except ValueError as exc:
-            QMessageBox.warning(self, "Dữ liệu chưa hợp lệ", str(exc))
-            return
-
-        name = self.e_name.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Dữ liệu chưa hợp lệ", "Tên bài test không được để trống.")
-            return
-        value_unit = self.e_value_unit.currentText().strip()
-        value_format = self.e_value_format.currentData() or "text"
-
-        pr_btn = self.pr_group.checkedButton()
-        pr_key = pr_btn.property("pr_key") if pr_btn else "none"
-        if pr_key == "relative_error_vs_fixed_limit":
-            wdg = self.pr_widgets[pr_key]
-            try:
-                fixed_limit = float(wdg["fixed_limit"].text().strip().replace(",", "."))
-            except ValueError:
-                QMessageBox.warning(self, "Dữ liệu chưa hợp lệ", "Ngưỡng sai số phải là số.")
-                return
-            limit_str = wdg["limit_str"].text().strip()
-            if not limit_str:
-                QMessageBox.warning(self, "Dữ liệu chưa hợp lệ", "Chuỗi hiển thị ngưỡng không được để trống.")
-                return
-            pass_rule = {"type": pr_key, "params": {"fixed_limit": fixed_limit, "limit_str": limit_str}}
-        else:
-            pass_rule = {"type": pr_key}
-            if pr_key == "value_vs_parsed_threshold" and not wio.pass_rule_allowed_for_unit(pr_key, value_unit):
-                QMessageBox.warning(
-                    self, "Dữ liệu chưa hợp lệ",
-                    "Quy tắc 'So sánh với ngưỡng ghi từng dòng' chỉ dùng được với đơn vị mVrms/dBm.")
-                return
-
-        new_descriptor = _dc_replace(
-            self.descriptor, name=name, order=self.sp_order.value(),
-            value_unit=value_unit, value_format=value_format, pass_rule=pass_rule,
-            rows=new_rows,
-        )
-        errs = validate_descriptor(new_descriptor)
-        if errs:
-            QMessageBox.warning(self, "Dữ liệu chưa hợp lệ", "\n".join(errs))
-            return
-
-        try:
-            timport.apply_table_to_existing(self.tables_dir, new_descriptor)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Lỗi khi lưu", str(exc))
-            return
-
-        self.descriptor = new_descriptor
-        self.changed = True
-        QMessageBox.information(self, "Đã lưu", f"Đã lưu bảng {new_descriptor.table_id}.")
+        return {"value_format_seq": value_format_seq}
 
 
 # =============================================================================
@@ -1266,25 +946,54 @@ class ImportTableFromWordDialog(QDialog):
 
         if detected.already_tagged:
             warn = QLabel("⚠ Bảng này có vẻ ĐÃ có tag report_val() — đọc lại có thể ghi đè tag cũ.")
+            warn.setWordWrap(True)
             warn.setStyleSheet(f"color:{Colors.ACCENT_WARN};")
             lay.addWidget(warn)
 
-        lay.addWidget(QLabel("Xem trước nội dung đọc được từ Word (chỉ đọc, không sửa gì trong file):"))
-        preview = QTableWidget(detected.n_rows, detected.n_cols)
+        lbl_preview_hint = QLabel(
+            "Xem trước nội dung đọc được từ Word (chỉ đọc, không sửa gì trong file) — tick "
+            "\"Bỏ qua\" cho dòng nào KHÔNG phải dữ liệu thật (vd 1 dòng tiêu đề phụ lồng giữa "
+            "bảng) để giữ nguyên chữ tĩnh, không bị gắn tag/không bị tính là dòng dữ liệu:")
+        lbl_preview_hint.setWordWrap(True)
+        lay.addWidget(lbl_preview_hint)
+        preview = QTableWidget(detected.n_rows, detected.n_cols + 1)
         preview.setEditTriggers(QTableWidget.NoEditTriggers)
         preview.verticalHeader().setVisible(False)
-        preview.horizontalHeader().setVisible(False)
+        preview.setHorizontalHeaderLabels(["Bỏ qua", *[f"Cột {c + 1}" for c in range(detected.n_cols)]])
+        row_skip_checks: list = []
         for r, row_texts in enumerate(detected.grid):
+            chk = QCheckBox()
+            cell_w = QWidget()
+            cell_lay = QHBoxLayout(cell_w)
+            cell_lay.addWidget(chk)
+            cell_lay.setAlignment(Qt.AlignCenter)
+            cell_lay.setContentsMargins(2, 0, 2, 0)
+            preview.setCellWidget(r, 0, cell_w)
+            row_skip_checks.append(chk)
             for c, text in enumerate(row_texts):
                 item = QTableWidgetItem(text)
                 if r == 0:
                     f = item.font()
                     f.setBold(True)
                     item.setFont(f)
-                preview.setItem(r, c, item)
+                preview.setItem(r, c + 1, item)
+        preview.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        preview.setColumnWidth(0, 60)
         preview.resizeColumnsToContents()
+        preview.setColumnWidth(0, 60)
         preview.setMaximumHeight(220)
         lay.addWidget(preview)
+
+        def _sync_header_row_checkbox(value: int):
+            """Dòng tiêu đề (chọn ở spinner) LUÔN bị loại khỏi dữ liệu — tick
+            sẵn + khoá checkbox tương ứng để khỏi tick trùng 2 chỗ."""
+            for i, chk in enumerate(row_skip_checks):
+                is_header = (i == value - 1)
+                if is_header:
+                    chk.setChecked(True)
+                chk.setEnabled(not is_header)
+        sp_header_row.valueChanged.connect(_sync_header_row_checkbox)
+        _sync_header_row_checkbox(sp_header_row.value())
 
         lay.addWidget(QLabel("Mỗi cột trong bảng trên nghĩa là gì? (dựa theo dòng tiêu đề):"))
         role_form = QFormLayout()
@@ -1302,8 +1011,9 @@ class ImportTableFromWordDialog(QDialog):
         btn_continue.setStyleSheet(
             f"background:{Colors.ACCENT_GREEN}; color:{Colors.BG_WINDOW}; font-weight:bold; padding:6px 14px;")
         btn_continue.clicked.connect(
-            lambda _c=False, d=detected, tid=e_table_id, nm=e_name, hr=sp_header_row, rc=role_combos:
-                self._continue(d, tid, nm, hr, rc))
+            lambda _c=False, d=detected, tid=e_table_id, nm=e_name, hr=sp_header_row, rc=role_combos,
+                   sc=row_skip_checks:
+                self._continue(d, tid, nm, hr, rc, sc))
         lay.addWidget(btn_continue, alignment=Qt.AlignRight)
 
         scroller = QScrollArea()
@@ -1312,7 +1022,7 @@ class ImportTableFromWordDialog(QDialog):
         scroller.setWidget(w)
         return scroller
 
-    def _continue(self, detected, e_table_id, e_name, sp_header_row, role_combos):
+    def _continue(self, detected, e_table_id, e_name, sp_header_row, role_combos, row_skip_checks):
         table_id = e_table_id.text().strip()
         err = wio.validate_table_id_available(self.tables_dir, table_id)
         if err:
@@ -1332,21 +1042,58 @@ class ImportTableFromWordDialog(QDialog):
             return
 
         header_row_index = sp_header_row.value() - 1
-        rows = wio.build_rows_from_grid(detected.grid, role_map, header_row_index)
+        # Dòng nào tick "Bỏ qua" ở bảng xem trước (trừ dòng tiêu đề — đã tự
+        # loại riêng, xem header_row_index) -> không tính là dữ liệu, giữ
+        # nguyên chữ tĩnh, không bị gắn tag report_val().
+        extra_skip_rows = frozenset(
+            i for i, chk in enumerate(row_skip_checks)
+            if chk.isChecked() and i != header_row_index)
+
+        # An toàn: cảnh báo TRƯỚC khi gõ đè nếu có ô SẮP bị tag (theo cột "★
+        # Giá trị đo" đã chọn) đang chứa chữ tĩnh thật (không rỗng, không
+        # phải tag report_val() cũ) — phòng trường hợp quên tick "Bỏ qua"
+        # cho 1 dòng tiêu đề phụ lồng bên trong bảng, tránh mất chữ tĩnh mà
+        # không hay biết (đã từng xảy ra thật với dòng "lần 6"-"lần 10").
+        flags = wio.measured_cell_flags(self.docx_path, detected.index, measured_cols, header_row_index)
+        overwrite_warnings = []
+        for r, row_texts in enumerate(detected.grid):
+            if r == header_row_index or r in extra_skip_rows:
+                continue
+            for c in flags.get(r, ()):
+                text = row_texts[c] if c < len(row_texts) else ""
+                if text.strip() and "report_val()" not in text:
+                    overwrite_warnings.append(f"  Dòng {r + 1}, Cột {c + 1}: \"{text.strip()}\"")
+        if overwrite_warnings:
+            msg = ("Những ô sau đang có CHỮ TĨNH (không phải tag cũ) sẽ bị GÕ ĐÈ thành "
+                   "report_val() nếu tiếp tục:\n\n" + "\n".join(overwrite_warnings) +
+                   "\n\nCó chắc muốn tiếp tục không? (Nếu dòng đó KHÔNG phải dữ liệu thật, hãy "
+                   "Huỷ rồi tick \"Bỏ qua\" cho dòng đó ở bảng xem trước.)")
+            if QMessageBox.question(self, "Xác nhận ghi đè", msg,
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+
+        rows = wio.build_rows_from_grid(detected.grid, role_map, header_row_index, extra_skip_rows)
         if not rows:
             QMessageBox.warning(self, "Lỗi", "Không có dòng dữ liệu nào (kiểm tra lại dòng tiêu đề).")
             return
 
-        raw_count = len(measured_cols)
-        # >1 cột "giá trị đo" -> mỗi dòng có NHIỀU report_val() ("bảng nâng
-        # cao") — mặc định phương án ĐƠN GIẢN NHẤT (dùng HẾT làm số đo thật,
-        # 1 định dạng chung, không Độ KĐBĐ), KHÔNG ép mở dialog hỏi ngay —
-        # cùng nguyên tắc với Quy tắc Đạt/Không đạt: TableFormDialog sẽ tự
-        # hiện 1 nút "⚙ nâng cao" riêng cho ai muốn tuỳ chỉnh (xem
-        # TableFormDialog._edit_row_advanced), không bắt buộc phải hiểu để
-        # nhập xong 1 bảng.
-        row_advanced = {"measured_count": None, "value_format_seq": None, "uncertainty_index": None} \
-            if raw_count > 1 else None
+        # Số report_val()/dòng — dry-run (KHÔNG ghi gì) theo ĐÚNG cấu trúc ô
+        # thật trong Word, KHÔNG ép đồng nhất giữa các dòng: 1 dòng tổng hợp
+        # (vd "Trung Bình") gộp nhiều cột "★ Giá trị đo" thành 1 ô rộng chỉ
+        # cần ít report_val() hơn dòng đo thường — tự động khớp đúng, không
+        # cần khách cấu hình gì thêm (xem core/table_wizard_io.py::
+        # raw_counts_for_measured_cols). extra_skip_rows (vd 1 dòng tiêu đề
+        # phụ lồng bên trong bảng) giữ nguyên chữ tĩnh, không bị tính là dữ
+        # liệu/không bị gắn tag.
+        raw_counts = wio.raw_counts_for_measured_cols(
+            self.docx_path, detected.index, measured_cols, header_row_index, extra_skip_rows)
+        # Nút "⚙ nâng cao" (định dạng riêng từng report_val()) CHỈ hiện khi
+        # mọi dòng CÙNG 1 số report_val() — TableFormDialog tự ẩn nếu không,
+        # cùng nguyên tắc "ẩn nâng cao" như Quy tắc Đạt/Không đạt: không ép
+        # mở dialog hỏi ngay, không bắt buộc phải hiểu để nhập xong 1 bảng.
+        row_advanced = ({"value_format_seq": None}
+                        if len(set(raw_counts)) == 1 and raw_counts and raw_counts[0] > 1
+                        else None)
 
         spec = wio.WizardTableSpec(
             table_id=table_id, name=name, order=len(self.existing_descriptors) + 1,
@@ -1356,9 +1103,10 @@ class ImportTableFromWordDialog(QDialog):
         tag_target = {
             "docx_path": self.docx_path, "table_index": detected.index,
             "measured_cols": measured_cols, "header_row_index": header_row_index,
+            "extra_skip_rows": extra_skip_rows,
         }
         dlg = TableFormDialog(self.tables_dir, spec, is_new=True, tag_target=tag_target,
-                               raw_count=raw_count, row_advanced=row_advanced, parent=self)
+                               raw_counts=raw_counts, row_advanced=row_advanced, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             self.imported_any = True
             self._detected = wio.scan_docx_tables(self.docx_path)
@@ -1403,22 +1151,27 @@ class PassRuleDialog(QDialog):
             rb.setProperty("pr_key", key)
             self.pr_group.addButton(rb)
             lay.addWidget(rb)
-            extra = QWidget()
-            extra_lay = QFormLayout(extra)
-            extra.setVisible(False)
+            # Chỉ "relative_error_vs_fixed_limit" cần nhập thêm tham số -> chỉ
+            # dựng/hiện widget phụ cho đúng trường hợp đó, các lựa chọn khác
+            # không có gì để nhập thì KHÔNG thêm widget rỗng vào layout (trước
+            # đây vẫn thêm 1 QWidget rỗng rồi setVisible(True) khi chọn, hiện
+            # ra thành 1 khoảng trống không rõ nghĩa gì).
             if key == "relative_error_vs_fixed_limit":
+                extra = QWidget()
+                extra_lay = QFormLayout(extra)
                 params = current_pass_rule.get("params", {}) if current_pr == key else {}
                 e_limit = QLineEdit(str(params.get("fixed_limit", "2.4e-7")))
                 e_str = QLineEdit(params.get("limit_str", "± 2,4×10⁻⁷"))
                 extra_lay.addRow("Ngưỡng sai số tương đối:", e_limit)
                 extra_lay.addRow("Chuỗi hiển thị:", e_str)
                 self.pr_widgets[key] = {"fixed_limit": e_limit, "limit_str": e_str, "extra": extra, "radio": rb}
+                rb.setChecked(key == current_pr)
+                rb.toggled.connect(lambda checked, ex=extra: ex.setVisible(checked))
+                extra.setVisible(key == current_pr)
+                lay.addWidget(extra)
             else:
-                self.pr_widgets[key] = {"extra": extra, "radio": rb}
-            rb.setChecked(key == current_pr)
-            rb.toggled.connect(lambda checked, ex=extra: ex.setVisible(checked))
-            extra.setVisible(key == current_pr)
-            lay.addWidget(extra)
+                self.pr_widgets[key] = {"radio": rb}
+                rb.setChecked(key == current_pr)
         if current_pr not in self.pr_widgets:
             self.pr_widgets["none"]["radio"].setChecked(True)
 
@@ -1461,7 +1214,8 @@ class PassRuleDialog(QDialog):
 class TableFormDialog(QDialog):
     def __init__(self, tables_dir: Path, spec: "wio.WizardTableSpec", *,
                  is_new: bool = False, tag_target: dict | None = None,
-                 raw_count: int = 1, row_advanced: dict | None = None, parent=None):
+                 raw_counts: list | None = None, row_advanced: dict | None = None,
+                 row_value_format_seqs: list | None = None, parent=None):
         """spec: WizardTableSpec ĐÃ DỰNG SẴN — sửa bảng có sẵn (is_new=False,
         wio.descriptor_to_spec(existing)) hoặc bảng MỚI đọc từ Word
         (is_new=True, ImportTableFromWordDialog dựng sẵn rows từ bảng Word
@@ -1474,18 +1228,28 @@ class TableFormDialog(QDialog):
         core/table_wizard_io.py::insert_report_val_tags) — khách không phải
         tự gõ Jinja tay.
 
-        raw_count/row_advanced: >1 report_val()/dòng ("bảng nâng cao" — vd
-        khách chọn nhiều cột "★ Giá trị đo" ở ImportTableFromWordDialog) —
-        khi đó KHÔNG dùng wio.build_descriptor() (ép cứng raw_count=1), mà tự
-        dựng RowDef/TableDescriptor trực tiếp, row_advanced là kết quả của
-        RowAdvancedDialog.result_values() áp DÙNG CHUNG cho mọi dòng (cùng 1
-        bảng vật lý = cùng 1 cấu trúc cột)."""
+        raw_counts: số report_val() CỦA TỪNG DÒNG (list, cùng độ dài
+        spec.rows) — KHÔNG bắt buộc đồng nhất giữa các dòng: 1 dòng tổng hợp
+        (vd "Trung Bình") có thể gộp nhiều ô "giá trị đo" hẹp thành 1 ô rộng
+        nên chỉ cần ÍT report_val() hơn dòng đo thường (xem
+        core/table_wizard_io.py::raw_counts_for_measured_cols — tự động suy
+        ra từ cấu trúc ô THẬT trong Word, không cần khách tự gõ số này ở
+        đâu cả). None = mọi dòng raw_count=1 (bảng đơn giản).
+
+        row_advanced: {"value_format_seq": [...]} áp DÙNG CHUNG cho mọi dòng
+        — CHỈ dùng được khi raw_counts đồng nhất (mọi dòng cùng 1 số) vì
+        value_format_seq phải khớp ĐÚNG độ dài raw_count; khi raw_counts
+        không đồng nhất, nút "⚙ Sửa cấu trúc report_val()" tự ẩn, mỗi dòng
+        giữ nguyên value_format_seq riêng của nó (row_value_format_seqs,
+        dùng khi sửa 1 bảng có sẵn — None = dòng đó dùng định dạng mặc định
+        chung của bảng)."""
         super().__init__(parent)
         self.tables_dir = tables_dir
         self.is_new = is_new
         self.tag_target = tag_target
-        self.raw_count = raw_count
         self.row_advanced = row_advanced
+        raw_counts = list(raw_counts) if raw_counts is not None else [1] * len(spec.rows)
+        row_value_format_seqs = row_value_format_seqs or [None] * len(spec.rows)
 
         self.setWindowTitle("Bảng mới — xác nhận trước khi lưu" if is_new else f"Sửa bảng {spec.table_id}")
         self.setMinimumSize(1500, 800)
@@ -1515,15 +1279,35 @@ class TableFormDialog(QDialog):
         form.addRow("", self.chk_scientific)
         lay.addLayout(form)
 
+        # Đa số bảng chỉ cần 1 trong 2 lựa chọn đơn giản ở trên (suy thẳng từ
+        # Đơn vị, hoặc khoa học) — nhưng vài bảng cần đúng 1 trong 19 định
+        # dạng đặc thù (vd "mv" có kèm đơn vị thay vì "mv_no_unit"). Checkbox
+        # này thay cho cảnh báo cũ "sẽ bị đổi khi Lưu" — tự bật + chọn sẵn
+        # đúng định dạng hiện có khi sửa 1 bảng đã dùng định dạng đặc thù, để
+        # KHÔNG bị âm thầm đổi mất khi bấm Lưu.
         derivable_formats = set(wio._UNIT_TO_FORMAT_NO_UNIT.values()) | {"sci", "generic_no_unit"}
-        if not self.is_new and spec.value_format not in derivable_formats:
-            fmt_warn = QLabel(
-                f"⚠ Định dạng hiện tại ('{spec.value_format}') không nằm trong 2 lựa chọn đơn giản "
-                f"(theo Đơn vị / khoa học) — bấm Lưu sẽ đổi định dạng bảng này theo lựa chọn ở trên. "
-                f"Cần giữ nguyên định dạng đặc thù thì mở file JSON sửa tay thay vì dùng form này.")
-            fmt_warn.setWordWrap(True)
-            fmt_warn.setStyleSheet(f"color:{Colors.ACCENT_WARN}; font-size:11px;")
-            lay.addWidget(fmt_warn)
+        needs_custom_format = not self.is_new and spec.value_format not in derivable_formats
+
+        fmt_row = QHBoxLayout()
+        self.chk_custom_format = QCheckBox("Dùng định dạng khác (nâng cao)")
+        self.chk_custom_format.setChecked(needs_custom_format)
+        fmt_row.addWidget(self.chk_custom_format)
+        self.e_value_format_custom = _combo(wio.FORMAT_LABELS_ALL, current=spec.value_format)
+        self.e_value_format_custom.setEnabled(needs_custom_format)
+        fmt_row.addWidget(self.e_value_format_custom, 1)
+        lay.addLayout(fmt_row)
+        self.chk_custom_format.toggled.connect(self.e_value_format_custom.setEnabled)
+        self.chk_custom_format.toggled.connect(self.chk_scientific.setDisabled)
+        self.chk_scientific.setDisabled(needs_custom_format)
+
+        if needs_custom_format:
+            fmt_hint = QLabel(
+                f"Bảng này đang dùng định dạng đặc thù ('{spec.value_format}') — đã tự bật + chọn "
+                f"sẵn để KHÔNG bị đổi khi bạn Lưu. Bỏ tick nếu muốn quay về 2 lựa chọn đơn giản "
+                f"(theo Đơn vị / khoa học) ở trên.")
+            fmt_hint.setWordWrap(True)
+            fmt_hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:11px;")
+            lay.addWidget(fmt_hint)
 
         # --- quy tắc đạt/không đạt — mặc định TẮT (đánh dấu tay lúc chạy
         # phiên), chỉ hiện ra khi khách chủ động bấm nút "nâng cao" ---
@@ -1537,41 +1321,70 @@ class TableFormDialog(QDialog):
         pr_row.addWidget(btn_pass_rule)
         lay.addLayout(pr_row)
 
-        # --- cấu trúc nhiều report_val()/dòng — CHỈ hiện khi raw_count>1
-        # (bảng có >1 cột "★ Giá trị đo" ở ImportTableFromWordDialog); mặc
-        # định phương án đơn giản nhất, cùng nguyên tắc "ẩn nâng cao" như
-        # pass_rule ở trên — không ép hiểu để nhập xong 1 bảng. ---
-        if self.raw_count > 1:
-            if self.row_advanced is None:
-                self.row_advanced = {"measured_count": None, "value_format_seq": None, "uncertainty_index": None}
-            adv_row = QHBoxLayout()
-            self.lbl_row_advanced = QLabel(self._row_advanced_summary())
-            self.lbl_row_advanced.setWordWrap(True)
-            adv_row.addWidget(self.lbl_row_advanced, 1)
-            btn_row_advanced = QPushButton("⚙ Sửa cấu trúc report_val() (nâng cao)")
-            btn_row_advanced.clicked.connect(self._edit_row_advanced)
-            adv_row.addWidget(btn_row_advanced)
-            lay.addLayout(adv_row)
-
-        # --- dữ liệu từng dòng ---
-        lay.addWidget(QLabel("Dữ liệu từng dòng (điểm đo cố định của bảng — đúng số dòng "
-                              "bạn đã gõ report_val() trong file .docx):"))
+        # --- dữ liệu từng dòng — dựng TRƯỚC phần "cấu trúc report_val()" bên
+        # dưới (dù hiện SAU trong layout) vì cần đọc raw_counts/
+        # value_format_seq đã gắn theo từng dòng (Qt.UserRole) để tính tóm
+        # tắt hiển thị. "Tần số thiết lập" (freq_set) KHÔNG hiện ở form đơn
+        # giản này — chỉ dùng để hiển thị lại khi 1 cột docx tự gán role
+        # "freq_set" (chưa có đường dẫn UI nào gán role đó qua form này),
+        # không ảnh hưởng tới Đạt/Không đạt hay bảng rà soát Bước 2/3 (đọc
+        # Khoá/Chuẩn dùng để tính/Ngưỡng) -> ẩn đi để đỡ rối cho người dùng
+        # không rành kỹ thuật. Giữ nguyên None khi lưu; ai thực sự cần field
+        # này sửa file JSON trực tiếp.
         n_rows = len(spec.rows)
-        self.rows_table = QTableWidget(max(n_rows, 1), 5)
+        self.rows_table = QTableWidget(max(n_rows, 1), 4)
         self.rows_table.setHorizontalHeaderLabels(
-            ["Khoá", "Tần số thiết lập", "Chuẩn dùng để tính", "Ngưỡng", "Nhãn hiển thị"])
+            ["Khoá", "Chuẩn dùng để tính", "Ngưỡng", "Nhãn hiển thị"])
         self.rows_table.horizontalHeader().setStretchLastSection(True)
         for i, r in enumerate(spec.rows):
-            self.rows_table.setItem(i, 0, QTableWidgetItem(r.key))
+            key_item = QTableWidgetItem(r.key)
+            # raw_count/value_format_seq CỦA ĐÚNG DÒNG NÀY — gắn qua
+            # Qt.UserRole để tự đi theo dòng khi Thêm/Xoá dòng (KHÔNG hiện
+            # ra ô nào cho khách gõ tay — đúng bài học từ TableDetailDialog
+            # cũ: cho gõ tay "Số report_val()" tự do theo từng dòng từng
+            # gây lệch dữ liệu giữa các dòng).
+            key_item.setData(Qt.UserRole, raw_counts[i] if i < len(raw_counts) else 1)
+            key_item.setData(Qt.UserRole + 1, row_value_format_seqs[i] if i < len(row_value_format_seqs) else None)
+            self.rows_table.setItem(i, 0, key_item)
             self.rows_table.setItem(i, 1, QTableWidgetItem(
-                "" if r.freq_set is None else _num_str(r.freq_set)))
-            self.rows_table.setItem(i, 2, QTableWidgetItem(
                 "" if r.reference is None else _num_str(r.reference)))
-            self.rows_table.setItem(i, 3, QTableWidgetItem(r.limit))
-            self.rows_table.setItem(i, 4, QTableWidgetItem(r.display_label))
+            self.rows_table.setItem(i, 2, QTableWidgetItem(r.limit))
+            self.rows_table.setItem(i, 3, QTableWidgetItem(r.display_label))
+        self.rows_table.resizeColumnsToContents()
+
+        # --- cấu trúc nhiều report_val()/dòng — CHỈ hiện khi có dòng nào
+        # raw_count>1 (bảng có >1 cột "★ Giá trị đo" ở ImportTableFromWordDialog
+        # hoặc dòng tổng hợp gộp ô); mặc định phương án đơn giản nhất, cùng
+        # nguyên tắc "ẩn nâng cao" như pass_rule ở trên. Nút sửa định dạng
+        # riêng CHỈ hiện khi mọi dòng CÙNG 1 số report_val() — value_format_seq
+        # phải khớp đúng độ dài raw_count nên không áp dùng chung được khi
+        # các dòng khác số nhau (vd dòng tổng hợp ít report_val() hơn). ---
+        current_counts = self._current_raw_counts()
+        if max(current_counts, default=1) > 1:
+            uniform = len(set(current_counts)) == 1
+            adv_row = QHBoxLayout()
+            self.lbl_row_advanced = QLabel("")
+            self.lbl_row_advanced.setWordWrap(True)
+            self._refresh_row_advanced_summary()
+            adv_row.addWidget(self.lbl_row_advanced, 1)
+            if uniform:
+                if self.row_advanced is None:
+                    self.row_advanced = {"value_format_seq": None}
+                btn_row_advanced = QPushButton("⚙ Sửa cấu trúc report_val() (nâng cao)")
+                btn_row_advanced.clicked.connect(self._edit_row_advanced)
+                adv_row.addWidget(btn_row_advanced)
+            lay.addLayout(adv_row)
+
+        lay.addWidget(QLabel("Dữ liệu từng dòng (điểm đo cố định của bảng — đúng số dòng "
+                              "bạn đã gõ report_val() trong file .docx):"))
 
         def _add_row():
-            self.rows_table.insertRow(self.rows_table.rowCount())
+            row = self.rows_table.rowCount()
+            self.rows_table.insertRow(row)
+            key_item = QTableWidgetItem("")
+            key_item.setData(Qt.UserRole, 1)
+            key_item.setData(Qt.UserRole + 1, None)
+            self.rows_table.setItem(row, 0, key_item)
             _fit_table_height(self.rows_table)
 
         def _del_row():
@@ -1586,14 +1399,6 @@ class TableFormDialog(QDialog):
         btn_del_row = QPushButton("− Xoá dòng đang chọn")
         btn_del_row.clicked.connect(_del_row)
         row_btns.addWidget(btn_del_row)
-        btn_copy_ref = QPushButton("Chuẩn = Tần số thiết lập (áp cho mọi dòng)")
-
-        def _copy_freq_to_ref():
-            for i in range(self.rows_table.rowCount()):
-                freq_item = self.rows_table.item(i, 1)
-                self.rows_table.setItem(i, 2, QTableWidgetItem(freq_item.text() if freq_item else ""))
-        btn_copy_ref.clicked.connect(_copy_freq_to_ref)
-        row_btns.addWidget(btn_copy_ref)
         row_btns.addStretch()
         lay.addLayout(row_btns)
         _fit_table_height(self.rows_table)
@@ -1626,17 +1431,43 @@ class TableFormDialog(QDialog):
             self._pass_rule = dlg.result_pass_rule
             self.lbl_pass_rule.setText(f"Đạt/Không đạt: {_pass_rule_summary(self._pass_rule)}")
 
-    def _row_advanced_summary(self) -> str:
-        fake_row = SimpleNamespace(raw_count=self.raw_count, **self.row_advanced)
-        return f"Cấu trúc {self.raw_count} report_val()/dòng: {_describe_row_structure(fake_row)}"
+    def _current_raw_counts(self) -> list:
+        """raw_count của TỪNG dòng đang hiện trong self.rows_table, đọc lại
+        từ Qt.UserRole đã gắn (xem __init__/_add_row) — nguồn sự thật DUY
+        NHẤT, không có biến self.raw_count/self.raw_counts riêng để tránh
+        lệch dữ liệu khi Thêm/Xoá dòng."""
+        counts = []
+        for i in range(self.rows_table.rowCount()):
+            item = self.rows_table.item(i, 0)
+            counts.append((item.data(Qt.UserRole) if item else None) or 1)
+        return counts
+
+    def _refresh_row_advanced_summary(self):
+        counts = self._current_raw_counts()
+        if len(set(counts)) == 1:
+            n = counts[0]
+            fake_row = SimpleNamespace(raw_count=n, **(self.row_advanced or {"value_format_seq": None}))
+            self.lbl_row_advanced.setText(f"Cấu trúc {n} report_val()/dòng: {_describe_row_structure(fake_row)}")
+        else:
+            self.lbl_row_advanced.setText(
+                "Cấu trúc report_val()/dòng KHÔNG đồng đều giữa các dòng — tự động khớp đúng số ô "
+                "\"giá trị đo\" THẬT mỗi dòng có trong Word (vd 1 dòng tổng hợp gộp nhiều ô hẹp "
+                "thành 1 ô rộng thì chỉ cần ít report_val() hơn dòng đo thường): "
+                + ", ".join(str(c) for c in counts) + ".")
 
     def _edit_row_advanced(self):
         table_id = self.e_table_id.text().strip() or self.e_table_id.text()
-        dlg = RowAdvancedDialog(f"mọi dòng của bảng {table_id}", self.raw_count,
+        n = self._current_raw_counts()[0]
+        dlg = RowAdvancedDialog(f"mọi dòng của bảng {table_id}", n,
                                  self.row_advanced, default_format="text", parent=self)
         if dlg.exec_() == QDialog.Accepted:
             self.row_advanced = dlg.result_values()
-            self.lbl_row_advanced.setText(self._row_advanced_summary())
+            vfs = self.row_advanced.get("value_format_seq")
+            for i in range(self.rows_table.rowCount()):
+                item = self.rows_table.item(i, 0)
+                if item:
+                    item.setData(Qt.UserRole + 1, list(vfs) if vfs else None)
+            self._refresh_row_advanced_summary()
 
     def _do_save(self):
         table_id = self.e_table_id.text().strip()
@@ -1647,16 +1478,29 @@ class TableFormDialog(QDialog):
                 return
         name = self.e_name.text().strip()
         value_unit = self.e_value_unit.currentText().strip()
-        value_format = wio.resolve_value_format(value_unit, self.chk_scientific.isChecked())
+        if self.chk_custom_format.isChecked():
+            value_format = self.e_value_format_custom.currentData() or "text"
+        else:
+            value_format = wio.resolve_value_format(value_unit, self.chk_scientific.isChecked())
 
         pass_rule = self._pass_rule
         pr_key = pass_rule.get("type", "none")
-        if pr_key == "value_vs_parsed_threshold" and not wio.pass_rule_allowed_for_unit(pr_key, value_unit):
-            QMessageBox.warning(
-                self, "Lỗi",
-                "Quy tắc 'So sánh với ngưỡng ghi từng dòng' (đã bật ở mục nâng cao) "
-                "chỉ dùng được với đơn vị mVrms/dBm.")
-            return
+
+        # Nếu bảng gắn với 1 file Word thật (tag_target) — dry-run lại NGAY
+        # TRƯỚC KHI lưu để lấy raw_count ĐÚNG từng dòng theo cấu trúc ô THẬT
+        # hiện có trong file (core/table_wizard_io.py::raw_counts_for_measured_cols)
+        # — khớp CHÍNH XÁC với những gì insert_report_val_tags() sẽ ghi bên
+        # dưới, không cần khách tự cấu hình raw_count ở đâu cả. Không có
+        # tag_target (sửa bảng có sẵn, không đụng file Word) -> giữ nguyên
+        # raw_count đã gắn theo từng dòng (Qt.UserRole) từ lúc mở form.
+        if self.tag_target:
+            dry_run_counts = wio.raw_counts_for_measured_cols(
+                self.tag_target["docx_path"], self.tag_target["table_index"],
+                self.tag_target["measured_cols"], self.tag_target.get("header_row_index", 0),
+                self.tag_target.get("extra_skip_rows", frozenset()))
+        else:
+            dry_run_counts = None
+        ui_counts = self._current_raw_counts()
 
         rows = []
         for i in range(self.rows_table.rowCount()):
@@ -1664,14 +1508,13 @@ class TableFormDialog(QDialog):
                 item = self.rows_table.item(i, col)
                 return item.text().strip() if item else ""
             key = _cell(0)
-            freq_text, ref_text = _cell(1), _cell(2)
-            freq_set = wio.guess_bare_number(freq_text) if freq_text else None
+            ref_text = _cell(1)
             reference = wio.guess_bare_number(ref_text) if ref_text else None
             if ref_text and reference is None:
                 QMessageBox.warning(self, "Lỗi", f"Dòng {i + 1}: 'Chuẩn dùng để tính' phải là số.")
                 return None
-            rows.append(wio.WizardRowSpec(key=key, freq_set=freq_set, reference=reference,
-                                           limit=_cell(3), display_label=_cell(4)))
+            rows.append(wio.WizardRowSpec(key=key, reference=reference,
+                                           limit=_cell(2), display_label=_cell(3)))
 
         err = wio.validate_rows(rows, pass_rule)
         if err:
@@ -1683,23 +1526,35 @@ class TableFormDialog(QDialog):
             value_unit=value_unit, value_format=value_format,
             rows=rows, pass_rule=pass_rule, gcn=None,
         )
+        raw_counts = dry_run_counts if dry_run_counts is not None else ui_counts
+        # Số dòng dry-run (đúng cấu trúc Word thật) có thể khác số dòng đang
+        # hiện trong form (khách tự Thêm/Xoá dòng tay) — khớp theo thứ tự,
+        # dòng dư (nếu có) rơi về raw_count đã gắn sẵn trên UI (mặc định 1).
+        while len(raw_counts) < len(rows):
+            raw_counts = raw_counts + [ui_counts[len(raw_counts)] if len(raw_counts) < len(ui_counts) else 1]
+
         n_tagged = None
         try:
-            if self.raw_count <= 1 and self.row_advanced is None:
+            if max(raw_counts, default=1) <= 1:
                 descriptor = wio.build_descriptor(spec)
             else:
-                # >1 report_val()/dòng — wio.build_descriptor() ép cứng
+                # Có dòng nào raw_count>1 — wio.build_descriptor() ép cứng
                 # raw_count=1, không dùng được ở đây; dựng RowDef/
-                # TableDescriptor trực tiếp, áp row_advanced (measured_count/
-                # value_format_seq/uncertainty_index) DÙNG CHUNG cho mọi dòng.
-                row_defs = [
-                    RowDef(key=r.key, freq_set=r.freq_set, reference=r.reference,
-                           raw_count=self.raw_count, limit=r.limit, display_label=r.display_label,
-                           measured_count=self.row_advanced.get("measured_count"),
-                           value_format_seq=self.row_advanced.get("value_format_seq"),
-                           uncertainty_index=self.row_advanced.get("uncertainty_index"))
-                    for r in rows
-                ]
+                # TableDescriptor trực tiếp, MỖI DÒNG raw_count RIÊNG (không
+                # bắt buộc đồng nhất). value_format_seq riêng từng dòng
+                # (Qt.UserRole+1) — chỉ áp dụng nếu ĐÚNG độ dài raw_count của
+                # dòng đó, sai độ dài thì rơi về định dạng mặc định của bảng
+                # (an toàn, không lỗi validate_descriptor).
+                row_defs = []
+                for i, (r, count) in enumerate(zip(rows, raw_counts)):
+                    item = self.rows_table.item(i, 0)
+                    vfs = item.data(Qt.UserRole + 1) if item else None
+                    if vfs is not None and len(vfs) != count:
+                        vfs = None
+                    row_defs.append(RowDef(
+                        key=r.key, freq_set=r.freq_set, reference=r.reference,
+                        raw_count=count, limit=r.limit, display_label=r.display_label,
+                        value_format_seq=list(vfs) if vfs else None))
                 descriptor = TableDescriptor(
                     schema_version=1, table_id=table_id, name=name, order=self.sp_order.value(),
                     scenario_file="", layout="repeated_rows", value_unit=value_unit,
@@ -1715,7 +1570,8 @@ class TableFormDialog(QDialog):
                 n_tagged = wio.insert_report_val_tags(
                     self.tag_target["docx_path"], self.tag_target["table_index"],
                     self.tag_target["measured_cols"], table_id,
-                    header_row_index=self.tag_target.get("header_row_index", 0))
+                    header_row_index=self.tag_target.get("header_row_index", 0),
+                    extra_skip_rows=self.tag_target.get("extra_skip_rows", frozenset()))
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi khi lưu", str(exc))
             return

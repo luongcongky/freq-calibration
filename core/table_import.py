@@ -90,7 +90,7 @@ def replace_docx(template_id: str, which: str, new_path) -> Path:
 def copy_table(tables_dir, source_id: str, new_id: str, new_name: str = "") -> Path:
     """Sao chép 1 bảng ĐÃ CÓ trong CÙNG 1 mẫu thành bảng MỚI (table_id khác)
     — copy nguyên rows/columns/merge/pass_rule/value_format (kể cả bảng
-    NÂNG CAO: measured_count/value_format_seq/uncertainty_index đi theo).
+    NÂNG CAO: raw_count>1/value_format_seq đi theo).
     Đặt lại scenario_file="" (ánh xạ kịch bản gắn theo table_id cũ, bảng
     mới cần gán lại kịch bản riêng) và order = lớn nhất hiện có + 1 (thêm
     vào cuối danh sách hiển thị)."""

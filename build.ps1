@@ -111,7 +111,20 @@ Write-Host "==> [5/5] Nen file .zip (neu co -Zip)" -ForegroundColor Cyan
 if ($Zip) {
     $zipPath = Join-Path $PSScriptRoot "release\$ReleaseName.zip"
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-    Compress-Archive -Path "$ReleaseDir\*" -DestinationPath $zipPath
+    # Windows Defender quet real-time file vua copy xong (vd base_library.zip)
+    # co the giu lock vai giay -> Compress-Archive dam vao se bao
+    # "being used by another process". Retry vai lan cho AV quet xong.
+    $maxAttempts = 5
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            Compress-Archive -Path "$ReleaseDir\*" -DestinationPath $zipPath -ErrorAction Stop
+            break
+        } catch {
+            if ($attempt -eq $maxAttempts) { throw }
+            Write-Host "Nen zip that bai (lan $attempt/$maxAttempts), co the do Windows Defender dang quet - thu lai sau 3s..." -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 3
+        }
+    }
     Write-Host "Da nen: $zipPath  <-- GUI FILE NAY CHO KHACH" -ForegroundColor Green
 } else {
     Write-Host "(Bo qua nen zip - chay lai voi -Zip de tao file .zip gui khach)" -ForegroundColor DarkYellow

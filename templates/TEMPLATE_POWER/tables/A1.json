@@ -15,7 +15,6 @@
       "raw_count": 12,
       "limit": "",
       "display_label": "1 mW",
-      "measured_count": 10,
       "value_format_seq": [
         "w",
         "w",
@@ -29,8 +28,7 @@
         "w",
         "w",
         "correction_mw"
-      ],
-      "uncertainty_index": 11
+      ]
     }
   ],
   "columns": [],

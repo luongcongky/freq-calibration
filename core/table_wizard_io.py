@@ -74,34 +74,23 @@ class WizardTableSpec:
     gcn: Optional[dict] = None
 
 
-_UNIT_LOCKED_ROLES_FOR_THRESHOLD = {"mVrms", "dBm"}   # khớp đúng core.table_engine._parse_le_limit
-
-
-def pass_rule_allowed_for_unit(pass_rule_type: str, value_unit: str) -> bool:
-    """value_vs_parsed_threshold chỉ hoạt động đúng với đơn vị mVrms/dBm —
-    _parse_le_limit() chỉ biết bóc 2 hậu tố này. Chọn loại khác + đơn vị
-    khác sẽ khiến Đạt/Không đạt luôn trống mà không báo lỗi -> chặn ngay
-    tại đây thay vì để âm thầm sai."""
-    if pass_rule_type != "value_vs_parsed_threshold":
-        return True
-    return value_unit in _UNIT_LOCKED_ROLES_FOR_THRESHOLD
-
-
 def is_advanced_table(d: TableDescriptor) -> bool:
-    """True nếu bảng dùng cơ chế nhiều report_val()/dòng (measured_count/
-    value_format_seq/uncertainty_index — xem core/table_engine.py::
-    apply_pass_rule) — form wizard đơn giản bên dưới (mỗi dòng ĐÚNG 1
-    report_val, raw_count=1) không biểu diễn được, chỉ có thể xem/sửa qua
-    file JSON trực tiếp."""
-    return any(r.measured_count is not None or r.value_format_seq is not None
-               or r.uncertainty_index is not None for r in d.rows)
+    """True nếu có dòng nào khai raw_count > 1 (dòng nhận NHIỀU report_val()
+    liên tiếp, cần value_format_seq riêng cho từng report_val()) — vẫn sửa
+    được qua gui/template_manager_dialog.py::TableFormDialog (nút "Sửa"),
+    KHÔNG bắt buộc mọi dòng cùng 1 raw_count (1 dòng tổng hợp gộp ô có thể
+    ít report_val() hơn dòng đo thường, xem raw_counts_for_measured_cols()).
+    Phần mềm không tự tính gì từ các report_val() phụ này (core/table_engine.py::
+    apply_pass_rule) — chỉ hiển thị lại nguyên văn."""
+    return any((r.raw_count or 1) > 1 for r in d.rows)
 
 
 def descriptor_to_spec(d: TableDescriptor) -> WizardTableSpec:
-    """Chiều NGƯỢC của build_descriptor() — nạp lại 1 bảng ĐƠN GIẢN đã có
-    (is_advanced_table(d) is False) thành WizardTableSpec để điền sẵn form
-    sửa. KHÔNG dùng cho bảng nâng cao (mất field measured_count/
-    value_format_seq/uncertainty_index, không round-trip được)."""
+    """Chiều NGƯỢC của build_descriptor() — nạp lại 1 bảng đã có thành
+    WizardTableSpec để điền sẵn form sửa. KHÔNG tự lấy raw_count/
+    value_format_seq (bảng nâng cao) — gui/template_manager_dialog.py::
+    _edit_table() tự đọc trực tiếp từ d.rows (mỗi dòng 1 raw_count riêng)
+    và truyền riêng cho TableFormDialog(raw_counts=..., row_value_format_seqs=...)."""
     rows = [WizardRowSpec(key=r.key, freq_set=r.freq_set, reference=r.reference,
                            limit=r.limit, display_label=r.display_label)
             for r in d.rows]
@@ -236,6 +225,58 @@ class DetectedDocxTable:
     already_tagged: bool      # True nếu trong bảng đã có chữ "report_val()" hoặc "{{ tables."
 
 
+def _visible_row_cells(row) -> list:
+    """`row.cells` (python-docx) LẶP LẠI cùng 1 ô nhiều lần cho mỗi cột nó
+    gridSpan (gộp ngang) qua — hành vi MẶC ĐỊNH của python-docx (không phải
+    bug), nhưng nếu dùng thẳng để dựng grid sẽ ra NHIỀU cột hơn số cột NHÌN
+    THẤY thật trong Word (vd 1 ô "lần 5" gộp 2 cột sẽ bị đọc thành 2 cột
+    "lần 5" liên tiếp). Hàm này chỉ giữ lần xuất hiện ĐẦU TIÊN của mỗi ô vật
+    lý (so theo identity ô XML thật `_tc`) — khớp ĐÚNG số cột thật, dùng
+    chung bởi scan_docx_tables() (đọc) và insert_report_val_tags() (ghi) để
+    2 bên LUÔN đánh số cột giống nhau (không thì chọn cột N lúc đọc sẽ ghi
+    tag nhầm sang cột khác lúc viết)."""
+    cells = []
+    prev_tc = None
+    for cell in row.cells:
+        if cell._tc is prev_tc:
+            continue
+        prev_tc = cell._tc
+        cells.append(cell)
+    return cells
+
+
+def _visible_row_cells_with_pos(row) -> list:
+    """Giống _visible_row_cells nhưng trả kèm (cell, start_pos, span) — vị
+    trí lưới (0-based) mà mỗi ô BẮT ĐẦU chiếm VÀ số cột lưới nó chiếm —
+    `row.cells` đã pad đúng bằng độ rộng lưới khai báo (tblGrid) nên chỉ số
+    enumerate() CHÍNH LÀ vị trí lưới thật. Cần cả span (không chỉ vị trí bắt
+    đầu) để so khớp ĐÚNG vai trò cột đã gán ở DÒNG TIÊU ĐỀ với cấu trúc ô
+    THẬT của TỪNG dòng dữ liệu — 1 dòng tổng hợp (vd "Trung Bình") có thể
+    gộp nhiều ô hẹp thành 1 ô rộng khác hẳn dòng tiêu đề, và ngay cả DÒNG
+    TIÊU ĐỀ cũng có thể có ô gộp (vd "lần 5" chiếm 2 cột lưới) — nếu chỉ
+    biết vị trí bắt đầu của ô header đó, phần cột lưới THỨ 2 nó cũng chiếm
+    sẽ bị bỏ sót khi so khớp với ô của dòng dữ liệu khác bắt đầu đúng ngay
+    tại đó."""
+    cells = []
+    prev_tc = None
+    start = 0
+    span = 0
+    prev_cell = None
+    for pos, cell in enumerate(row.cells):
+        if cell._tc is prev_tc:
+            span += 1
+            continue
+        if prev_tc is not None:
+            cells.append((prev_cell, start, span))
+        prev_tc = cell._tc
+        prev_cell = cell
+        start = pos
+        span = 1
+    if prev_tc is not None:
+        cells.append((prev_cell, start, span))
+    return cells
+
+
 def scan_docx_tables(docx_path) -> list:
     """Đọc TOÀN BỘ bảng vật lý cấp cao nhất (doc.tables — không gồm bảng lồng
     trong ô) của 1 file .docx, trả về list[DetectedDocxTable] theo đúng thứ
@@ -243,7 +284,7 @@ def scan_docx_tables(docx_path) -> list:
     doc = Document(str(docx_path))
     result = []
     for i, tbl in enumerate(doc.tables):
-        grid = [[cell.text.strip() for cell in row.cells] for row in tbl.rows]
+        grid = [[cell.text.strip() for cell in _visible_row_cells(row)] for row in tbl.rows]
         flat = " ".join(c for r in grid for c in r)
         already_tagged = "report_val()" in flat or "{{ tables." in flat
         result.append(DetectedDocxTable(
@@ -251,6 +292,46 @@ def scan_docx_tables(docx_path) -> list:
             grid=grid, already_tagged=already_tagged,
         ))
     return result
+
+
+def find_docx_table_grid(docx_path, table_id: str):
+    """Tìm bảng vật lý trong 1 file .docx (thường là bienban.docx) có gắn
+    tag report_val()/result/... của ĐÚNG table_id ('tables.<table_id>.' xuất
+    hiện trong ô nào đó) -> trả grid (list[list[str]], nguyên văn từng ô)
+    của bảng đó, ĐÚNG thứ tự dòng/cột thật trong file. None nếu file không
+    tồn tại hoặc không bảng nào gắn tag table_id này (mẫu/bảng chưa gắn tag,
+    hoặc mã bảng gõ sai) — dùng để dựng bảng rà soát Bước 2/3 khớp ĐÚNG cấu
+    trúc file Word thật (xem gui/report_preview.py::build_wysiwyg_table)."""
+    docx_path = Path(docx_path)
+    if not docx_path.exists():
+        return None
+    needle = f"tables.{table_id}."
+    for detected in scan_docx_tables(docx_path):
+        flat = " ".join(c for row in detected.grid for c in row)
+        if needle in flat:
+            return detected.grid
+    return None
+
+
+def value_columns_from_grid(grid: list, header_row: int = 0) -> list:
+    """Trả danh sách chỉ số cột (0-based, ĐÚNG thứ tự trái→phải thật trong
+    docx) có ít nhất 1 ô report_val() ở 1 dòng dữ liệu (khác header_row) —
+    đây là các cột "giá trị đo" thật, dùng làm tiêu đề cột ở Bước 2/3 thay
+    vì tên chung "Lần N" không liên hệ gì tới file thật. Giả định dòng đầu
+    tiên (header_row=0) là dòng tiêu đề — đúng với mọi bảng phần mềm này
+    từng đọc qua "Đọc bảng từ Word" (mặc định Dòng tiêu đề = 1)."""
+    if not grid:
+        return []
+    n_cols = max(len(r) for r in grid)
+    cols = []
+    for c in range(n_cols):
+        for r_i, row in enumerate(grid):
+            if r_i == header_row:
+                continue
+            if c < len(row) and "report_val()" in row[c]:
+                cols.append(c)
+                break
+    return cols
 
 
 COLUMN_ROLE_CHOICES = [
@@ -284,10 +365,13 @@ def guess_column_role(header_text: str) -> str:
     return "none"
 
 
-def build_rows_from_grid(grid: list, role_map: dict, header_row_index: int = 0) -> list:
+def build_rows_from_grid(grid: list, role_map: dict, header_row_index: int = 0,
+                          extra_skip_rows: frozenset = frozenset()) -> list:
     """Dựng list[WizardRowSpec] từ lưới text đã đọc (scan_docx_tables) theo
-    role_map {cột 0-based: role}, bỏ qua dòng tiêu đề. Số dòng == số dòng dữ
-    liệu thật trong bảng Word (không cần khách gõ lại)."""
+    role_map {cột 0-based: role}, bỏ qua dòng tiêu đề VÀ extra_skip_rows (vd
+    1 dòng tiêu đề phụ lồng bên trong bảng, khác dòng tiêu đề chính — xem
+    ImportTableFromWordDialog::"Dòng khác không phải dữ liệu"). Số dòng ==
+    số dòng dữ liệu thật trong bảng Word (không cần khách gõ lại)."""
     col_by_role = {role: col for col, role in role_map.items() if role and role != "none"}
 
     def _cell(row: list, role: str) -> str:
@@ -298,7 +382,7 @@ def build_rows_from_grid(grid: list, role_map: dict, header_row_index: int = 0) 
 
     rows = []
     for r_i, row in enumerate(grid):
-        if r_i == header_row_index:
+        if r_i == header_row_index or r_i in extra_skip_rows:
             continue
         label = _cell(row, "display_label")
         freq_text = _cell(row, "freq_set")
@@ -315,31 +399,101 @@ def build_rows_from_grid(grid: list, role_map: dict, header_row_index: int = 0) 
     return rows
 
 
-def insert_report_val_tags(docx_path, table_index: int, measured_cols, table_id: str,
-                            header_row_index: int = 0) -> int:
-    """Gõ ĐÈ text của 1 hoặc nhiều cột (measured_cols) trong đúng 1 bảng
-    (table_index) thành tag `{{ tables.<table_id>.report_val() }}`, mỗi dòng
-    dữ liệu 1 tag/cột (bỏ qua dòng tiêu đề) — KHÔNG thêm/bớt dòng/cột, KHÔNG
-    đụng ô nào khác. measured_cols DUYỆT THEO THỨ TỰ CỘT TĂNG DẦN — khớp
-    đúng thứ tự report_val() cursor tiêu thụ (docxtpl đọc tài liệu trái->
-    phải), nên hỗ trợ luôn trường hợp 1 dòng có NHIỀU lần đo (raw_count>1,
-    xem core/table_descriptor.py::RowDef.raw_count). Trả về tổng số tag đã
-    gắn (số dòng × số cột)."""
+def _measured_grid_positions(tbl, measured_cols, header_row_index: int) -> set:
+    """Quy đổi measured_cols (index vào danh sách ô ĐÃ KHỬ TRÙNG LẶP của
+    DÒNG TIÊU ĐỀ) sang TOÀN BỘ VỊ TRÍ LƯỚI thật (0-based) mà các ô đó chiếm
+    (kể cả khi CHÍNH ô header đó cũng gộp nhiều cột, vd "lần 5" chiếm 2 cột
+    lưới — phải tính đủ CẢ 2 vị trí, không chỉ vị trí bắt đầu) — dùng làm
+    "toạ độ chung" để so khớp với cấu trúc ô THẬT của từng dòng dữ liệu, vì
+    1 dòng có thể gộp ô KHÁC dòng tiêu đề (vd dòng tổng hợp) nên không thể
+    dùng chung 1 index đã khử trùng lặp cho mọi dòng."""
     if isinstance(measured_cols, int):
         measured_cols = [measured_cols]
-    cols = sorted(measured_cols)
+    header_cells = _visible_row_cells_with_pos(tbl.rows[header_row_index])
+    positions = set()
+    for c in measured_cols:
+        if c < len(header_cells):
+            _cell, start, span = header_cells[c]
+            positions.update(range(start, start + span))
+    return positions
+
+
+def raw_counts_for_measured_cols(docx_path, table_index: int, measured_cols,
+                                  header_row_index: int = 0,
+                                  extra_skip_rows: frozenset = frozenset()) -> list:
+    """[raw_count_dòng_1, raw_count_dòng_2, ...] — DRY RUN (KHÔNG ghi gì) số
+    ô "giá trị đo" mỗi dòng dữ liệu THẬT SỰ có, nếu gắn tag theo measured_cols
+    (index đã khử trùng lặp ở dòng tiêu đề). Bỏ qua dòng tiêu đề VÀ
+    extra_skip_rows (vd 1 dòng tiêu đề phụ lồng bên trong bảng). Số này CÓ
+    THỂ KHÁC NHAU giữa các dòng — 1 dòng tổng hợp (vd "Trung Bình") gộp
+    nhiều cột "giá trị đo" ở dòng tiêu đề thành 1 ô rộng duy nhất thì CHỈ có
+    1 report_val() (không phải N), tự động khớp đúng cấu trúc ô thật, không
+    cần cấu hình gì thêm. Dùng để hiển thị trước cho khách xem VÀ để dựng
+    RowDef.raw_count đúng từng dòng khi lưu — kết quả khớp CHÍNH XÁC với
+    insert_report_val_tags() bên dưới vì dùng chung logic quy đổi vị trí lưới."""
     doc = Document(str(docx_path))
     tbl = doc.tables[table_index]
+    measured_positions = _measured_grid_positions(tbl, measured_cols, header_row_index)
+    counts = []
+    for r_i, row in enumerate(tbl.rows):
+        if r_i == header_row_index or r_i in extra_skip_rows:
+            continue
+        cells = _visible_row_cells_with_pos(row)
+        counts.append(sum(1 for _cell, pos, _span in cells if pos in measured_positions))
+    return counts
+
+
+def insert_report_val_tags(docx_path, table_index: int, measured_cols, table_id: str,
+                            header_row_index: int = 0,
+                            extra_skip_rows: frozenset = frozenset()) -> int:
+    """Gõ ĐÈ text của 1 hoặc nhiều cột (measured_cols, index đã khử trùng
+    lặp ở DÒNG TIÊU ĐỀ) trong đúng 1 bảng (table_index) thành tag
+    `{{ tables.<table_id>.report_val() }}` — bỏ qua dòng tiêu đề VÀ
+    extra_skip_rows (vd 1 dòng tiêu đề phụ lồng bên trong bảng, khác dòng
+    tiêu đề chính — giữ nguyên chữ tĩnh sẵn có, KHÔNG bị ghi đè), KHÔNG
+    thêm/bớt dòng/cột, KHÔNG đụng ô nào khác ngoài phạm vi đã chọn. So khớp
+    theo VỊ TRÍ LƯỚI thật (không phải theo index đã khử trùng lặp của TỪNG
+    dòng) nên tự động xử lý đúng cả trường hợp 1 dòng gộp ô KHÁC dòng tiêu
+    đề (vd dòng tổng hợp "Trung Bình" gộp 5 cột "giá trị đo" hẹp thành 1 ô
+    rộng — ô đó chỉ nhận ĐÚNG 1 tag, không phải 5) — số report_val()/dòng vì
+    vậy CÓ THỂ KHÁC NHAU giữa các dòng, tự động khớp cấu trúc thật, không
+    cần cấu hình thêm và không cần chặn/báo lỗi gì. Trả về tổng số tag đã gắn."""
+    doc = Document(str(docx_path))
+    tbl = doc.tables[table_index]
+    measured_positions = _measured_grid_positions(tbl, measured_cols, header_row_index)
     tag = "{{ tables.%s.report_val() }}" % table_id
+
     count = 0
     for r_i, row in enumerate(tbl.rows):
-        if r_i == header_row_index:
+        if r_i == header_row_index or r_i in extra_skip_rows:
             continue
-        for col in cols:
-            row.cells[col].text = tag
-            count += 1
+        for cell, pos, _span in _visible_row_cells_with_pos(row):
+            if pos in measured_positions:
+                cell.text = tag
+                count += 1
     doc.save(str(docx_path))
     return count
+
+
+def measured_cell_flags(docx_path, table_index: int, measured_cols, header_row_index: int = 0) -> dict:
+    """{row_index (0-based, MỌI dòng kể cả dòng tiêu đề): set(dedup_col_index)}
+    — với MỖI dòng, chỉ số ô đã khử trùng lặp (khớp DetectedDocxTable.grid/
+    _visible_row_cells) mà vị trí lưới của nó GIAO với vị trí lưới các cột
+    "★ Giá trị đo" đã chọn ở dòng tiêu đề (measured_cols) — dùng để CẢNH BÁO
+    trước khi ghi đè nếu 1 ô sắp bị gắn tag đang chứa chữ tĩnh thật (xem
+    ImportTableFromWordDialog._continue), phòng trường hợp quên tick "Bỏ
+    qua" cho 1 dòng tiêu đề phụ lồng bên trong bảng."""
+    doc = Document(str(docx_path))
+    tbl = doc.tables[table_index]
+    measured_positions = _measured_grid_positions(tbl, measured_cols, header_row_index)
+    result = {}
+    for r_i, row in enumerate(tbl.rows):
+        flags = set()
+        for c_i, (_cell, start, span) in enumerate(_visible_row_cells_with_pos(row)):
+            if any(p in measured_positions for p in range(start, start + span)):
+                flags.add(c_i)
+        result[r_i] = flags
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -402,9 +556,9 @@ FORMAT_LABELS_ALL = [
 
 PASS_RULE_CHOICES = [
     ("relative_error_vs_fixed_limit",
-     "So sánh sai số tương đối với 1 ngưỡng cố định (vd ± 2,4×10⁻⁷) — dùng cho bảng kiểu tần số/chu kỳ."),
+     "So sánh sai số tương đối |đo được − chuẩn| / chuẩn với 1 ngưỡng cố định (vd ± 2,4×10⁻⁷)."),
     ("value_vs_parsed_threshold",
-     "So sánh giá trị đo với ngưỡng ghi riêng từng dòng (vd '≤ 15 mVrms') — CHỈ hoạt động khi đơn vị là mVrms/dBm."),
+     "So sánh giá trị đo với ngưỡng ghi riêng từng dòng (vd '≤ 15 mVrms')."),
     ("correction_vs_reference",
      "Tính số hiệu chỉnh (chuẩn − đo được), KHÔNG có khái niệm đạt/không đạt — dùng cho văn bản hiệu chuẩn."),
     ("none", "Không áp dụng công thức nào (bảng thuần văn bản)."),
