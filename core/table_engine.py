@@ -69,22 +69,28 @@ def recompute_period_error(period_set: float, t_meas: Optional[float]) -> tuple:
     return _relative_error(t_meas, period_set)
 
 
+_LE_LIMIT_NUMBER_RE = re.compile(r"^[+-]?\d+(?:[.,]\d+)?")
+
+
 def _parse_le_limit(limit_str: str) -> Optional[float]:
-    """Phân tích ngưỡng dạng '≤ 15 mVrms' / '≤ -27 dBm' -> số ngưỡng (giữ dấu)."""
+    """Phân tích ngưỡng dạng '≤ 15 mVrms' / '≤ -27 dBm' / '≤ 1000 Hz' / '5'
+    -> số ngưỡng (giữ dấu) — lấy phần số ở ĐẦU chuỗi (sau khi bỏ '≤'), bỏ
+    qua mọi hậu tố đơn vị theo sau, KHÔNG giới hạn ở danh sách đơn vị cụ thể
+    (mVrms/dBm) như trước — cho phép value_vs_parsed_threshold dùng được
+    với mọi đơn vị giá trị đo."""
     s = limit_str.replace("≤", "").strip()
-    for unit in (" mVrms", " dBm"):
-        if s.endswith(unit):
-            s = s[: -len(unit)]
-            break
+    m = _LE_LIMIT_NUMBER_RE.match(s)
+    if not m:
+        return None
     try:
-        return float(s.replace(",", "."))
+        return float(m.group(0).replace(",", "."))
     except ValueError:
         return None
 
 
 def recompute_sensitivity(value: Optional[float], limit_str: str) -> Optional[bool]:
-    """passed từ 1 giá trị độ nhạy (mVrms hoặc dBm) so với ngưỡng '≤ ...' —
-    dùng cho A2/A3/A4."""
+    """passed từ 1 giá trị đo (bất kỳ đơn vị nào) so với ngưỡng '≤ ...' —
+    dùng cho A2/A3/A4 (mVrms/dBm) và mọi bảng khác dùng value_vs_parsed_threshold."""
     if value is None:
         return None
     limit = _parse_le_limit(limit_str)
@@ -128,18 +134,15 @@ def apply_pass_rule(descriptor: TableDescriptor, row_def, raw_readings: list) ->
     descriptor.pass_rule — dùng chung bởi map_table() lúc chạy kịch bản VÀ
     bởi gui/report_preview.py::_build_generic khi kiểm định viên sửa tay 1
     giá trị đo (double-click), đảm bảo công thức tính lại luôn NHẤT QUÁN
-    với lúc map ban đầu."""
+    với lúc map ban đầu.
+
+    Phần mềm KHÔNG tự tính trung bình/Độ KĐBĐ nữa — report_val() ĐẦU TIÊN
+    của dòng LUÔN là giá trị đo dùng cho công thức; kịch bản chịu trách
+    nhiệm tự tính trung bình (nếu có nhiều lần đo) rồi mới đẩy report_val().
+    Mọi report_val() SAU đó (nếu dòng khai raw_count > 1) chỉ hiển thị lại
+    NGUYÊN VĂN, không dùng lại trong công thức ở đây."""
     rtype = descriptor.pass_rule.get("type", "none")
-    # measured_count = số phần tử ĐẦU thật sự đại diện giá trị đo (phần còn
-    # lại, nếu có, là field kịch bản tự tính sẵn — vd "sai số" — chỉ để
-    # HIỂN THỊ lại trong Biên Bản qua report_val(), không dùng lại ở đây,
-    # tránh trộn 2 quantity khác nhau vào 1 phép trung bình sai nghĩa.
-    n_measured = row_def.measured_count if row_def.measured_count is not None else len(raw_readings)
-    measured_readings = raw_readings[:n_measured]
-    if len(measured_readings) != 1:
-        measured = sum(measured_readings) / len(measured_readings) if measured_readings else None
-    else:
-        measured = measured_readings[0]
+    measured = raw_readings[0] if raw_readings else None
 
     error = None
     passed = None
@@ -154,13 +157,15 @@ def apply_pass_rule(descriptor: TableDescriptor, row_def, raw_readings: list) ->
     elif rtype == "correction_vs_reference":
         error = (row_def.reference - measured) if measured is not None else None
         passed = None
+        # Bảng hiệu chuẩn — nếu dòng đẩy >1 report_val(), report_val() CUỐI
+        # CÙNG (kịch bản đã tự tính Độ KĐBĐ rồi đẩy thêm) tự động trở thành
+        # `limit`, để GCN (gcn_limit()) đọc lại đúng giá trị này.
+        if len(raw_readings) > 1:
+            ui = len(raw_readings) - 1
+            u_fmt = (row_def.value_format_seq[ui] if row_def.value_format_seq and ui < len(row_def.value_format_seq)
+                     else descriptor.value_format)
+            limit = _format(u_fmt, raw_readings[ui])
     # rtype == "none": measured/error/passed giữ nguyên (None/None)
-
-    ui = row_def.uncertainty_index
-    if ui is not None and ui < len(raw_readings):
-        u_fmt = (row_def.value_format_seq[ui] if row_def.value_format_seq and ui < len(row_def.value_format_seq)
-                 else descriptor.value_format)
-        limit = _format(u_fmt, raw_readings[ui])
 
     return measured, error, limit, passed
 
@@ -173,6 +178,71 @@ def recompute_row(descriptor: TableDescriptor, row_index: int, raw_readings: lis
     if row_index < 0 or row_index >= len(descriptor.rows):
         return None
     return apply_pass_rule(descriptor, descriptor.rows[row_index], raw_readings)
+
+
+def remap_report_table(descriptor: TableDescriptor, rt: ReportTable) -> ReportTable:
+    """Tính lại 1 ReportTable ĐÃ CÓ SẴN kết quả kịch bản đã chạy theo
+    descriptor MỚI của cùng bảng (mẫu báo cáo vừa được sửa: đổi ngưỡng,
+    pass_rule, nhãn dòng...) — dùng khi Bước 2 áp dụng mẫu vừa cập nhật vào
+    phiên đang có, KHÔNG được yêu cầu kiểm định viên chạy lại kịch bản.
+
+    raw_readings mỗi dòng (report_val() THẬT đã đo, xem TableRow.raw_readings)
+    GIỮ NGUYÊN 1-1 theo thứ tự — chỉ measured/error/limit/passed/nhãn được
+    tính lại từ apply_pass_rule() với descriptor mới, cùng công thức dùng lúc
+    map_table() ban đầu. confirmed/edited/gcn_export_field của từng dòng cũng
+    giữ nguyên vì đó là lựa chọn rà soát của kiểm định viên, không phụ thuộc
+    cấu trúc mẫu.
+
+    Nếu số dòng của descriptor mới khác số dòng đã có (bảng bị thêm/bớt
+    dòng khi sửa mẫu) -> khớp theo thứ tự tới min(len), phần dư bị bỏ (không
+    suy diễn raw_readings cho dòng mới chưa từng đo) -> ghi cảnh báo vào
+    `note` để kiểm định viên biết cần rà soát/chạy lại kịch bản."""
+    old_rows = rt.rows
+    n = min(len(descriptor.rows), len(old_rows))
+    rtype = descriptor.pass_rule.get("type", "none")
+    table_passed = True
+    new_rows = []
+
+    for i in range(n):
+        row_def = descriptor.rows[i]
+        old = old_rows[i]
+        measured, error, limit, passed = apply_pass_rule(descriptor, row_def, old.raw_readings)
+
+        if rtype == "relative_error_vs_fixed_limit" and error is not None and not passed:
+            table_passed = False
+        elif rtype == "value_vs_parsed_threshold" and passed is False:
+            table_passed = False
+
+        new_rows.append(TableRow(
+            key=row_def.display_label or row_def.key,
+            freq_set=row_def.freq_set,
+            value_measured=measured,
+            value_unit=descriptor.value_unit,
+            error=error,
+            limit=limit,
+            passed=passed,
+            raw_readings=old.raw_readings,
+            confirmed=old.confirmed,
+            edited=old.edited,
+            gcn_export_field=old.gcn_export_field,
+        ))
+
+    note = rt.note
+    if len(descriptor.rows) != len(old_rows):
+        note = (f"Mẫu mới có {len(descriptor.rows)} dòng, kết quả đã đo trước đó có "
+                f"{len(old_rows)} dòng — đã khớp {n} dòng đầu theo đúng thứ tự, phần dư "
+                f"cần rà soát lại hoặc chạy lại kịch bản.")
+
+    final_passed = (table_passed if new_rows else None) \
+        if rtype in ("relative_error_vs_fixed_limit", "value_vs_parsed_threshold") else None
+
+    return ReportTable(
+        table_id=descriptor.table_id,
+        name=descriptor.name,
+        rows=new_rows,
+        passed=final_passed,
+        note=note,
+    )
 
 
 def map_table(descriptor: TableDescriptor, step_results) -> ReportTable:

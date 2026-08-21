@@ -15,7 +15,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -24,8 +23,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "50MHz",
@@ -34,7 +32,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -43,8 +40,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "500MHz",
@@ -53,7 +49,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -62,8 +57,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "1GHz",
@@ -72,7 +66,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -81,8 +74,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "5GHz",
@@ -91,7 +83,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -100,8 +91,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "10GHz",
@@ -110,7 +100,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -119,8 +108,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "15GHz",
@@ -129,7 +117,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -138,8 +125,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "20GHz",
@@ -148,7 +134,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -157,8 +142,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "25GHz",
@@ -167,7 +151,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -176,8 +159,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "30GHz",
@@ -186,7 +168,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -195,8 +176,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "35GHz",
@@ -205,7 +185,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -214,8 +193,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "40GHz",
@@ -224,7 +202,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -233,8 +210,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     },
     {
       "key": "49GHz",
@@ -243,7 +219,6 @@
       "raw_count": 7,
       "limit": "",
       "display_label": "",
-      "measured_count": 5,
       "value_format_seq": [
         "dbm",
         "dbm",
@@ -252,8 +227,7 @@
         "dbm",
         "dbm",
         "correction_db"
-      ],
-      "uncertainty_index": 6
+      ]
     }
   ],
   "columns": [],

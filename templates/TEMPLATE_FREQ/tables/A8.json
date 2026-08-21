@@ -15,12 +15,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "5 Hz (200 ms)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "10Hz",
@@ -29,12 +27,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "10 Hz (100 ms)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "100Hz",
@@ -43,12 +39,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "100 Hz (10 ms)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "1kHz",
@@ -57,12 +51,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "1 kHz (1 ms)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "10kHz",
@@ -71,12 +63,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "10 kHz (100 µs)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "100kHz",
@@ -85,12 +75,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "100 kHz (10 µs)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "1MHz",
@@ -99,12 +87,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "1 MHz (1 µs)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "2MHz",
@@ -113,12 +99,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "2 MHz (0,5 µs)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "10MHz",
@@ -127,12 +111,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "10 MHz (100 ns)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "50MHz",
@@ -141,12 +123,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "50 MHz (20 ns)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "100MHz",
@@ -155,12 +135,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "100 MHz (10 ns)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "200MHz",
@@ -169,12 +147,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "200 MHz (5 ns)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     },
     {
       "key": "300MHz",
@@ -183,12 +159,10 @@
       "raw_count": 2,
       "limit": "",
       "display_label": "300 MHz (3,33 ns)",
-      "measured_count": 1,
       "value_format_seq": [
         "period",
         "sci"
-      ],
-      "uncertainty_index": null
+      ]
     }
   ],
   "columns": [],

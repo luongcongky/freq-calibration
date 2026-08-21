@@ -5,16 +5,19 @@ Dựng QTableWidget cho khung xem trước/rà soát kết quả — dùng ở c
 (rà soát + xác nhận từng dòng, có cột checkbox) và Bước 3 (xem trước báo
 cáo, không có checkbox).
 
-Không còn template nào đăng ký "builder" riêng khớp pixel với layout docx
-thật (giới hạn đã chấp nhận: mọi template giờ đều data-driven qua
-core/report_templates/generic.py, không có class Python riêng để gắn
-builder tuỳ biến) — build_wysiwyg_table() dùng _build_generic làm mặc định:
-mỗi lần đo report_val() tách thành 1 cột riêng ("Lần 1".."Lần N", đúng số
-cột file docx thật có), khớp hình dạng bảng thật thay vì gộp chung 1 ô —
-cộng thêm khoá/trung bình nếu nhiều lần đo/sai số/ngưỡng (chỉ hiện cột nào
-thật sự có dữ liệu) để kiểm định viên rà soát trước khi tick xác nhận.
-_TEMPLATE_BUILDERS giữ lại làm điểm mở rộng cho tương lai nếu 1 template
-nào đó thật sự cần lưới tuỳ biến riêng khớp pixel với docx.
+Nhiệm vụ QUAN TRỌNG NHẤT của khung này (đặc biệt Bước 2) là cho kiểm định
+viên xác nhận report_val() kịch bản đẩy có đang rơi ĐÚNG vị trí/thứ tự cột
+thật trong bienban.docx hay không — TRƯỚC KHI tính tới việc tự tính Đạt/
+Không đạt (nếu bảng có pass_rule) hay để kiểm định viên tự chọn tay (nếu
+không tính được, hoặc cần chọn value cụ thể xuất ra GCN qua right-click).
+Vì vậy build_wysiwyg_table() ưu tiên đọc TRỰC TIẾP cấu trúc cột từ chính
+file bienban.docx thật (_build_from_docx_grid, qua core/table_wizard_io.py::
+find_docx_table_grid/value_columns_from_grid) — tiêu đề cột lấy nguyên văn
+từ dòng tiêu đề thật (vd "lần 1"/"Độ KĐBĐ"), không phải tên chung "Lần N".
+Chỉ khi KHÔNG tìm được bảng thật khớp (mẫu mới chưa có docx, bảng chưa gắn
+tag) mới rơi về _build_generic (tên cột chung chung, không khớp docx thật).
+_TEMPLATE_BUILDERS giữ lại làm điểm mở rộng nếu 1 template thật sự cần lưới
+tuỳ biến tay riêng (ưu tiên cao nhất, kiểm tra trước cả 2 đường trên).
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ from core.session import TableRow
 from core.report_generator import _fmt_freq, _fmt_dbm
 from core.report_generator_nrp2 import _power_set_from_key
 from core import table_layouts as _lay
+from core import table_wizard_io as wio
+from core.report_templates import get_template
 from gui.widgets import CheckBoxHeader
 from gui.theme import Colors
 
@@ -371,16 +376,19 @@ def _build_generic(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
                    with_status: bool = False, on_status_change=None,
                    interactive: bool = True, on_value_edited=None,
                    recompute_row=None, measured_counts: list | None = None) -> QTableWidget:
-    # KHÔNG đọc cấu trúc/tên cột từ file docx thật (không có cơ chế nào làm
-    # điều đó — mỗi lần đo report_val() chỉ tách thành 1 cột riêng ở ĐÂY để
-    # dễ rà soát, không phải để khớp pixel với bảng trong docx). Tên cột
-    # generic "Lần N" — riêng với dòng có measured_counts (bảng có field
-    # kịch bản TỰ TÍNH rồi đẩy thêm, vd A1/A5-A8 QTKĐ 2.461, xem
-    # core/table_engine.py::apply_pass_rule), các slot SAU measured_count đổi
-    # tên "KB tính N" để phân biệt rõ với lần đo thật — tránh hiểu lầm đó
-    # cũng là 1 lần đo.
+    # FALLBACK khi không tìm được bảng thật khớp trong bienban.docx (xem
+    # _build_from_docx_grid — luôn được ưu tiên trước nếu tìm thấy) — KHÔNG
+    # đọc cấu trúc/tên cột từ file docx thật, chỉ tách mỗi report_val()
+    # thành 1 cột riêng để dễ rà soát. Tên cột generic "Lần N" — riêng với
+    # dòng có measured_counts (report_val() ĐẦU dùng cho công thức, các
+    # slot SAU do kịch bản TỰ TÍNH rồi đẩy thêm, xem core/table_engine.py::
+    # apply_pass_rule), các slot SAU đổi tên "KB tính N" để phân biệt rõ với
+    # lần đo thật.
+    #
+    # KHÔNG có cột "Trung bình" — bỏ hẳn (từng có nhưng gây hiểu lầm: kể từ
+    # khi phần mềm ngừng tự tính trung bình, giá trị cột đó luôn trùng y hệt
+    # "Lần 1", không còn là trung bình gì cả).
     max_readings = max((len(r.raw_readings) for r in rows), default=0)
-    show_avg = max_readings > 1
     show_error = any(r.error is not None for r in rows)
     show_limit = any((r.limit or "").strip() for r in rows)
 
@@ -398,8 +406,6 @@ def _build_generic(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
         value_headers = ["Giá trị report_val() đã đẩy"]
 
     headers = ["Khoá", *value_headers]
-    if show_avg:
-        headers.append("Trung bình")
     if show_error:
         headers.append("Sai số")
     if show_limit:
@@ -436,10 +442,6 @@ def _build_generic(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
                 _set_cell(tbl, i, col, "")
                 col += 1
 
-        if show_avg:
-            avg_text = (_fmt_num(r.value_measured) + unit) if r.value_measured is not None else ""
-            _set_cell(tbl, i, col, avg_text)
-            col += 1
         if show_error:
             _set_cell(tbl, i, col, _fmt_num(r.error) if r.error is not None else "")
             col += 1
@@ -457,6 +459,90 @@ def _build_generic(rows: list[TableRow], with_checkbox: bool = False, on_toggle=
     if with_checkbox:
         _add_checkbox_column(tbl, row_groups, on_toggle, enabled=interactive)
     return _finish(tbl)
+
+
+# ---------------------------------------------------------------------------
+# Builder đọc TRỰC TIẾP cấu trúc cột từ chính file bienban.docx thật (qua
+# core/table_wizard_io.py::find_docx_table_grid/value_columns_from_grid) —
+# nhiệm vụ QUAN TRỌNG NHẤT của Bước 2 là cho kiểm định viên xác nhận được
+# report_val() kịch bản đẩy có đang rơi ĐÚNG vị trí/thứ tự cột thật trong
+# Word hay không, TRƯỚC KHI tính tới việc tự tính Đạt/Không đạt hay chọn tay
+# — nên tiêu đề cột ở đây LUÔN lấy nguyên văn từ dòng tiêu đề thật trong
+# docx (vd "lần 1"/"Độ KĐBĐ"), không phải tên chung "Lần N" như _build_generic.
+# Áp dụng cho MỌI template (data-driven, không cần đăng ký builder tay như
+# _TEMPLATE_BUILDERS bên dưới) — chỉ cần bảng đã gắn tag report_val() trong
+# bienban.docx. Rơi về _build_generic nếu chưa tìm được bảng thật khớp (mẫu
+# mới chưa có docx, table_id gõ sai, hoặc bảng chưa gắn tag nào).
+# ---------------------------------------------------------------------------
+
+def _build_from_docx_grid(rows: list[TableRow], grid: list, value_cols: list, header_row: int = 0,
+                          with_checkbox: bool = False, on_toggle=None,
+                          with_status: bool = False, on_status_change=None,
+                          interactive: bool = True, on_value_edited=None,
+                          recompute_row=None, measured_counts: list | None = None) -> QTableWidget:
+    header_texts = grid[header_row] if header_row < len(grid) else []
+    value_headers = [header_texts[c] if c < len(header_texts) else f"Cột {c + 1}" for c in value_cols]
+
+    show_error = any(r.error is not None for r in rows)
+    show_limit = any((r.limit or "").strip() for r in rows)
+
+    headers = ["Khoá", *value_headers]
+    if show_error:
+        headers.append("Sai số")
+    if show_limit:
+        headers.append("Ngưỡng")
+
+    tbl = _new_table(len(rows), headers)
+    for i, r in enumerate(rows):
+        col = 0
+        _set_cell(tbl, i, col, r.key)
+        col += 1
+
+        unit = f" {r.value_unit}" if r.value_unit else ""
+        value_cell_cols = _fill_value_slots(
+            tbl, i, col, r, i, 0, len(value_cols), unit=unit,
+            interactive=interactive, recompute_row=recompute_row,
+            on_value_edited=on_value_edited, all_rows=rows)
+        col += len(value_cols)
+
+        if show_error:
+            _set_cell(tbl, i, col, _fmt_num(r.error) if r.error is not None else "")
+            col += 1
+        if show_limit:
+            _set_cell(tbl, i, col, r.limit or "")
+            col += 1
+
+        if r.edited:
+            _tint_edited(tbl, [(i, c) for c in value_cell_cols], True)
+
+    row_groups = [(i, i + 1, r) for i, r in enumerate(rows)]
+    if with_status:
+        _add_status_column(tbl, row_groups, on_status_change, enabled=interactive)
+        _add_gcn_export_column(tbl, row_groups)
+    if with_checkbox:
+        _add_checkbox_column(tbl, row_groups, on_toggle, enabled=interactive)
+    return _finish(tbl)
+
+
+def _docx_grid_for(template_id: str, table_id: str):
+    """(grid, value_cols) đọc trực tiếp từ bienban.docx thật của template —
+    None nếu không tìm được (lỗi bất kỳ khi đọc, template/bảng không tồn
+    tại, file chưa có, hoặc bảng chưa gắn tag report_val() nào) -> caller
+    rơi về _build_generic thay vì crash."""
+    try:
+        tpl = get_template(template_id)
+        docx_path = getattr(tpl, "bienban_docx_path", None)
+        if docx_path is None:
+            return None
+        grid = wio.find_docx_table_grid(docx_path, table_id)
+        if grid is None:
+            return None
+        value_cols = wio.value_columns_from_grid(grid)
+        if not value_cols:
+            return None
+        return grid, value_cols
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -724,10 +810,16 @@ def build_wysiwyg_table(template_id: str, table_id: str, rows: list[TableRow],
                         interactive: bool = True, on_value_edited=None,
                         empty_message: str = "Chưa có dòng nào được xác nhận",
                         recompute_row=None, measured_counts: list | None = None) -> QTableWidget:
-    """Dựng bảng khớp đúng layout docx thật của table_id NẾU template đó có
-    đăng ký builder riêng trong _TEMPLATE_BUILDERS (hiện không có template
-    nào đăng ký) — ngược lại dùng _build_generic (rà soát chung, không khớp
-    pixel nhưng luôn thấy được dữ liệu report_val() thật đã đẩy).
+    """Dựng bảng rà soát — thứ tự ưu tiên:
+    1. Builder tay riêng trong _TEMPLATE_BUILDERS nếu template đó có đăng ký
+       (hiện không có template nào đăng ký).
+    2. _build_from_docx_grid — đọc TRỰC TIẾP cấu trúc cột từ chính file
+       bienban.docx thật (tiêu đề cột nguyên văn, khớp ĐÚNG vị trí report_val()
+       thật) — áp dụng được cho MỌI template data-driven, chỉ cần bảng đã
+       gắn tag report_val() trong file Word.
+    3. _build_generic — chỉ dùng khi KHÔNG tìm được bảng thật khớp (mẫu mới
+       chưa có docx, bảng chưa gắn tag) — tên cột chung "Lần N", không khớp
+       docx thật.
 
     with_status thêm cột 'Đạt/Không đạt' (combobox, ghi vào TableRow.passed)
     — chỉ hỗ trợ rà soát trong app, KHÔNG xuất hiện trong file docx.
@@ -744,12 +836,20 @@ def build_wysiwyg_table(template_id: str, table_id: str, rows: list[TableRow],
         return _empty_table(empty_message)
     get_builders = _TEMPLATE_BUILDERS.get(template_id, {})
     builder = get_builders.get(table_id) if get_builders else None
-    if builder is None:
-        return _build_generic(rows, with_checkbox=with_checkbox, on_toggle=on_toggle,
-                              with_status=with_status, on_status_change=on_status_change,
-                              interactive=interactive, on_value_edited=on_value_edited,
-                              recompute_row=recompute_row, measured_counts=measured_counts)
-    return builder(rows, with_checkbox=with_checkbox, on_toggle=on_toggle,
-                   with_status=with_status, on_status_change=on_status_change,
-                   interactive=interactive, on_value_edited=on_value_edited,
-                   recompute_row=recompute_row, measured_counts=measured_counts)
+    if builder is not None:
+        return builder(rows, with_checkbox=with_checkbox, on_toggle=on_toggle,
+                       with_status=with_status, on_status_change=on_status_change,
+                       interactive=interactive, on_value_edited=on_value_edited,
+                       recompute_row=recompute_row, measured_counts=measured_counts)
+    grid_info = _docx_grid_for(template_id, table_id)
+    if grid_info is not None:
+        grid, value_cols = grid_info
+        return _build_from_docx_grid(rows, grid, value_cols,
+                                     with_checkbox=with_checkbox, on_toggle=on_toggle,
+                                     with_status=with_status, on_status_change=on_status_change,
+                                     interactive=interactive, on_value_edited=on_value_edited,
+                                     recompute_row=recompute_row, measured_counts=measured_counts)
+    return _build_generic(rows, with_checkbox=with_checkbox, on_toggle=on_toggle,
+                          with_status=with_status, on_status_change=on_status_change,
+                          interactive=interactive, on_value_edited=on_value_edited,
+                          recompute_row=recompute_row, measured_counts=measured_counts)

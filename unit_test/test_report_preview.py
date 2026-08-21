@@ -4,12 +4,13 @@ unit_test/test_report_preview.py
 Test cho gui.report_preview.build_wysiwyg_table — khung xem trước/rà soát
 kết quả dùng ở Bước 2/Bước 3.
 
-TEMPLATE_FREQ (A1-A8) và TEMPLATE_POWER (A1-A3) có builder riêng khớp
-ĐÚNG layout docx thật (đăng ký trong _TEMPLATE_BUILDERS, xem
-unit_test/test_report_preview_freq_power.py) — mọi template/table_id KHÁC
-(chưa đăng ký) rơi về _build_generic (khung rà soát chung, không khớp
-pixel). Các test dưới đây xác nhận đúng hành vi fallback này + các helper
-dùng chung (checkbox/status column, khung rỗng) vẫn hoạt động đúng.
+Thứ tự ưu tiên: (1) builder tay riêng trong _TEMPLATE_BUILDERS nếu có đăng
+ký (xem unit_test/test_report_preview_freq_power.py), (2) đọc TRỰC TIẾP cấu
+trúc cột từ bienban.docx thật nếu tìm được bảng đã gắn tag report_val()
+(_build_from_docx_grid — xem nhóm test cuối file), (3) _build_generic (khung
+rà soát chung, không khớp docx thật) khi không tìm được gì ở (1)/(2). Các
+test đầu file dưới đây xác nhận đúng hành vi fallback (3) + các helper dùng
+chung (checkbox/status column, khung rỗng) vẫn hoạt động đúng.
 """
 
 import pytest
@@ -17,6 +18,7 @@ import pytest
 QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 from PyQt5.QtWidgets import QApplication, QCheckBox, QComboBox, QMenu, QLabel
 from PyQt5.QtGui import QColor
+from docx import Document
 
 from core.session import TableRow
 from gui import report_preview
@@ -255,3 +257,70 @@ def test_right_click_marking_different_row_clears_previous_mark(monkeypatch):
     report_preview._handle_gcn_context_menu(tbl, pos1)
     assert rows[0].gcn_export_field is None
     assert rows[1].gcn_export_field == "raw:0"
+
+
+# ---------------------------------------------------------------------------
+# _build_from_docx_grid — đọc trực tiếp cấu trúc cột từ bienban.docx thật khi
+# tìm được bảng đã gắn tag report_val() cho đúng table_id (ưu tiên trước cả
+# _build_generic) — nhiệm vụ quan trọng nhất của Bước 2: cho kiểm định viên
+# xác nhận report_val() kịch bản đẩy có rơi đúng vị trí cột thật hay không.
+# ---------------------------------------------------------------------------
+
+class _FakeTemplate:
+    def __init__(self, docx_path):
+        self.bienban_docx_path = docx_path
+
+
+def _write_bienban(tmp_path, grid: list):
+    doc = Document()
+    n_rows, n_cols = len(grid), len(grid[0])
+    tbl = doc.add_table(rows=n_rows, cols=n_cols)
+    for r, row in enumerate(grid):
+        for c, text in enumerate(row):
+            tbl.cell(r, c).text = text
+    path = tmp_path / "bienban.docx"
+    doc.save(str(path))
+    return path
+
+
+def test_docx_grid_headers_used_when_table_tagged_in_word(tmp_path, monkeypatch):
+    grid = [
+        ["Công suất chuẩn", "lần 1", "Độ KĐBĐ"],
+        ["1 mW", "{{ tables.A1.report_val() }}", "{{ tables.A1.report_val() }}"],
+    ]
+    docx_path = _write_bienban(tmp_path, grid)
+    monkeypatch.setattr(report_preview, "get_template", lambda tid: _FakeTemplate(docx_path))
+
+    rows = [TableRow(key="1 mW", raw_readings=[1.5, 0.02], value_measured=1.5)]
+    tbl = build_wysiwyg_table("FAKE_DOCX_TPL", "A1", rows)
+
+    headers = [tbl.horizontalHeaderItem(c).text() for c in range(tbl.columnCount())]
+    assert headers == ["Khoá", "lần 1", "Độ KĐBĐ"]
+    assert tbl.item(0, 1).text() == "1,5"
+    assert tbl.item(0, 2).text() == "0,02"
+
+
+def test_docx_grid_not_used_when_table_id_not_tagged(tmp_path, monkeypatch):
+    """table_id không khớp tag nào trong file -> rơi về _build_generic (tên
+    cột generic "Lần 1"), không crash."""
+    grid = [["Khoá", "lần 1"], ["10MHz", "{{ tables.A1.report_val() }}"]]
+    docx_path = _write_bienban(tmp_path, grid)
+    monkeypatch.setattr(report_preview, "get_template", lambda tid: _FakeTemplate(docx_path))
+
+    rows = [TableRow(key="x", raw_readings=[1.0], value_measured=1.0)]
+    tbl = build_wysiwyg_table("FAKE_DOCX_TPL", "A9", rows)
+
+    headers = [tbl.horizontalHeaderItem(c).text() for c in range(tbl.columnCount())]
+    assert headers == ["Khoá", "Giá trị report_val() đã đẩy"]
+
+
+def test_docx_grid_lookup_error_falls_back_to_generic(monkeypatch):
+    """get_template()/đọc docx lỗi bất kỳ (mẫu không tồn tại, file hỏng...)
+    -> _docx_grid_for() nuốt lỗi, rơi về _build_generic, không crash cả app."""
+    def _raise(tid):
+        raise KeyError(f"không có mẫu {tid}")
+    monkeypatch.setattr(report_preview, "get_template", _raise)
+
+    rows = [TableRow(key="x", value_measured=1.0)]
+    tbl = build_wysiwyg_table("KHONG_TON_TAI", "A5", rows)
+    assert tbl.item(0, 0).text() == "x"

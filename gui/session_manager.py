@@ -122,13 +122,13 @@ def _make_recompute_row(template_id: str, table_id: str):
 
 
 def _measured_counts_for(template_id: str, table_id: str, n_rows: int):
-    """[row_def.measured_count, ...] khớp đúng thứ tự rows đang hiển thị —
-    cho _build_generic biết những report_val() nào là lần đo thật, những
-    report_val() nào là field kịch bản TỰ TÍNH đẩy thêm (vd A1/A5-A8 QTKĐ
-    2.461), để đặt tên cột 'KB tính N' thay vì 'Lần N' cho đúng bản chất
-    (không phải khớp cấu trúc docx thật — panel Bước 2 vốn không đọc file
-    docx, chỉ là bảng rà soát chung, xem gui/report_preview.py). None nếu
-    template/bảng không tồn tại."""
+    """[1 nếu dòng có raw_count>1, else None, ...] khớp đúng thứ tự rows
+    đang hiển thị — cho _build_generic biết report_val() ĐẦU TIÊN của dòng
+    là lần đo thật, các report_val() SAU là field kịch bản TỰ TÍNH đẩy thêm
+    (vd A1/A5-A8 QTKĐ 2.461, TEMPLATE_POWER A1-A3), để đặt tên cột 'KB tính
+    N' thay vì 'Lần N' cho đúng bản chất — phần mềm không tự tính gì từ các
+    report_val() phụ này (core/table_engine.py::apply_pass_rule luôn dùng
+    report_val() đầu tiên). None nếu template/bảng không tồn tại."""
     try:
         tpl = get_template(template_id)
         descriptor_for = getattr(tpl, "descriptor_for", None)
@@ -137,7 +137,7 @@ def _measured_counts_for(template_id: str, table_id: str, n_rows: int):
         return None
     if descriptor is None:
         return None
-    return [rd.measured_count for rd in descriptor.rows[:n_rows]]
+    return [1 if (rd.raw_count or 1) > 1 else None for rd in descriptor.rows[:n_rows]]
 
 
 # ============================================================================
@@ -1403,8 +1403,72 @@ class SessionManagerWindow(QMainWindow):
         dlg.exec_()
         if dlg.changed:
             self._step_meta.refresh_templates()
-            self._log("Đã cập nhật mẫu báo cáo — bấm 'Mới' rồi chọn lại mẫu để thấy thay đổi.",
-                      Colors.ACCENT_GREEN)
+            active_tid = self._session.template_id
+            if active_tid and active_tid in dlg.changed_ids:
+                self._offer_reload_active_template(active_tid)
+            else:
+                self._log("Đã cập nhật mẫu báo cáo — bấm 'Mới' rồi chọn lại mẫu để thấy thay đổi.",
+                          Colors.ACCENT_GREEN)
+
+    def _offer_reload_active_template(self, tid: str):
+        """Mẫu báo cáo ĐANG DÙNG cho phiên hiện tại vừa bị sửa trong Quản lý
+        mẫu -> áp dụng ngay vào Bước 2, GIỮ NGUYÊN kết quả kịch bản đã chạy
+        (report_val() thật đã đo) — không xoá về danh sách mặc định như khi
+        người dùng chủ động đổi sang MẪU KHÁC (_on_template_changed)."""
+        try:
+            tpl = get_template(tid)
+        except KeyError:
+            self._log("Mẫu báo cáo đang dùng cho phiên này đã bị xoá — chọn lại mẫu khác ở Bước 1.",
+                      Colors.ACCENT_WARN)
+            return
+
+        if not self._session.tests:
+            self._apply_template_defaults(tpl, tid)
+            self._log("Đã áp dụng mẫu báo cáo vừa cập nhật.", Colors.ACCENT_GREEN)
+            return
+
+        self._remap_tests_to_template(tpl, tid)
+        self._log("Đã áp dụng mẫu báo cáo vừa cập nhật vào Bước 2 — kết quả kịch bản đã chạy được giữ nguyên.",
+                  Colors.ACCENT_GREEN)
+
+    def _remap_tests_to_template(self, tpl, tid: str):
+        """Áp cấu trúc mẫu MỚI (ngưỡng/pass_rule/nhãn/định dạng) vào các bài
+        test đã có của phiên hiện tại mà KHÔNG đụng tới raw_readings
+        (report_val() thật đã đo) — dùng table_engine.remap_report_table()
+        để tính lại measured/error/limit/passed từ đúng dữ liệu đã đo theo
+        descriptor mới, khác hẳn _apply_template_defaults() (vốn xoá trắng
+        toàn bộ bằng tpl.default_tests()).
+
+        Bảng nào không còn trong mẫu mới (bị xoá khi sửa) vẫn được GIỮ
+        NGUYÊN trong phiên (không mất dữ liệu), chỉ cảnh báo. Bảng mới có
+        trong mẫu nhưng phiên chưa có -> thêm bài test trống vào cuối danh
+        sách, giống lúc mới áp mẫu."""
+        orphaned = []
+        for test in self._session.tests:
+            descriptor = tpl.descriptor_for(test.table_id)
+            if descriptor is None:
+                orphaned.append(test.table_id)
+                continue
+            test.name = descriptor.name
+            if test.result_table is not None:
+                test.result_table = table_engine.remap_report_table(descriptor, test.result_table)
+
+        existing_ids = {t.table_id for t in self._session.tests}
+        for new_test in tpl.default_tests():
+            if new_test.table_id not in existing_ids:
+                self._session.tests.append(new_test)
+
+        self._session.template_id = tid
+        self._step_meta.load_from(self._session)
+        self._step_review.load_tests(self._session.tests, tid)
+        self._step_export.load_conclusion(self._session.meta.conclusion)
+        self._refresh_export_tab()
+        self.rail.set_template_info(tpl.STANDARD, tpl.TEMPLATE_NAME)
+
+        if orphaned:
+            self._log(f"Bảng {', '.join(orphaned)} không còn trong mẫu mới — dữ liệu đã đo vẫn được "
+                      f"giữ trong phiên nhưng sẽ không xuất hiện trong báo cáo.",
+                      Colors.ACCENT_WARN)
 
     # -------------------------------------------------------------------------
     # Scenario Builder

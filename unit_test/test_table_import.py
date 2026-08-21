@@ -207,6 +207,32 @@ def test_apply_table_to_existing_overwrites_when_editing(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# delete_table — chuyển file JSON vào Thùng rác Windows (send2trash), dùng
+# bởi nút "🗑 Xoá" trong gui/template_manager_dialog.py — xác nhận file
+# THẬT SỰ biến mất khỏi tables_dir sau khi xoá (khách nghi ngờ cơ chế này
+# không hoạt động đúng — xác nhận lại bằng chính hàm production, không
+# xoá tay ngoài luồng app).
+# ---------------------------------------------------------------------------
+
+def test_delete_table_removes_json_file(tmp_path):
+    tables_dir = tmp_path / "tables_out"
+    timport.apply_table_to_existing(tables_dir, _descriptor(table_id="A10"))
+    assert (tables_dir / "A10.json").exists()
+
+    timport.delete_table(tables_dir, "A10")
+
+    assert not (tables_dir / "A10.json").exists()
+    assert wio.validate_table_id_available(tables_dir, "A10") is None
+
+
+def test_delete_table_missing_table_raises_value_error(tmp_path):
+    tables_dir = tmp_path / "tables_out"
+    tables_dir.mkdir(parents=True)
+    with pytest.raises(ValueError, match="A99"):
+        timport.delete_table(tables_dir, "A99")
+
+
+# ---------------------------------------------------------------------------
 # Round-trip đầy đủ: file .docx TỰ MÔ PHỎNG "khách đã gõ tay" tag -> dựng
 # thư mục mẫu bằng thao tác file thuần -> get_template().generate_bienban()
 # -> không còn tag Jinja sót + giá trị đúng.

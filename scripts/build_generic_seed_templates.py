@@ -1,6 +1,15 @@
 """
 scripts/build_generic_seed_templates.py
 ==========================================
+⚠ CŨ — KHÔNG CHẠY LẠI: RowDef đã bỏ measured_count/uncertainty_index (phần
+mềm không tự tính trung bình/Độ KĐBĐ nữa, xem core/table_engine.py::
+apply_pass_rule — report_val() đầu tiên luôn là giá trị dùng công thức,
+report_val() cuối cùng tự động là Độ KĐBĐ cho bảng correction_vs_reference).
+Script này vẫn đọc/ghi 2 field đó (dòng ~139-156, ~305, ~472, ~492, ~505) nên
+sẽ LỖI nếu chạy lại. File .json/.docx nó từng tạo ra đã có sẵn trong
+templates/TEMPLATE_FREQ|TEMPLATE_POWER/ — không cần chạy lại trừ khi viết
+lại toàn bộ logic bên dưới cho khớp schema mới.
+
 CHỈ CHẠY 1 LẦN để dựng 2 mẫu báo cáo mới theo ĐÚNG cơ chế thống nhất đã
 chốt với khách hàng, qua nhiều vòng góp ý:
 
