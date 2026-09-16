@@ -62,8 +62,10 @@ def _sci(value: float, dec: int = 1) -> str:
     return f"{sign}{m_str}×10{str(exp).translate(_SUP)}"
 
 
-def _fmt_freq(hz: float, with_unit: bool = True) -> str:
+def _fmt_freq(hz: Optional[float], with_unit: bool = True) -> str:
     """10000000 → '10 MHz', 1500 → '1,5 kHz'"""
+    if hz is None:
+        return ""
     if hz == 0:
         return "0 Hz" if with_unit else "0"
     if hz < 1e3:
@@ -82,8 +84,10 @@ def _fmt_freq(hz: float, with_unit: bool = True) -> str:
     return f"{s} {u}" if with_unit else s
 
 
-def _fmt_hz_measured(hz: float, with_unit: bool = True) -> str:
+def _fmt_hz_measured(hz: Optional[float], with_unit: bool = True) -> str:
     """Định dạng giá trị tần số đo được: 9999999.98765 → '9.999.999,98765 Hz'"""
+    if hz is None:
+        return ""
     int_part = int(abs(hz))
     frac = abs(hz) - int_part
     # Nhóm nghìn bằng dấu chấm
