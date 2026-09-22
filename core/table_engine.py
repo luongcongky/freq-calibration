@@ -638,6 +638,19 @@ def _find_report_table(session: CalibrationSession, table_id: str) -> Optional[R
     return None
 
 
+def build_raw_rows_by_table(session: CalibrationSession, descriptors: list) -> dict:
+    """table_id -> list[TableRow] đã xác nhận, raw_readings CÒN THÔ (số thực,
+    CHƯA qua _format()) — dùng bởi core/xlsx_table_engine.py: ô Excel cần số
+    thật để công thức (=AVERAGE()/=SQRT()...) tính được, khác Word chỉ cần
+    chuỗi hiển thị (_report_val_values)."""
+    enabled_ids = {t.table_id for t in session.tests if t.enabled}
+    result = {}
+    for d in descriptors:
+        rt = _find_report_table(session, d.table_id) if d.table_id in enabled_ids else None
+        result[d.table_id] = rt.confirmed_rows() if rt else []
+    return result
+
+
 def build_all_table_contexts(session: CalibrationSession, descriptors: list) -> dict:
     """dict[table_id] -> context, dùng chung cho cả Biên Bản và GCN (NRP2) —
     2 file mẫu chỉ tham chiếu tới field jinja_field nào chúng cần, field dư

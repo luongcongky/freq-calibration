@@ -254,17 +254,26 @@ def test_scan_docx_tables_dedupes_gridspan_merged_cell(tmp_path):
     assert detected.n_cols == 2
 
 
-def test_insert_report_val_tags_writes_to_correct_deduped_column(tmp_path):
-    """measured_cols đánh số theo cột đã khử trùng lặp (gridSpan) — ghi tag
+def _tag_cell(path: Path, table_index: int, row: int, col: int, table_id: str) -> None:
+    """Mô phỏng khách TỰ GÕ TAY `{{ tables.<table_id>.report_val() }}` vào 1
+    ô NGAY TRONG WORD — dùng làm setup cho test, KHÔNG phải hàm sản phẩm
+    (app không có hàm ghi tag nào nữa, xem docstring đầu file)."""
+    doc = Document(str(path))
+    doc.tables[table_index].cell(row, col).text = "{{ tables.%s.report_val() }}" % table_id
+    doc.save(str(path))
+
+
+def test_raw_counts_only_counts_correct_deduped_column(tmp_path):
+    """measured_cols đánh số theo cột đã khử trùng lặp (gridSpan) — đếm tag
     phải nhắm ĐÚNG ô đó, không lệch cột do row.cells chưa khử trùng lặp."""
     path = _docx_with_merged_header_cell(tmp_path)
-    # Chưa gắn tag ở cột "Khoá" (cột 0) — chỉ gắn cột 1 ("lần 4").
-    n = wio.insert_report_val_tags(path, table_index=0, measured_cols=[1], table_id="A2",
-                                   header_row_index=0)
-    assert n == 1
+    _tag_cell(path, 0, 1, 1, "A2")   # gõ tay ở dòng dữ liệu, cột "lần 5" (cột 1)
+
+    counts = wio.raw_counts_for_measured_cols(path, table_index=0, measured_cols=[1], table_id="A2",
+                                              header_row_index=0)
+    assert counts == [1]
     detected = wio.scan_docx_tables(path)[0]
     assert detected.grid[1][0] == "1 mW"   # cột Khoá KHÔNG bị đụng tới
-    assert detected.grid[1][1] == "{{ tables.A2.report_val() }}"
 
 
 def _docx_with_summary_row(tmp_path) -> Path:
@@ -288,35 +297,37 @@ def _docx_with_summary_row(tmp_path) -> Path:
     return path
 
 
-def test_insert_report_val_tags_writes_one_tag_into_merged_summary_row(tmp_path):
+def test_raw_counts_dedups_merged_summary_row(tmp_path):
     """KHÔNG còn báo lỗi/crash cho dòng tổng hợp gộp ô khác dòng tiêu đề —
-    ghi ĐÚNG 1 tag vào ô rộng đã gộp (khớp đúng số ô THẬT dòng đó có), các
-    dòng dữ liệu thường vẫn nhận đủ 4 tag riêng biệt như bình thường."""
+    đếm ĐÚNG 1 tag ở ô rộng đã gộp (khớp đúng số ô THẬT dòng đó có), dòng dữ
+    liệu thường (đã gõ tay đủ 4 tag riêng biệt) vẫn đếm đủ 4 như bình thường."""
     path = _docx_with_summary_row(tmp_path)
+    for c in range(1, 5):
+        _tag_cell(path, 0, 1, c, "A1")
+    _tag_cell(path, 0, 2, 1, "A1")   # ô rộng đã gộp (dòng "Trung Bình")
 
-    n = wio.insert_report_val_tags(path, table_index=0, measured_cols=[1, 2, 3, 4],
-                                   table_id="A1", header_row_index=0)
-    assert n == 4 + 1   # 4 tag (dòng "1 mW") + 1 tag (dòng "Trung Bình", đã gộp)
-
-    detected = wio.scan_docx_tables(path)[0]
-    assert detected.grid[1][1:] == ["{{ tables.A1.report_val() }}"] * 4
-    assert detected.grid[2] == ["Trung Bình", "{{ tables.A1.report_val() }}"]
-
-
-def test_raw_counts_for_measured_cols_matches_actual_tags_written(tmp_path):
-    """raw_counts_for_measured_cols() (dry-run, không ghi gì) phải trả ĐÚNG
-    số report_val() mà insert_report_val_tags() thực sự ghi cho từng dòng —
-    2 hàm dùng chung logic quy đổi vị trí lưới nên luôn khớp nhau."""
-    path = _docx_with_summary_row(tmp_path)
     counts = wio.raw_counts_for_measured_cols(path, table_index=0, measured_cols=[1, 2, 3, 4],
-                                              header_row_index=0)
+                                              table_id="A1", header_row_index=0)
     assert counts == [4, 1]   # dòng "1 mW" = 4, dòng "Trung Bình" (gộp) = 1
 
-    wio.insert_report_val_tags(path, table_index=0, measured_cols=[1, 2, 3, 4],
-                               table_id="A1", header_row_index=0)
-    detected = wio.scan_docx_tables(path)[0]
-    actual_counts = [sum(1 for cell in row if "report_val()" in cell) for row in detected.grid[1:]]
-    assert actual_counts == counts
+
+def test_raw_counts_ignores_untagged_cells(tmp_path):
+    """Ô đang có chữ tĩnh khác (vd "raw1", chưa phải tag) hoặc đang rỗng thì
+    KHÔNG được đếm — khách phải tự gõ tay đúng tag mới được nhận diện."""
+    path = _docx_with_summary_row(tmp_path)   # chưa gõ tag nào cả
+
+    counts = wio.raw_counts_for_measured_cols(path, table_index=0, measured_cols=[1, 2, 3, 4],
+                                              table_id="A1", header_row_index=0)
+    assert counts == [0, 0]
+
+
+def test_raw_counts_requires_exact_table_id_match(tmp_path):
+    path = _docx_with_summary_row(tmp_path)
+    _tag_cell(path, 0, 1, 1, "A9")   # tag của bảng KHÁC
+
+    counts = wio.raw_counts_for_measured_cols(path, table_index=0, measured_cols=[1, 2, 3, 4],
+                                              table_id="A1", header_row_index=0)
+    assert counts == [0, 0]
 
 
 def test_raw_counts_expands_full_span_of_merged_header_cell(tmp_path):
@@ -341,14 +352,14 @@ def test_raw_counts_expands_full_span_of_merged_header_cell(tmp_path):
     # đầu = 5), đúng điểm bug đã gặp.
     tbl.cell(1, 0).text = "Trung Bình"
     merged_1 = tbl.cell(1, 1).merge(tbl.cell(1, 5))
-    merged_1.text = "raw_tb_1"
-    tbl.cell(1, 6).text = "raw_tb_2"
+    merged_1.text = "{{ tables.A1.report_val() }}"
+    tbl.cell(1, 6).text = "{{ tables.A1.report_val() }}"
     path = tmp_path / "bienban.docx"
     doc.save(str(path))
 
     # measured_cols theo index header ĐÃ KHỬ TRÙNG LẶP: 0=Khoá,1..4=lần1-4,5=lần5(span2).
     counts = wio.raw_counts_for_measured_cols(path, table_index=0, measured_cols=[1, 2, 3, 4, 5],
-                                              header_row_index=0)
+                                              table_id="A1", header_row_index=0)
     assert counts == [2]   # 1 ô gộp (vị trí 1-5) + 1 ô riêng (vị trí 6) = 2, KHÔNG phải 1
 
 
@@ -369,8 +380,8 @@ def _docx_with_nested_header_row(tmp_path) -> Path:
     tbl.cell(1, 1).text = "lần 3"
     tbl.cell(1, 2).text = "lần 4"
     tbl.cell(2, 0).text = "1 mW"
-    tbl.cell(2, 1).text = "raw1"
-    tbl.cell(2, 2).text = "raw2"
+    tbl.cell(2, 1).text = "{{ tables.A1.report_val() }}"
+    tbl.cell(2, 2).text = "{{ tables.A1.report_val() }}"
     path = tmp_path / "bienban.docx"
     doc.save(str(path))
     return path
@@ -383,31 +394,11 @@ def test_build_rows_from_grid_skips_extra_skip_rows():
     assert [r.key for r in rows] == ["1 mW"]
 
 
-def test_raw_counts_and_tags_skip_extra_skip_rows(tmp_path):
+def test_raw_counts_skip_extra_skip_rows(tmp_path):
+    """Dòng tiêu đề phụ lồng bên trong bảng (dòng 1, "lần 3"/"lần 4") tình cờ
+    KHÔNG có tag nào — dù có, extra_skip_rows vẫn phải loại nó khỏi đếm."""
     path = _docx_with_nested_header_row(tmp_path)
     counts = wio.raw_counts_for_measured_cols(path, table_index=0, measured_cols=[1, 2],
-                                              header_row_index=0, extra_skip_rows=frozenset({1}))
+                                              table_id="A1", header_row_index=0,
+                                              extra_skip_rows=frozenset({1}))
     assert counts == [2]   # chỉ đúng 1 dòng dữ liệu thật ("1 mW"), dòng phụ bị bỏ qua
-
-    wio.insert_report_val_tags(path, table_index=0, measured_cols=[1, 2], table_id="A1",
-                               header_row_index=0, extra_skip_rows=frozenset({1}))
-    detected = wio.scan_docx_tables(path)[0]
-    assert detected.grid[1] == ["", "lần 3", "lần 4"]   # dòng phụ GIỮ NGUYÊN, không bị ghi đè
-    assert detected.grid[2] == ["1 mW", "{{ tables.A1.report_val() }}", "{{ tables.A1.report_val() }}"]
-
-
-# ---------------------------------------------------------------------------
-# measured_cell_flags() — dùng để CẢNH BÁO trước khi ghi đè (không phải để
-# chọn tag qua checkbox từng ô — đã bỏ hướng đó vì bảng xem trước bị rối,
-# quay lại chọn theo CỘT ở dòng tiêu đề như cũ, chỉ thêm bước cảnh báo).
-# ---------------------------------------------------------------------------
-
-def test_measured_cell_flags_matches_raw_counts_for_measured_cols(tmp_path):
-    path = _docx_with_summary_row(tmp_path)
-    flags = wio.measured_cell_flags(path, table_index=0, measured_cols=[1, 2, 3, 4], header_row_index=0)
-    # dòng 1 ("1 mW"): 4 ô đã khử trùng lặp đều được tick (index 1..4).
-    assert flags[1] == {1, 2, 3, 4}
-    # dòng 2 ("Trung Bình"): CHỈ 1 ô đã gộp -> đúng 1 index được tick.
-    assert flags[2] == {1}
-    # dòng tiêu đề (0) vẫn được trả về (khách tự loại ở tầng GUI), không rỗng.
-    assert flags[0] == {1, 2, 3, 4}

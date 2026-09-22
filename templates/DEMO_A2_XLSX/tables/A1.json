@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "table_id": "A1",
+  "name": "A1",
+  "order": 1,
+  "scenario_file": "",
+  "layout": "repeated_rows",
+  "value_unit": "",
+  "value_format": "generic_no_unit",
+  "rows": [
+    {
+      "key": "10 MHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "10 MHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "50 MHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "50 MHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "500 MHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "500 MHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "1 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "1 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "2 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "2 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "3 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "3 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "4 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "4 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "5 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "5 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "6 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "6 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "7 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "7 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "8 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "8 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "9 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "9 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "10 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "10 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "11 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "11 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "12 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "12 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "13 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "13 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "14 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "14 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "15 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "15 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "16 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "16 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "17 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "17 GHz",
+      "value_format_seq": null
+    },
+    {
+      "key": "18 GHz",
+      "freq_set": null,
+      "reference": null,
+      "raw_count": 6,
+      "limit": "",
+      "display_label": "18 GHz",
+      "value_format_seq": null
+    }
+  ],
+  "columns": [],
+  "pass_rule": {
+    "type": "none"
+  },
+  "merge": [],
+  "gcn": null,
+  "xlsx_ref": {
+    "sheet": "Sheet1",
+    "range": "A5:G27"
+  }
+}

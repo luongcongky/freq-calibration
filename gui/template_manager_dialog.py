@@ -35,7 +35,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox, QWidget,
     QTabWidget, QScrollArea, QSizePolicy, QTextEdit, QDialogButtonBox, QFrame,
     QListWidget, QListWidgetItem, QSplitter, QStackedWidget, QCheckBox,
-    QHeaderView,
+    QHeaderView, QAbstractItemView,
 )
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt
@@ -44,6 +44,7 @@ from gui.theme import Colors
 from gui.file_dialog_utils import get_open_file_name
 from gui.widgets import paint_corner_brackets
 from core import table_wizard_io as wio
+from core import xlsx_wizard_io as xwio
 from core import table_import as timport
 from core.report_templates import list_templates
 from core.report_templates.generic import TEMPLATES_DIR, template_summary
@@ -130,14 +131,44 @@ def _fit_table_height(tbl: QTableWidget) -> None:
     tbl.setFixedHeight(height)
 
 
+def _clear_layout(layout) -> None:
+    """Xoá sạch mọi item con (widget lẫn layout lồng nhau) của `layout`,
+    KHÔNG xoá bản thân `layout` — dùng để dựng lại nội dung 1 vùng khi cần
+    refresh (vd ImportTableFromExcelDialog đọc lại vùng dữ liệu) mà không
+    phải remove/insertWidget trên layout CHA (đã gặp lỗi Qt hiếm gặp làm
+    hỏng phần vẽ của các item khác đứng trước trong cùng layout cha đó)."""
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget():
+            item.widget().deleteLater()
+        elif item.layout():
+            _clear_layout(item.layout())
+
+
 def _combo(items, current=None) -> QComboBox:
     cb = QComboBox()
     for value, label in items:
         cb.addItem(label, value)
+    # 1 vài lựa chọn có nhãn RẤT dài (vd "★ Giá trị đo (CHỈ NHẬN DIỆN...)")
+    # — mặc định QComboBox tự giãn rộng theo ĐÚNG lựa chọn dài nhất trong
+    # danh sách (kể cả lựa chọn đó không đang được chọn), kéo theo cả layout
+    # cha bị ép rộng ra và xuất hiện thanh cuộn ngang không mong muốn (đã
+    # gặp thật ở "Đọc bảng từ Excel/Word" — 7+ combobox cùng lúc). Giới hạn
+    # độ rộng hiển thị theo số ký tự cố định, chữ dài thì tự hiện "…" —
+    # xem đầy đủ qua tooltip (cập nhật theo lựa chọn đang chọn) hoặc mở
+    # dropdown ra xem (popup vẫn hiện đủ chữ, không bị cắt).
+    cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+    cb.setMinimumContentsLength(24)
+
+    def _sync_tooltip(i):
+        cb.setToolTip(cb.itemText(i))
+    cb.currentIndexChanged.connect(_sync_tooltip)
+
     if current is not None:
         idx = cb.findData(current)
         if idx >= 0:
             cb.setCurrentIndex(idx)
+    _sync_tooltip(cb.currentIndex())
     return cb
 
 
@@ -447,11 +478,12 @@ class TemplateManagerDialog(QDialog):
         lay = QVBoxLayout(inner)
 
         toolbar = QHBoxLayout()
-        btn_import = QPushButton("🔍 Đọc bảng từ Word (Biên Bản)…")
+        btn_import = QPushButton("🔍 Đọc bảng từ Biên Bản…")
         btn_import.setToolTip(
-            "Đọc các bảng khách đã tự dựng sẵn trong bienban.docx — tự sinh dữ liệu từng "
-            "dòng + tự gõ tag report_val() vào đúng ô, không cần gõ tay Jinja.")
-        btn_import.clicked.connect(self._import_from_word)
+            "Đọc các bảng khách đã tự dựng sẵn trong bienban.docx/bienban.xlsx — tự sinh dữ liệu "
+            "từng dòng theo cấu trúc ô THẬT. Chỉ NHẬN DIỆN ô đã có sẵn tag report_val() do bạn tự "
+            "gõ tay trong file, không tự động ghi/gán vào ô rỗng hay ô khác.")
+        btn_import.clicked.connect(self._import_table)
         toolbar.addWidget(btn_import)
         toolbar.addStretch()
         lay.addLayout(toolbar)
@@ -512,17 +544,24 @@ class TemplateManagerDialog(QDialog):
             row_advanced = {"value_format_seq": row_value_format_seqs[0]}
         dlg = TableFormDialog(self.tables_dir, wio.descriptor_to_spec(existing),
                                raw_counts=raw_counts, row_advanced=row_advanced,
-                               row_value_format_seqs=row_value_format_seqs, parent=self)
+                               row_value_format_seqs=row_value_format_seqs,
+                               bienban_path=self._resolve_doc_path("bienban"),
+                               xlsx_ref=existing.xlsx_ref, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             self._mark_changed()
             self._load_template(self.template_id)
 
-    def _import_from_word(self):
+    def _import_table(self):
+        xlsx_path = self.tpl_dir / "bienban.xlsx"
         docx_path = self.tpl_dir / "bienban.docx"
-        if not docx_path.exists():
-            QMessageBox.warning(self, "Chưa có file Word", "Mẫu này chưa có file bienban.docx.")
+        if xlsx_path.exists():
+            dlg = ImportTableFromExcelDialog(self.tables_dir, xlsx_path, self._descriptors, parent=self)
+        elif docx_path.exists():
+            dlg = ImportTableFromWordDialog(self.tables_dir, docx_path, self._descriptors, parent=self)
+        else:
+            QMessageBox.warning(self, "Chưa có file mẫu",
+                                 "Mẫu này chưa có file bienban.docx hoặc bienban.xlsx.")
             return
-        dlg = ImportTableFromWordDialog(self.tables_dir, docx_path, self._descriptors, parent=self)
         dlg.exec_()
         if dlg.imported_any:
             self._mark_changed()
@@ -551,12 +590,22 @@ class TemplateManagerDialog(QDialog):
 
     # -- Tab 3: File Word ----------------------------------------------------
 
+    def _resolve_doc_path(self, which: str) -> Path:
+        """File mẫu thật của `which` ('bienban'|'gcnkd') — thử .xlsx trước
+        .docx (đúng thứ tự ưu tiên của core/report_templates/generic.py),
+        mặc định .docx nếu mẫu chưa có file nào (hiển thị "chưa có file")."""
+        for ext in (".xlsx", ".docx"):
+            p = self.tpl_dir / f"{which}{ext}"
+            if p.exists():
+                return p
+        return self.tpl_dir / f"{which}.docx"
+
     def _build_docx_tab(self) -> QWidget:
         tab = QWidget()
         lay = QVBoxLayout(tab)
 
         for which, label in (("bienban", "Biên Bản (Phụ lục A)"), ("gcnkd", "Giấy Chứng Nhận (Phụ lục B)")):
-            path = self.tpl_dir / f"{which}.docx"
+            path = self._resolve_doc_path(which)
             row = QFrame()
             row.setFrameShape(QFrame.StyledPanel)
             row_lay = QHBoxLayout(row)
@@ -593,13 +642,16 @@ class TemplateManagerDialog(QDialog):
         return tab
 
     def _replace_docx(self, which: str):
-        path, _ = get_open_file_name(self, "Chọn file Word đã gắn tag sẵn", "", "Word Document (*.docx)")
+        path, _ = get_open_file_name(self, "Chọn file mẫu đã gắn tag sẵn", "",
+                                      "Word/Excel (*.docx *.xlsx)")
         if not path:
             return
         ids = [d.table_id for d in self._descriptors]
-        missing = wio.find_missing_table_ids(path, ids)
+        is_xlsx = Path(path).suffix.lower() == ".xlsx"
+        missing = xwio.find_missing_table_ids(path, ids) if is_xlsx else wio.find_missing_table_ids(path, ids)
         if missing:
-            msg = (f"Không thấy 'tables.<ID>' của {missing} trong file vừa chọn.\n\n"
+            needle = "report_val('<ID>')" if is_xlsx else "tables.<ID>"
+            msg = (f"Không thấy '{needle}' của {missing} trong file vừa chọn.\n\n"
                    f"Có thể do gõ nhầm mã bảng hoặc chưa gắn tag. Vẫn dùng file này?")
             if QMessageBox.question(self, "Cảnh báo", msg) != QMessageBox.Yes:
                 return
@@ -938,62 +990,36 @@ class ImportTableFromWordDialog(QDialog):
         form_top.addRow("Mã bảng:", e_table_id)
         e_name = QLineEdit()
         form_top.addRow("Tên bài test:", e_name)
-        sp_header_row = QSpinBox()
-        sp_header_row.setRange(1, max(detected.n_rows, 1))
-        sp_header_row.setValue(1)
-        form_top.addRow("Dòng tiêu đề (không tính là dữ liệu):", sp_header_row)
         lay.addLayout(form_top)
 
         if detected.already_tagged:
-            warn = QLabel("⚠ Bảng này có vẻ ĐÃ có tag report_val() — đọc lại có thể ghi đè tag cũ.")
-            warn.setWordWrap(True)
-            warn.setStyleSheet(f"color:{Colors.ACCENT_WARN};")
-            lay.addWidget(warn)
+            info = QLabel("✓ Bảng này đã có sẵn tag report_val() — những ô đó sẽ được NHẬN DIỆN "
+                          "khi bấm Tiếp tục (xem chi tiết ở gợi ý dưới cột \"★ Giá trị đo\").")
+            info.setWordWrap(True)
+            info.setStyleSheet(f"color:{Colors.ACCENT_GREEN};")
+            lay.addWidget(info)
 
         lbl_preview_hint = QLabel(
-            "Xem trước nội dung đọc được từ Word (chỉ đọc, không sửa gì trong file) — tick "
-            "\"Bỏ qua\" cho dòng nào KHÔNG phải dữ liệu thật (vd 1 dòng tiêu đề phụ lồng giữa "
-            "bảng) để giữ nguyên chữ tĩnh, không bị gắn tag/không bị tính là dòng dữ liệu:")
+            "Xem trước nội dung đọc được từ Word (chỉ đọc, không sửa gì trong file) — dòng nào KHÔNG "
+            "có sẵn tag report_val() trong (các) cột \"★ Giá trị đo\" tự động được coi là chữ tĩnh "
+            "(vd dòng tiêu đề), KHÔNG tính là dòng dữ liệu:")
         lbl_preview_hint.setWordWrap(True)
         lay.addWidget(lbl_preview_hint)
-        preview = QTableWidget(detected.n_rows, detected.n_cols + 1)
+        preview = QTableWidget(detected.n_rows, detected.n_cols)
         preview.setEditTriggers(QTableWidget.NoEditTriggers)
         preview.verticalHeader().setVisible(False)
-        preview.setHorizontalHeaderLabels(["Bỏ qua", *[f"Cột {c + 1}" for c in range(detected.n_cols)]])
-        row_skip_checks: list = []
+        preview.setHorizontalHeaderLabels([f"Cột {c + 1}" for c in range(detected.n_cols)])
         for r, row_texts in enumerate(detected.grid):
-            chk = QCheckBox()
-            cell_w = QWidget()
-            cell_lay = QHBoxLayout(cell_w)
-            cell_lay.addWidget(chk)
-            cell_lay.setAlignment(Qt.AlignCenter)
-            cell_lay.setContentsMargins(2, 0, 2, 0)
-            preview.setCellWidget(r, 0, cell_w)
-            row_skip_checks.append(chk)
             for c, text in enumerate(row_texts):
                 item = QTableWidgetItem(text)
                 if r == 0:
                     f = item.font()
                     f.setBold(True)
                     item.setFont(f)
-                preview.setItem(r, c + 1, item)
-        preview.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        preview.setColumnWidth(0, 60)
+                preview.setItem(r, c, item)
         preview.resizeColumnsToContents()
-        preview.setColumnWidth(0, 60)
         preview.setMaximumHeight(220)
         lay.addWidget(preview)
-
-        def _sync_header_row_checkbox(value: int):
-            """Dòng tiêu đề (chọn ở spinner) LUÔN bị loại khỏi dữ liệu — tick
-            sẵn + khoá checkbox tương ứng để khỏi tick trùng 2 chỗ."""
-            for i, chk in enumerate(row_skip_checks):
-                is_header = (i == value - 1)
-                if is_header:
-                    chk.setChecked(True)
-                chk.setEnabled(not is_header)
-        sp_header_row.valueChanged.connect(_sync_header_row_checkbox)
-        _sync_header_row_checkbox(sp_header_row.value())
 
         lay.addWidget(QLabel("Mỗi cột trong bảng trên nghĩa là gì? (dựa theo dòng tiêu đề):"))
         role_form = QFormLayout()
@@ -1011,9 +1037,8 @@ class ImportTableFromWordDialog(QDialog):
         btn_continue.setStyleSheet(
             f"background:{Colors.ACCENT_GREEN}; color:{Colors.BG_WINDOW}; font-weight:bold; padding:6px 14px;")
         btn_continue.clicked.connect(
-            lambda _c=False, d=detected, tid=e_table_id, nm=e_name, hr=sp_header_row, rc=role_combos,
-                   sc=row_skip_checks:
-                self._continue(d, tid, nm, hr, rc, sc))
+            lambda _c=False, d=detected, tid=e_table_id, nm=e_name, rc=role_combos:
+                self._continue(d, tid, nm, rc))
         lay.addWidget(btn_continue, alignment=Qt.AlignRight)
 
         scroller = QScrollArea()
@@ -1022,7 +1047,7 @@ class ImportTableFromWordDialog(QDialog):
         scroller.setWidget(w)
         return scroller
 
-    def _continue(self, detected, e_table_id, e_name, sp_header_row, role_combos, row_skip_checks):
+    def _continue(self, detected, e_table_id, e_name, role_combos):
         table_id = e_table_id.text().strip()
         err = wio.validate_table_id_available(self.tables_dir, table_id)
         if err:
@@ -1038,55 +1063,34 @@ class ImportTableFromWordDialog(QDialog):
         if not measured_cols:
             QMessageBox.warning(
                 self, "Lỗi",
-                "Phải chọn ÍT NHẤT 1 cột là '★ Giá trị đo (phần mềm sẽ tự điền tag report_val())'.")
+                "Phải chọn ÍT NHẤT 1 cột là '★ Giá trị đo (chỉ nhận diện ô đã có sẵn report_val())'.")
             return
 
-        header_row_index = sp_header_row.value() - 1
-        # Dòng nào tick "Bỏ qua" ở bảng xem trước (trừ dòng tiêu đề — đã tự
-        # loại riêng, xem header_row_index) -> không tính là dữ liệu, giữ
-        # nguyên chữ tĩnh, không bị gắn tag report_val().
-        extra_skip_rows = frozenset(
-            i for i, chk in enumerate(row_skip_checks)
-            if chk.isChecked() and i != header_row_index)
+        # KHÔNG ghi gì vào file — chỉ ĐẾM số ô đã có sẵn ĐÚNG tag
+        # {{ tables.<table_id>.report_val() }} trong (các) cột "★ Giá trị
+        # đo" đã chọn, CHO MỌI DÒNG của bảng (header_row_index=-1: không
+        # loại dòng nào trước — xem docstring core/table_wizard_io.py::
+        # raw_counts_for_measured_cols). Dòng nào đếm được 0 -> TỰ ĐỘNG coi
+        # là chữ tĩnh (vd dòng tiêu đề) và bỏ qua, không cần khách khai báo
+        # dòng nào là tiêu đề. Số report_val()/dòng CÓ THỂ KHÁC NHAU giữa
+        # các dòng — 1 dòng tổng hợp (vd "Trung Bình") gộp nhiều cột thành 1
+        # ô rộng thì chỉ cần 1 tag đã gõ, không phải N.
+        all_counts = wio.raw_counts_for_measured_cols(
+            self.docx_path, detected.index, measured_cols, table_id,
+            header_row_index=-1, extra_skip_rows=frozenset())
+        skip_relative = frozenset(i for i, c in enumerate(all_counts) if c == 0)
+        raw_counts = [c for c in all_counts if c > 0]
 
-        # An toàn: cảnh báo TRƯỚC khi gõ đè nếu có ô SẮP bị tag (theo cột "★
-        # Giá trị đo" đã chọn) đang chứa chữ tĩnh thật (không rỗng, không
-        # phải tag report_val() cũ) — phòng trường hợp quên tick "Bỏ qua"
-        # cho 1 dòng tiêu đề phụ lồng bên trong bảng, tránh mất chữ tĩnh mà
-        # không hay biết (đã từng xảy ra thật với dòng "lần 6"-"lần 10").
-        flags = wio.measured_cell_flags(self.docx_path, detected.index, measured_cols, header_row_index)
-        overwrite_warnings = []
-        for r, row_texts in enumerate(detected.grid):
-            if r == header_row_index or r in extra_skip_rows:
-                continue
-            for c in flags.get(r, ()):
-                text = row_texts[c] if c < len(row_texts) else ""
-                if text.strip() and "report_val()" not in text:
-                    overwrite_warnings.append(f"  Dòng {r + 1}, Cột {c + 1}: \"{text.strip()}\"")
-        if overwrite_warnings:
-            msg = ("Những ô sau đang có CHỮ TĨNH (không phải tag cũ) sẽ bị GÕ ĐÈ thành "
-                   "report_val() nếu tiếp tục:\n\n" + "\n".join(overwrite_warnings) +
-                   "\n\nCó chắc muốn tiếp tục không? (Nếu dòng đó KHÔNG phải dữ liệu thật, hãy "
-                   "Huỷ rồi tick \"Bỏ qua\" cho dòng đó ở bảng xem trước.)")
-            if QMessageBox.question(self, "Xác nhận ghi đè", msg,
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-                return
-
-        rows = wio.build_rows_from_grid(detected.grid, role_map, header_row_index, extra_skip_rows)
+        rows = wio.build_rows_from_grid(detected.grid, role_map, header_row_index=-1,
+                                        extra_skip_rows=skip_relative)
         if not rows:
-            QMessageBox.warning(self, "Lỗi", "Không có dòng dữ liệu nào (kiểm tra lại dòng tiêu đề).")
+            QMessageBox.warning(
+                self, "Chưa tìm thấy tag nào",
+                f"Không tìm thấy ô nào đã có sẵn tag {{{{ tables.{table_id}.report_val() }}}} trong "
+                f"(các) cột \"★ Giá trị đo\" đã chọn — không có dòng dữ liệu nào để nhận diện.\n\nHãy "
+                f"tự gõ tag đó vào các ô dữ liệu tương ứng trong Word rồi bấm \"Tiếp tục →\" lại.")
             return
 
-        # Số report_val()/dòng — dry-run (KHÔNG ghi gì) theo ĐÚNG cấu trúc ô
-        # thật trong Word, KHÔNG ép đồng nhất giữa các dòng: 1 dòng tổng hợp
-        # (vd "Trung Bình") gộp nhiều cột "★ Giá trị đo" thành 1 ô rộng chỉ
-        # cần ít report_val() hơn dòng đo thường — tự động khớp đúng, không
-        # cần khách cấu hình gì thêm (xem core/table_wizard_io.py::
-        # raw_counts_for_measured_cols). extra_skip_rows (vd 1 dòng tiêu đề
-        # phụ lồng bên trong bảng) giữ nguyên chữ tĩnh, không bị tính là dữ
-        # liệu/không bị gắn tag.
-        raw_counts = wio.raw_counts_for_measured_cols(
-            self.docx_path, detected.index, measured_cols, header_row_index, extra_skip_rows)
         # Nút "⚙ nâng cao" (định dạng riêng từng report_val()) CHỈ hiện khi
         # mọi dòng CÙNG 1 số report_val() — TableFormDialog tự ẩn nếu không,
         # cùng nguyên tắc "ẩn nâng cao" như Quy tắc Đạt/Không đạt: không ép
@@ -1101,15 +1105,298 @@ class ImportTableFromWordDialog(QDialog):
             pass_rule={"type": "none"}, gcn=None,
         )
         tag_target = {
+            "kind": "docx",
             "docx_path": self.docx_path, "table_index": detected.index,
-            "measured_cols": measured_cols, "header_row_index": header_row_index,
-            "extra_skip_rows": extra_skip_rows,
+            "measured_cols": measured_cols, "header_row_index": -1,
+            "extra_skip_rows": skip_relative,
         }
         dlg = TableFormDialog(self.tables_dir, spec, is_new=True, tag_target=tag_target,
                                raw_counts=raw_counts, row_advanced=row_advanced, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             self.imported_any = True
             self._detected = wio.scan_docx_tables(self.docx_path)
+            self._refresh_list()
+
+
+# =============================================================================
+#      ImportTableFromExcelDialog — tương đương ImportTableFromWordDialog
+#      nhưng file mẫu là .xlsx: khách tự khoanh 1 vùng ô (Excel không có
+#      ranh giới bảng rõ như doc.tables). Cột "★ Giá trị đo" chỉ dùng để
+#      khoanh vùng TÌM những ô khách đã TỰ GÕ TAY report_val('<id>') từ
+#      trước trong Excel — CÙNG nguyên tắc "chỉ nhận diện, không tự ghi"
+#      với ImportTableFromWordDialog (xem core/xlsx_wizard_io.py::
+#      raw_counts_for_measured_cols) — quyết định thiết kế đã chốt với
+#      khách hàng, tránh rủi ro ghi đè ngoài ý muốn lên file bảng tính có
+#      công thức phức tạp.
+# =============================================================================
+
+
+class ImportTableFromExcelDialog(QDialog):
+    def __init__(self, tables_dir: Path, xlsx_path: Path, existing_descriptors: list, parent=None):
+        super().__init__(parent)
+        self.tables_dir = tables_dir
+        self.xlsx_path = xlsx_path
+        self.existing_descriptors = existing_descriptors
+        self.imported_any = False
+
+        self.setWindowTitle("Đọc bảng từ file Excel")
+        self.setMinimumSize(1300, 750)
+
+        self._sheets = xwio.list_sheets(xlsx_path)
+
+        root = QVBoxLayout(self)
+
+        if not self._sheets:
+            root.addWidget(QLabel("Không tìm thấy sheet nào trong file Excel này."))
+            btn_close = QPushButton("Đóng")
+            btn_close.clicked.connect(self.reject)
+            root.addWidget(btn_close, alignment=Qt.AlignRight)
+            return
+
+        self.splitter = QSplitter(Qt.Horizontal)
+
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.addWidget(QLabel("Sheet trong file:"))
+        self.list_sheets = QListWidget()
+        self.splitter.addWidget(left)
+        ll.addWidget(self.list_sheets, 1)
+
+        self.stack = QStackedWidget()
+        self.splitter.addWidget(self.stack)
+        self.splitter.setSizes([320, 980])
+        root.addWidget(self.splitter, 1)
+        self.list_sheets.currentRowChanged.connect(self.stack.setCurrentIndex)
+
+        nav = QHBoxLayout()
+        nav.addStretch()
+        btn_close = QPushButton("Đóng")
+        btn_close.clicked.connect(self.accept)
+        nav.addWidget(btn_close)
+        root.addLayout(nav)
+
+        self._refresh_list()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        paint_corner_brackets(self)
+
+    def _refresh_list(self):
+        cur = max(self.list_sheets.currentRow(), 0)
+        self.list_sheets.blockSignals(True)
+        self.list_sheets.clear()
+        while self.stack.count():
+            page = self.stack.widget(0)
+            self.stack.removeWidget(page)
+            page.deleteLater()
+        for sheet in self._sheets:
+            suffix = "  ✓ có vẻ đã có tag" if sheet.already_tagged else ""
+            item = QListWidgetItem(f"{sheet.sheet_name} — vùng dùng {sheet.used_range}{suffix}")
+            if sheet.already_tagged:
+                item.setForeground(QColor(Colors.TEXT_DIM))
+            self.list_sheets.addItem(item)
+            self.stack.addWidget(self._build_editor(sheet))
+        self.list_sheets.blockSignals(False)
+        if self.list_sheets.count():
+            idx = min(cur, self.list_sheets.count() - 1)
+            self.list_sheets.setCurrentRow(idx)
+            self.stack.setCurrentIndex(idx)
+
+    def _suggest_table_id(self) -> str:
+        used = {d.table_id for d in self.existing_descriptors}
+        n = 1
+        while f"A{n}" in used:
+            n += 1
+        return f"A{n}"
+
+    def _build_editor(self, sheet) -> QWidget:
+        """Khác ImportTableFromWordDialog._build_editor(): Excel không có
+        ranh giới bảng cố định như doc.tables, nên khách tự gõ/sửa 'Vùng dữ
+        liệu' rồi bấm "Đọc lại vùng này" để dựng lại preview + role dropdown
+        — có thể lặp lại nhiều lần trước khi "Tiếp tục". `state` (dict, MỘT
+        bản/trang) giữ dữ liệu của LẦN ĐỌC GẦN NHẤT để nút Tiếp tục dùng."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+
+        form_top = QFormLayout()
+        e_table_id = QLineEdit(self._suggest_table_id())
+        form_top.addRow("Mã bảng:", e_table_id)
+        e_name = QLineEdit()
+        form_top.addRow("Tên bài test:", e_name)
+        e_range = QLineEdit(sheet.used_range)
+        form_top.addRow("Vùng dữ liệu (địa chỉ Excel, vd 'A2:W26'):", e_range)
+        lay.addLayout(form_top)
+
+        btn_reload = QPushButton("🔄 Đọc lại vùng này")
+        lay.addWidget(btn_reload, alignment=Qt.AlignLeft)
+
+        # `content`/`clay` được tạo CỐ ĐỊNH 1 LẦN DUY NHẤT ở đây — mỗi lần
+        # "Đọc lại vùng này" chỉ dọn/dựng lại BÊN TRONG `clay` (xem
+        # _clear_layout), KHÔNG bao giờ removeWidget()/insertWidget() trên
+        # `lay` (layout NGOÀI) nữa. Lý do: Qt có lỗi hiếm gặp — remove rồi
+        # insertWidget lại 1 widget khác vào ĐÚNG vị trí đó trên 1 layout đã
+        # có sẵn item khác phía TRƯỚC (form_top/btn_reload ở đây) làm hỏng
+        # phần vẽ (không phải dữ liệu) của các item phía trước đó: label
+        # "Mã bảng:"/"Tên bài test:"/"Vùng dữ liệu..." và cả nút "🔄 Đọc lại
+        # vùng này" biến mất khỏi màn hình (dù vẫn tồn tại, đọc lại đúng text
+        # qua code) — đã tái hiện lỗi này trong 1 ví dụ Qt tối giản, tách
+        # biệt hoàn toàn khỏi code của app.
+        content = QWidget()
+        clay = QVBoxLayout(content)
+        clay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(content)
+
+        lay.addStretch()
+        btn_continue = QPushButton("Tiếp tục →")
+        btn_continue.setStyleSheet(
+            f"background:{Colors.ACCENT_GREEN}; color:{Colors.BG_WINDOW}; font-weight:bold; padding:6px 14px;")
+        lay.addWidget(btn_continue, alignment=Qt.AlignRight)
+
+        state: dict = {}
+
+        def _rebuild():
+            range_str = e_range.text().strip()
+            try:
+                grid = xwio.read_range(self.xlsx_path, sheet.sheet_name, range_str)
+            except Exception as exc:  # noqa: BLE001
+                QMessageBox.warning(self, "Vùng không hợp lệ", f"Không đọc được vùng '{range_str}': {exc}")
+                return
+
+            _clear_layout(clay)
+
+            n_rows = len(grid)
+            n_cols = len(grid[0]) if grid else 0
+            state["range_str"] = range_str
+            state["grid"] = grid
+
+            if any("report_val(" in c for row_texts in grid for c in row_texts):
+                info = QLabel("✓ Vùng này đã có sẵn tag report_val() — những ô đó sẽ được NHẬN DIỆN "
+                               "khi bấm Tiếp tục (xem chi tiết ở gợi ý dưới cột \"★ Giá trị đo\").")
+                info.setWordWrap(True)
+                info.setStyleSheet(f"color:{Colors.ACCENT_GREEN};")
+                clay.addWidget(info)
+
+            lbl_hint = QLabel(
+                "Xem trước nội dung đọc được từ Excel (chỉ đọc, không sửa gì trong file) — dòng nào "
+                "KHÔNG có sẵn tag report_val() trong (các) cột \"★ Giá trị đo\" tự động được coi là "
+                "chữ tĩnh (vd dòng tiêu đề), KHÔNG tính là dòng dữ liệu:")
+            lbl_hint.setWordWrap(True)
+            clay.addWidget(lbl_hint)
+
+            preview = QTableWidget(n_rows, n_cols)
+            preview.setEditTriggers(QTableWidget.NoEditTriggers)
+            preview.verticalHeader().setVisible(False)
+            preview.setHorizontalHeaderLabels([f"Cột {c + 1}" for c in range(n_cols)])
+            for r, row_texts in enumerate(grid):
+                for c, text in enumerate(row_texts):
+                    item = QTableWidgetItem(text)
+                    if r == 0:
+                        f = item.font()
+                        f.setBold(True)
+                        item.setFont(f)
+                    preview.setItem(r, c, item)
+            preview.resizeColumnsToContents()
+            preview.setMaximumHeight(220)
+            clay.addWidget(preview)
+
+            clay.addWidget(QLabel("Mỗi cột trong vùng trên nghĩa là gì? (dựa theo dòng tiêu đề):"))
+            role_form = QFormLayout()
+            role_combos = []
+            header_texts = grid[0] if grid else []
+            for c in range(n_cols):
+                header_text = header_texts[c] if c < len(header_texts) else ""
+                cb = _combo(wio.COLUMN_ROLE_CHOICES, current=wio.guess_column_role(header_text))
+                role_form.addRow(f"Cột {c + 1} (\"{header_text}\"):", cb)
+                role_combos.append(cb)
+            clay.addLayout(role_form)
+
+            state["role_combos"] = role_combos
+
+        btn_reload.clicked.connect(_rebuild)
+        _rebuild()
+
+        btn_continue.clicked.connect(
+            lambda _c=False, s=sheet, tid=e_table_id, nm=e_name, st=state: self._continue(s, tid, nm, st))
+
+        scroller = QScrollArea()
+        scroller.setWidgetResizable(True)
+        scroller.setFrameShape(QFrame.NoFrame)
+        scroller.setWidget(w)
+        return scroller
+
+    def _continue(self, sheet, e_table_id, e_name, state: dict):
+        if "grid" not in state:
+            QMessageBox.warning(self, "Lỗi", "Chưa đọc được vùng dữ liệu nào hợp lệ — kiểm tra lại 'Vùng dữ liệu'.")
+            return
+        table_id = e_table_id.text().strip()
+        err = wio.validate_table_id_available(self.tables_dir, table_id)
+        if err:
+            QMessageBox.warning(self, "Lỗi", err)
+            return
+        name = e_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Lỗi", "Cần nhập Tên bài test.")
+            return
+
+        grid = state["grid"]
+        role_combos = state["role_combos"]
+
+        role_map = {i: cb.currentData() for i, cb in enumerate(role_combos)}
+        measured_cols = sorted(i for i, r in role_map.items() if r == "measured")
+        if not measured_cols:
+            QMessageBox.warning(
+                self, "Lỗi",
+                "Phải chọn ÍT NHẤT 1 cột là '★ Giá trị đo (chỉ nhận diện ô đã có sẵn report_val())'.")
+            return
+
+        min_col, min_row, _max_col, _max_row = xwio.parse_range(state["range_str"])
+        measured_cols_abs = [min_col + c for c in measured_cols]
+        all_rows_abs = [min_row + i for i in range(len(grid))]
+
+        # KHÔNG ghi gì vào file — chỉ ĐẾM số ô đã có sẵn ĐÚNG text
+        # report_val('<table_id>') trong (các) cột "★ Giá trị đo" đã chọn,
+        # CHO MỌI DÒNG trong vùng (xem docstring core/xlsx_wizard_io.py::
+        # raw_counts_for_measured_cols). Dòng nào đếm được 0 -> TỰ ĐỘNG coi
+        # là chữ tĩnh (vd dòng tiêu đề "lần 1"..."lần 5") và bỏ qua, không
+        # cần khách khai báo dòng nào là tiêu đề.
+        all_counts = xwio.raw_counts_for_measured_cols(
+            self.xlsx_path, sheet.sheet_name, all_rows_abs, measured_cols_abs, table_id)
+        skip_relative = frozenset(i for i, c in enumerate(all_counts) if c == 0)
+        raw_counts = [c for c in all_counts if c > 0]
+
+        rows = wio.build_rows_from_grid(grid, role_map, header_row_index=-1, extra_skip_rows=skip_relative)
+        if not rows:
+            QMessageBox.warning(
+                self, "Chưa tìm thấy tag nào",
+                f"Không tìm thấy ô nào đã có sẵn report_val('{table_id}') trong (các) cột \"★ Giá trị "
+                f"đo\" đã chọn — không có dòng dữ liệu nào để nhận diện.\n\nHãy tự gõ tag "
+                f"report_val('{table_id}') vào các ô dữ liệu tương ứng trong Excel rồi bấm "
+                f"\"🔄 Đọc lại vùng này\".")
+            return
+
+        data_rows_abs = [r for i, r in enumerate(all_rows_abs) if i not in skip_relative]
+
+        row_advanced = ({"value_format_seq": None}
+                        if len(set(raw_counts)) == 1 and raw_counts and raw_counts[0] > 1
+                        else None)
+
+        spec = wio.WizardTableSpec(
+            table_id=table_id, name=name, order=len(self.existing_descriptors) + 1,
+            value_unit="", value_format="text", rows=rows,
+            pass_rule={"type": "none"}, gcn=None,
+        )
+        tag_target = {
+            "kind": "xlsx",
+            "xlsx_path": self.xlsx_path, "sheet_name": sheet.sheet_name,
+            "data_rows_abs": data_rows_abs, "measured_cols_abs": measured_cols_abs,
+        }
+        dlg = TableFormDialog(self.tables_dir, spec, is_new=True, tag_target=tag_target,
+                               raw_counts=raw_counts, row_advanced=row_advanced,
+                               xlsx_ref={"sheet": sheet.sheet_name, "range": state["range_str"]},
+                               parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            self.imported_any = True
+            self._sheets = xwio.list_sheets(self.xlsx_path)
             self._refresh_list()
 
 
@@ -1215,18 +1502,21 @@ class TableFormDialog(QDialog):
     def __init__(self, tables_dir: Path, spec: "wio.WizardTableSpec", *,
                  is_new: bool = False, tag_target: dict | None = None,
                  raw_counts: list | None = None, row_advanced: dict | None = None,
-                 row_value_format_seqs: list | None = None, parent=None):
+                 row_value_format_seqs: list | None = None,
+                 bienban_path: Path | None = None, xlsx_ref: dict | None = None, parent=None):
         """spec: WizardTableSpec ĐÃ DỰNG SẴN — sửa bảng có sẵn (is_new=False,
         wio.descriptor_to_spec(existing)) hoặc bảng MỚI đọc từ Word
         (is_new=True, ImportTableFromWordDialog dựng sẵn rows từ bảng Word
         thật). is_new=True cho phép đổi Mã bảng + bắt buộc kiểm tra mã chưa
         tồn tại trước khi lưu.
 
-        tag_target: {"docx_path","table_index","measured_cols","header_row_index"}
-        — nếu có, sau khi lưu descriptor JSON, TỰ GÕ tag report_val() vào
-        đúng (các) ô khách đã chọn trong chính file Word đó (xem
-        core/table_wizard_io.py::insert_report_val_tags) — khách không phải
-        tự gõ Jinja tay.
+        tag_target: {"kind","docx_path"/"xlsx_path","table_index"/"sheet_name",
+        "measured_cols"/"measured_cols_abs","header_row_index"/"data_rows_abs",...}
+        — nếu có, ngay TRƯỚC KHI lưu sẽ ĐẾM LẠI số ô đã có sẵn tag
+        report_val('<mã bảng>') trong chính file mẫu đó (xem
+        core/table_wizard_io.py hoặc core/xlsx_wizard_io.py::
+        raw_counts_for_measured_cols) — app KHÔNG tự ghi tag vào file, khách
+        phải tự gõ tay trong Word/Excel trước.
 
         raw_counts: số report_val() CỦA TỪNG DÒNG (list, cùng độ dài
         spec.rows) — KHÔNG bắt buộc đồng nhất giữa các dòng: 1 dòng tổng hợp
@@ -1242,12 +1532,33 @@ class TableFormDialog(QDialog):
         không đồng nhất, nút "⚙ Sửa cấu trúc report_val()" tự ẩn, mỗi dòng
         giữ nguyên value_format_seq riêng của nó (row_value_format_seqs,
         dùng khi sửa 1 bảng có sẵn — None = dòng đó dùng định dạng mặc định
-        chung của bảng)."""
+        chung của bảng).
+
+        bienban_path: đường dẫn bienban.docx/bienban.xlsx SỐNG của mẫu đang
+        sửa — CHỈ dùng khi is_new=False (sửa bảng có sẵn) để quét lại file
+        đó, tìm đúng vùng ô đã gắn tag report_val() của table_id này rồi
+        hiện 1 bảng THAM KHẢO chỉ-xem (giống bảng rà soát Bước 2/3 —
+        core/table_wizard_io.py::find_docx_table_grid /
+        core/xlsx_wizard_io.py::find_xlsx_table_grid) — khách vừa sửa Khoá/
+        Chuẩn/Ngưỡng vừa đối chiếu ngay cấu trúc thật, không cần mở Word/
+        Excel song song. None hoặc không tìm thấy -> ẩn hẳn phần này, không
+        báo lỗi (đúng tinh thần "chỉ hỗ trợ thêm", không chặn luồng sửa).
+
+        xlsx_ref: {"sheet": str, "range": str} — vùng ô Excel THẬT khách đã
+        chọn (ImportTableFromExcelDialog truyền vào khi vừa import, hoặc
+        existing.xlsx_ref truyền lại khi sửa bảng có sẵn). Khi có, bảng THAM
+        KHẢO ở trên đọc ĐÚNG vùng này (core/xlsx_wizard_io.py::read_range)
+        thay vì tự dò/đoán lại bằng find_xlsx_table_grid() — khớp CHÍNH XÁC
+        với vùng khách đã định nghĩa, không lệch theo quy tắc đoán chung.
+        Luôn được GHI LẠI (giữ nguyên hoặc cập nhật) vào descriptor.xlsx_ref
+        lúc Lưu, xem _do_save(). None với bảng dùng mẫu Word hoặc bảng Excel
+        tạo trước khi có field này -> rơi về find_xlsx_table_grid như cũ."""
         super().__init__(parent)
         self.tables_dir = tables_dir
         self.is_new = is_new
         self.tag_target = tag_target
         self.row_advanced = row_advanced
+        self._xlsx_ref = xlsx_ref
         raw_counts = list(raw_counts) if raw_counts is not None else [1] * len(spec.rows)
         row_value_format_seqs = row_value_format_seqs or [None] * len(spec.rows)
 
@@ -1321,6 +1632,74 @@ class TableFormDialog(QDialog):
         pr_row.addWidget(btn_pass_rule)
         lay.addLayout(pr_row)
 
+        # --- bảng THAM KHẢO chỉ-xem, dựng lại từ chính file mẫu SỐNG (xem
+        # docstring bienban_path ở trên) — CHỈ hiện khi sửa bảng có sẵn VÀ
+        # quét được đúng vùng ô của table_id này, im lặng bỏ qua nếu không
+        # (mẫu chưa có file, chưa gắn tag, hoặc lỗi đọc file bất kỳ). ---
+        if not self.is_new and bienban_path is not None:
+            grid = None
+            try:
+                bienban_path = Path(bienban_path)
+                if bienban_path.exists():
+                    if bienban_path.suffix.lower() == ".xlsx":
+                        # Ưu tiên đọc ĐÚNG vùng khách đã chọn lúc import
+                        # (self._xlsx_ref) — chỉ rơi về dò/đoán lại
+                        # (find_xlsx_table_grid) khi chưa có xlsx_ref (bảng
+                        # cũ tạo trước khi có field này) hoặc đọc vùng đó
+                        # lỗi (vd khách đã đổi tên sheet ngoài app).
+                        if self._xlsx_ref:
+                            try:
+                                grid = xwio.read_range(
+                                    bienban_path, self._xlsx_ref["sheet"], self._xlsx_ref["range"])
+                            except Exception:  # noqa: BLE001
+                                grid = None
+                        if not grid:
+                            grid = xwio.find_xlsx_table_grid(bienban_path, spec.table_id)
+                    else:
+                        grid = wio.find_docx_table_grid(bienban_path, spec.table_id)
+            except Exception:  # noqa: BLE001
+                grid = None
+            if grid:
+                btn_ref = QPushButton("▸ 📄 Cấu trúc thật trong file mẫu hiện tại (bấm để xem)")
+                btn_ref.setCheckable(True)
+                btn_ref.setStyleSheet("text-align:left; padding:4px 6px;")
+                lay.addWidget(btn_ref)
+
+                n_c = max((len(r) for r in grid), default=0)
+                preview = QTableWidget(len(grid), n_c)
+                preview.setEditTriggers(QTableWidget.NoEditTriggers)
+                preview.verticalHeader().setVisible(False)
+                preview.horizontalHeader().setVisible(False)
+                for r, row_texts in enumerate(grid):
+                    for c in range(n_c):
+                        item = QTableWidgetItem(row_texts[c] if c < len(row_texts) else "")
+                        if r == 0:
+                            f = item.font()
+                            f.setBold(True)
+                            item.setFont(f)
+                        preview.setItem(r, c, item)
+                preview.resizeColumnsToContents()
+                # KHÔNG dùng _fit_table_height() (ép sizePolicy Fixed + đúng
+                # chiều cao TOÀN BỘ số dòng — bảng thật có thể vài chục dòng,
+                # sẽ đè lên nội dung bên dưới) — chỉ giới hạn chiều cao tối đa,
+                # dư thì tự có thanh cuộn RIÊNG bên trong bảng này.
+                preview.setMaximumHeight(260)
+                preview.setVisible(False)   # thu gọn mặc định — chỉ tham khảo, không chiếm chỗ form sửa
+                lay.addWidget(preview)
+
+                lbl_ref_hint = QLabel("Chỉ xem — muốn đổi bố cục/nhãn/công thức, sửa trực tiếp trong Word/Excel.")
+                lbl_ref_hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:11px;")
+                lbl_ref_hint.setVisible(False)
+                lay.addWidget(lbl_ref_hint)
+
+                def _toggle_ref(checked, p=preview, h=lbl_ref_hint, b=btn_ref):
+                    p.setVisible(checked)
+                    h.setVisible(checked)
+                    b.setText(("▾" if checked else "▸") +
+                              " 📄 Cấu trúc thật trong file mẫu hiện tại (bấm để " +
+                              ("ẩn" if checked else "xem") + ")")
+                btn_ref.toggled.connect(_toggle_ref)
+
         # --- dữ liệu từng dòng — dựng TRƯỚC phần "cấu trúc report_val()" bên
         # dưới (dù hiện SAU trong layout) vì cần đọc raw_counts/
         # value_format_seq đã gắn theo từng dòng (Qt.UserRole) để tính tóm
@@ -1335,7 +1714,20 @@ class TableFormDialog(QDialog):
         self.rows_table = QTableWidget(max(n_rows, 1), 4)
         self.rows_table.setHorizontalHeaderLabels(
             ["Khoá", "Chuẩn dùng để tính", "Ngưỡng", "Nhãn hiển thị"])
-        self.rows_table.horizontalHeader().setStretchLastSection(True)
+        # "Ngưỡng" (cột 2) LUÔN là cột nhìn thấy CUỐI CÙNG (cột 3 "Nhãn hiển
+        # thị" ẩn vĩnh viễn ngay dưới đây) nên giãn đúng cột này — không dùng
+        # setStretchLastSection() vì nó giãn theo CHỈ SỐ cuối cùng của MODEL
+        # (cột 3), sẽ mất tác dụng khi cột đó đang ẩn.
+        self.rows_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.rows_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.rows_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        # "Nhãn hiển thị" — khách phản hồi hiếm khi cần, ẨN VĨNH VIỄN cho MỌI
+        # bảng để đỡ rối; dữ liệu cột này (nếu bảng cũ đã có) vẫn đọc/giữ
+        # nguyên bình thường lúc Lưu (_do_save đọc thẳng qua self.rows_table.item,
+        # không quan tâm cột có đang hiện hay không) — ai thực sự cần sửa
+        # nhãn riêng thì sửa file JSON trực tiếp (display_label).
+        self.rows_table.setColumnHidden(3, True)
+        self._update_reference_column_visibility()
         for i, r in enumerate(spec.rows):
             key_item = QTableWidgetItem(r.key)
             # raw_count/value_format_seq CỦA ĐÚNG DÒNG NÀY — gắn qua
@@ -1388,15 +1780,17 @@ class TableFormDialog(QDialog):
             _fit_table_height(self.rows_table)
 
         def _del_row():
-            if self.rows_table.currentRow() >= 0:
-                self.rows_table.removeRow(self.rows_table.currentRow())
+            rows = sorted({idx.row() for idx in self.rows_table.selectedIndexes()}, reverse=True)
+            for row in rows:
+                self.rows_table.removeRow(row)
+            if rows:
                 _fit_table_height(self.rows_table)
 
         row_btns = QHBoxLayout()
         btn_add_row = QPushButton("+ Thêm dòng")
         btn_add_row.clicked.connect(_add_row)
         row_btns.addWidget(btn_add_row)
-        btn_del_row = QPushButton("− Xoá dòng đang chọn")
+        btn_del_row = QPushButton("− Xoá (các) dòng đang chọn")
         btn_del_row.clicked.connect(_del_row)
         row_btns.addWidget(btn_del_row)
         row_btns.addStretch()
@@ -1430,6 +1824,20 @@ class TableFormDialog(QDialog):
         if dlg.exec_() == QDialog.Accepted:
             self._pass_rule = dlg.result_pass_rule
             self.lbl_pass_rule.setText(f"Đạt/Không đạt: {_pass_rule_summary(self._pass_rule)}")
+            self._update_reference_column_visibility()
+
+    def _update_reference_column_visibility(self):
+        """"Chuẩn dùng để tính" chỉ THẬT SỰ cần khi quy tắc Đạt/Không đạt
+        đang chọn dùng nó để tính (So sánh sai số tương đối/Tính số hiệu
+        chỉnh) — ẩn ở mọi trường hợp khác (mặc định "Không áp dụng", hoặc
+        "So sánh với ngưỡng") cho đỡ rối, đặc biệt bảng dùng mẫu Excel tự
+        tính mọi công thức nên không cần cột này. CHỈ ẩn hiển thị — KHÔNG
+        xoá dữ liệu, _do_save() vẫn đọc/ghi cột này bình thường dù đang ẩn,
+        nên bảng nào đã có sẵn giá trị (vd Bảng A1 TEMPLATE_FREQ) không mất
+        gì khi Lưu lại lúc cột đang ẩn."""
+        needs_reference = self._pass_rule.get("type") in (
+            "relative_error_vs_fixed_limit", "correction_vs_reference")
+        self.rows_table.setColumnHidden(1, not needs_reference)
 
     def _current_raw_counts(self) -> list:
         """raw_count của TỪNG dòng đang hiện trong self.rows_table, đọc lại
@@ -1486,18 +1894,25 @@ class TableFormDialog(QDialog):
         pass_rule = self._pass_rule
         pr_key = pass_rule.get("type", "none")
 
-        # Nếu bảng gắn với 1 file Word thật (tag_target) — dry-run lại NGAY
-        # TRƯỚC KHI lưu để lấy raw_count ĐÚNG từng dòng theo cấu trúc ô THẬT
-        # hiện có trong file (core/table_wizard_io.py::raw_counts_for_measured_cols)
-        # — khớp CHÍNH XÁC với những gì insert_report_val_tags() sẽ ghi bên
-        # dưới, không cần khách tự cấu hình raw_count ở đâu cả. Không có
-        # tag_target (sửa bảng có sẵn, không đụng file Word) -> giữ nguyên
-        # raw_count đã gắn theo từng dòng (Qt.UserRole) từ lúc mở form.
+        # Nếu bảng gắn với 1 file mẫu thật (tag_target, Word HOẶC Excel) —
+        # đếm lại NGAY TRƯỚC KHI lưu số ô ĐÃ CÓ SẴN tag report_val('<mã
+        # bảng>') trong file (core/table_wizard_io.py hoặc core/
+        # xlsx_wizard_io.py::raw_counts_for_measured_cols) — app KHÔNG ghi gì
+        # vào file mẫu ở bước nào cả (Word lẫn Excel), dry-run này CHÍNH LÀ
+        # kết quả cuối cùng. Không có tag_target (sửa bảng có sẵn, không
+        # đụng file mẫu) -> giữ nguyên raw_count đã gắn theo từng dòng
+        # (Qt.UserRole) từ lúc mở form.
         if self.tag_target:
-            dry_run_counts = wio.raw_counts_for_measured_cols(
-                self.tag_target["docx_path"], self.tag_target["table_index"],
-                self.tag_target["measured_cols"], self.tag_target.get("header_row_index", 0),
-                self.tag_target.get("extra_skip_rows", frozenset()))
+            if self.tag_target.get("kind", "docx") == "xlsx":
+                dry_run_counts = xwio.raw_counts_for_measured_cols(
+                    self.tag_target["xlsx_path"], self.tag_target["sheet_name"],
+                    self.tag_target["data_rows_abs"], self.tag_target["measured_cols_abs"], table_id)
+            else:
+                dry_run_counts = wio.raw_counts_for_measured_cols(
+                    self.tag_target["docx_path"], self.tag_target["table_index"],
+                    self.tag_target["measured_cols"], table_id,
+                    self.tag_target.get("header_row_index", 0),
+                    self.tag_target.get("extra_skip_rows", frozenset()))
         else:
             dry_run_counts = None
         ui_counts = self._current_raw_counts()
@@ -1533,13 +1948,15 @@ class TableFormDialog(QDialog):
         while len(raw_counts) < len(rows):
             raw_counts = raw_counts + [ui_counts[len(raw_counts)] if len(raw_counts) < len(ui_counts) else 1]
 
-        n_tagged = None
+        n_recognized = None
         try:
-            if max(raw_counts, default=1) <= 1:
+            if all(c == 1 for c in raw_counts):
                 descriptor = wio.build_descriptor(spec)
             else:
-                # Có dòng nào raw_count>1 — wio.build_descriptor() ép cứng
-                # raw_count=1, không dùng được ở đây; dựng RowDef/
+                # Có dòng nào raw_count != 1 (0 — bảng Excel "chỉ nhận diện"
+                # chưa thấy tag nào cho dòng đó, hoặc >1) — wio.build_descriptor()
+                # ép cứng raw_count=1 cho MỌI dòng, không dùng được ở đây
+                # (sẽ biến 0 thành 1 sai lệch); dựng RowDef/
                 # TableDescriptor trực tiếp, MỖI DÒNG raw_count RIÊNG (không
                 # bắt buộc đồng nhất). value_format_seq riêng từng dòng
                 # (Qt.UserRole+1) — chỉ áp dụng nếu ĐÚNG độ dài raw_count của
@@ -1565,21 +1982,29 @@ class TableFormDialog(QDialog):
                 if errs:
                     QMessageBox.warning(self, "Dữ liệu chưa hợp lệ", "\n".join(errs))
                     return
+            # Giữ nguyên/gán vùng ô Excel THẬT đã chọn (self._xlsx_ref — từ
+            # ImportTableFromExcelDialog nếu vừa import, hoặc từ descriptor
+            # cũ nếu đang sửa) để lần sau mở "Sửa bảng" hiện lại ĐÚNG vùng
+            # đó, không phải tự dò/đoán (xem docstring bienban_path/xlsx_ref
+            # ở __init__). wio.build_descriptor()/TableDescriptor(...) ở
+            # trên không biết field này nên phải gán tay sau khi dựng xong.
+            descriptor.xlsx_ref = self._xlsx_ref
             timport.apply_table_to_existing(self.tables_dir, descriptor)
             if self.tag_target:
-                n_tagged = wio.insert_report_val_tags(
-                    self.tag_target["docx_path"], self.tag_target["table_index"],
-                    self.tag_target["measured_cols"], table_id,
-                    header_row_index=self.tag_target.get("header_row_index", 0),
-                    extra_skip_rows=self.tag_target.get("extra_skip_rows", frozenset()))
+                # KHÔNG ghi gì vào file mẫu (Word lẫn Excel) — dry_run_counts
+                # ở trên ĐÃ LÀ số ô nhận diện được (đã có sẵn tag report_val()
+                # do khách tự gõ tay), dùng lại luôn để báo cho khách biết.
+                n_recognized = sum(dry_run_counts)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi khi lưu", str(exc))
             return
-        if n_tagged is not None:
+        if n_recognized is not None:
+            file_kind = "Excel" if self.tag_target.get("kind", "docx") == "xlsx" else "Word"
             QMessageBox.information(
-                self, "Đã gắn tag",
-                f"Đã lưu bảng '{table_id}' và tự động gắn {n_tagged} tag report_val() "
-                f"vào đúng ô đã chọn trong file Word.")
+                self, "Đã lưu",
+                f"Đã lưu bảng '{table_id}' — nhận diện được {n_recognized} ô đã có sẵn report_val() "
+                f"trong file {file_kind}. Dòng nào chưa có tag sẽ chưa nhận dữ liệu (raw_count=0) — "
+                f"tự gõ tag report_val('{table_id}') vào file rồi Sửa bảng lại nếu cần.")
         self.accept()
 
 

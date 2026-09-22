@@ -209,11 +209,13 @@ def find_missing_table_ids(docx_path, table_ids: list) -> list:
 
 # ---------------------------------------------------------------------------
 # "Đọc bảng từ Word" — khách đã tự dựng SẴN bảng thật (đủ dòng/cột, đủ nhãn/
-# ngưỡng tĩnh) trong file .docx của họ, chỉ CHỪA TRỐNG ô sẽ chứa giá trị đo.
-# Khác hẳn cơ chế "row-surgery" đã bỏ (không tự dựng/sửa số dòng, số cột, gộp
-# ô nào cả) — chỉ ĐỌC text ô có sẵn để suy ra dữ liệu dòng, và GHI ĐÈ đúng
-# text của những ô khách đã đánh dấu là "giá trị đo" thành tag report_val(),
-# không đụng gì khác trong file.
+# ngưỡng tĩnh) trong file .docx của họ. QUYẾT ĐỊNH THIẾT KẾ (khách hàng
+# chốt): file này CHỈ ĐỌC — không ghi/sửa gì vào .docx cả, kể cả ô đang
+# rỗng. Cột "★ Giá trị đo" khách chọn ở màn hình chỉ dùng để khoanh vùng
+# TÌM những ô ĐÃ CÓ SẴN tag `{{ tables.<id>.report_val() }}` do khách TỰ GÕ
+# TAY trong Word từ trước (đúng nguyên tắc "quản trị viên tự tay gõ tag
+# Jinja" ở docstring đầu file) — không có cơ chế tự động gán tag vào ô rỗng
+# hay ô có chữ khác.
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -232,9 +234,9 @@ def _visible_row_cells(row) -> list:
     THẤY thật trong Word (vd 1 ô "lần 5" gộp 2 cột sẽ bị đọc thành 2 cột
     "lần 5" liên tiếp). Hàm này chỉ giữ lần xuất hiện ĐẦU TIÊN của mỗi ô vật
     lý (so theo identity ô XML thật `_tc`) — khớp ĐÚNG số cột thật, dùng
-    chung bởi scan_docx_tables() (đọc) và insert_report_val_tags() (ghi) để
-    2 bên LUÔN đánh số cột giống nhau (không thì chọn cột N lúc đọc sẽ ghi
-    tag nhầm sang cột khác lúc viết)."""
+    chung bởi scan_docx_tables() và raw_counts_for_measured_cols() để 2 bên
+    LUÔN đánh số cột giống nhau (không thì chọn cột N lúc xem trước sẽ đếm
+    nhầm sang cột khác lúc dò tag)."""
     cells = []
     prev_tc = None
     for cell in row.cells:
@@ -340,7 +342,8 @@ COLUMN_ROLE_CHOICES = [
     ("reference", "Chuẩn dùng để tính"),
     ("limit", "Ngưỡng"),
     ("display_label", "Nhãn hiển thị"),
-    ("measured", "★ Giá trị đo (phần mềm tự điền tag report_val() — chọn NHIỀU cột nếu 1 dòng có nhiều lần đo)"),
+    ("measured", "★ Giá trị đo (CHỈ NHẬN DIỆN ô đã có sẵn report_val() do bạn tự gõ tay — không tự "
+                 "gán vào ô rỗng/ô có chữ khác; chọn NHIỀU cột nếu 1 dòng có nhiều lần đo)"),
 ]
 
 _ROLE_KEYWORDS = [
@@ -418,82 +421,32 @@ def _measured_grid_positions(tbl, measured_cols, header_row_index: int) -> set:
     return positions
 
 
-def raw_counts_for_measured_cols(docx_path, table_index: int, measured_cols,
+def raw_counts_for_measured_cols(docx_path, table_index: int, measured_cols, table_id: str,
                                   header_row_index: int = 0,
                                   extra_skip_rows: frozenset = frozenset()) -> list:
-    """[raw_count_dòng_1, raw_count_dòng_2, ...] — DRY RUN (KHÔNG ghi gì) số
-    ô "giá trị đo" mỗi dòng dữ liệu THẬT SỰ có, nếu gắn tag theo measured_cols
-    (index đã khử trùng lặp ở dòng tiêu đề). Bỏ qua dòng tiêu đề VÀ
-    extra_skip_rows (vd 1 dòng tiêu đề phụ lồng bên trong bảng). Số này CÓ
-    THỂ KHÁC NHAU giữa các dòng — 1 dòng tổng hợp (vd "Trung Bình") gộp
-    nhiều cột "giá trị đo" ở dòng tiêu đề thành 1 ô rộng duy nhất thì CHỈ có
-    1 report_val() (không phải N), tự động khớp đúng cấu trúc ô thật, không
-    cần cấu hình gì thêm. Dùng để hiển thị trước cho khách xem VÀ để dựng
-    RowDef.raw_count đúng từng dòng khi lưu — kết quả khớp CHÍNH XÁC với
-    insert_report_val_tags() bên dưới vì dùng chung logic quy đổi vị trí lưới."""
+    """[raw_count_dòng_1, raw_count_dòng_2, ...] — đếm số ô "giá trị đo" mỗi
+    dòng dữ liệu ĐÃ CÓ SẴN đúng tag `{{ tables.<table_id>.report_val() }}`
+    (so khớp bỏ qua khoảng trắng, chấp nhận cả kiểu gõ sát `{{tables.A1.report_val()}}`),
+    trong các cột đã chọn (measured_cols, index đã khử trùng lặp ở dòng tiêu
+    đề). Bỏ qua dòng tiêu đề VÀ extra_skip_rows (vd 1 dòng tiêu đề phụ lồng
+    bên trong bảng). Số này CÓ THỂ KHÁC NHAU giữa các dòng — 1 dòng tổng hợp
+    (vd "Trung Bình") gộp nhiều cột "giá trị đo" ở dòng tiêu đề thành 1 ô
+    rộng duy nhất thì CHỈ có tối đa 1 report_val() (không phải N), tự động
+    khớp đúng cấu trúc ô thật. CHỈ ĐỌC, không ghi gì — ô đang rỗng hoặc có
+    chữ/số khác (chưa đúng tag) KHÔNG được tính, khách phải tự gõ tay tag đó
+    vào Word trước (xem docstring đầu file/phần "Đọc bảng từ Word")."""
     doc = Document(str(docx_path))
     tbl = doc.tables[table_index]
     measured_positions = _measured_grid_positions(tbl, measured_cols, header_row_index)
+    needle = f"tables.{table_id}.report_val()"
     counts = []
     for r_i, row in enumerate(tbl.rows):
         if r_i == header_row_index or r_i in extra_skip_rows:
             continue
         cells = _visible_row_cells_with_pos(row)
-        counts.append(sum(1 for _cell, pos, _span in cells if pos in measured_positions))
+        counts.append(sum(1 for cell, pos, _span in cells
+                           if pos in measured_positions and needle in cell.text.replace(" ", "")))
     return counts
-
-
-def insert_report_val_tags(docx_path, table_index: int, measured_cols, table_id: str,
-                            header_row_index: int = 0,
-                            extra_skip_rows: frozenset = frozenset()) -> int:
-    """Gõ ĐÈ text của 1 hoặc nhiều cột (measured_cols, index đã khử trùng
-    lặp ở DÒNG TIÊU ĐỀ) trong đúng 1 bảng (table_index) thành tag
-    `{{ tables.<table_id>.report_val() }}` — bỏ qua dòng tiêu đề VÀ
-    extra_skip_rows (vd 1 dòng tiêu đề phụ lồng bên trong bảng, khác dòng
-    tiêu đề chính — giữ nguyên chữ tĩnh sẵn có, KHÔNG bị ghi đè), KHÔNG
-    thêm/bớt dòng/cột, KHÔNG đụng ô nào khác ngoài phạm vi đã chọn. So khớp
-    theo VỊ TRÍ LƯỚI thật (không phải theo index đã khử trùng lặp của TỪNG
-    dòng) nên tự động xử lý đúng cả trường hợp 1 dòng gộp ô KHÁC dòng tiêu
-    đề (vd dòng tổng hợp "Trung Bình" gộp 5 cột "giá trị đo" hẹp thành 1 ô
-    rộng — ô đó chỉ nhận ĐÚNG 1 tag, không phải 5) — số report_val()/dòng vì
-    vậy CÓ THỂ KHÁC NHAU giữa các dòng, tự động khớp cấu trúc thật, không
-    cần cấu hình thêm và không cần chặn/báo lỗi gì. Trả về tổng số tag đã gắn."""
-    doc = Document(str(docx_path))
-    tbl = doc.tables[table_index]
-    measured_positions = _measured_grid_positions(tbl, measured_cols, header_row_index)
-    tag = "{{ tables.%s.report_val() }}" % table_id
-
-    count = 0
-    for r_i, row in enumerate(tbl.rows):
-        if r_i == header_row_index or r_i in extra_skip_rows:
-            continue
-        for cell, pos, _span in _visible_row_cells_with_pos(row):
-            if pos in measured_positions:
-                cell.text = tag
-                count += 1
-    doc.save(str(docx_path))
-    return count
-
-
-def measured_cell_flags(docx_path, table_index: int, measured_cols, header_row_index: int = 0) -> dict:
-    """{row_index (0-based, MỌI dòng kể cả dòng tiêu đề): set(dedup_col_index)}
-    — với MỖI dòng, chỉ số ô đã khử trùng lặp (khớp DetectedDocxTable.grid/
-    _visible_row_cells) mà vị trí lưới của nó GIAO với vị trí lưới các cột
-    "★ Giá trị đo" đã chọn ở dòng tiêu đề (measured_cols) — dùng để CẢNH BÁO
-    trước khi ghi đè nếu 1 ô sắp bị gắn tag đang chứa chữ tĩnh thật (xem
-    ImportTableFromWordDialog._continue), phòng trường hợp quên tick "Bỏ
-    qua" cho 1 dòng tiêu đề phụ lồng bên trong bảng."""
-    doc = Document(str(docx_path))
-    tbl = doc.tables[table_index]
-    measured_positions = _measured_grid_positions(tbl, measured_cols, header_row_index)
-    result = {}
-    for r_i, row in enumerate(tbl.rows):
-        flags = set()
-        for c_i, (_cell, start, span) in enumerate(_visible_row_cells_with_pos(row)):
-            if any(p in measured_positions for p in range(start, start + span)):
-                flags.add(c_i)
-        result[r_i] = flags
-    return result
 
 
 # ---------------------------------------------------------------------------

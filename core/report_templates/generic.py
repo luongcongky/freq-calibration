@@ -26,6 +26,7 @@ from core.session import CalibrationSession, SessionTest, ReportTable
 from core.table_descriptor import load_table_descriptors
 from core.generic_report_context import build_meta_context
 from core import table_engine
+from core import xlsx_table_engine
 from core.paths import TEMPLATES_DIR, SCENARIOS_DIR as _SCENARIOS_ROOT
 from .base import BaseReportTemplate
 
@@ -77,8 +78,16 @@ class GenericReportTemplate(BaseReportTemplate):
         self._meta_json = meta
         base = TEMPLATES_DIR / template_id
         self._tables_dir = base / "tables"
-        self._bienban_template = base / "bienban.docx"
-        self._gcnkd_template = base / "gcnkd.docx"
+        # File mẫu có thể là .docx (gõ tay tag Jinja) hoặc .xlsx (gõ text
+        # report_val() — xem core/xlsx_table_engine.py) — .xlsx ưu tiên nếu
+        # cả 2 cùng tồn tại (không nên xảy ra, gui/template_manager_dialog.py
+        # luôn xoá file đuôi cũ khi "Thay file").
+        bienban_xlsx = base / "bienban.xlsx"
+        self._bienban_is_xlsx = bienban_xlsx.exists()
+        self._bienban_template = bienban_xlsx if self._bienban_is_xlsx else base / "bienban.docx"
+        gcnkd_xlsx = base / "gcnkd.xlsx"
+        self._gcnkd_is_xlsx = gcnkd_xlsx.exists()
+        self._gcnkd_template = gcnkd_xlsx if self._gcnkd_is_xlsx else base / "gcnkd.docx"
         self._scen_dir = _SCENARIOS_ROOT / template_id.lower()
         self._descriptors = load_table_descriptors(self._tables_dir)
 
@@ -102,12 +111,18 @@ class GenericReportTemplate(BaseReportTemplate):
         return next((d for d in self._descriptors if d.table_id == table_id), None)
 
     def generate_bienban(self, session: CalibrationSession, output_path) -> Path:
+        if self._bienban_is_xlsx:
+            return xlsx_table_engine.render_xlsx_with_table_contexts(
+                session, self._descriptors, self._bienban_template, output_path)
         return table_engine.render_with_table_contexts(
             session, self._descriptors, self._bienban_template, output_path,
             lambda s: build_meta_context(s, self._meta_json),
         )
 
     def generate_gcnkd(self, session: CalibrationSession, output_path) -> Path:
+        if self._gcnkd_is_xlsx:
+            return xlsx_table_engine.render_xlsx_with_table_contexts(
+                session, self._descriptors, self._gcnkd_template, output_path)
         return table_engine.render_with_table_contexts(
             session, self._descriptors, self._gcnkd_template, output_path,
             lambda s: build_meta_context(s, self._meta_json),

@@ -7,20 +7,24 @@ cáo, không có checkbox).
 
 Nhiệm vụ QUAN TRỌNG NHẤT của khung này (đặc biệt Bước 2) là cho kiểm định
 viên xác nhận report_val() kịch bản đẩy có đang rơi ĐÚNG vị trí/thứ tự cột
-thật trong bienban.docx hay không — TRƯỚC KHI tính tới việc tự tính Đạt/
-Không đạt (nếu bảng có pass_rule) hay để kiểm định viên tự chọn tay (nếu
-không tính được, hoặc cần chọn value cụ thể xuất ra GCN qua right-click).
-Vì vậy build_wysiwyg_table() ưu tiên đọc TRỰC TIẾP cấu trúc cột từ chính
-file bienban.docx thật (_build_from_docx_grid, qua core/table_wizard_io.py::
-find_docx_table_grid/value_columns_from_grid) — tiêu đề cột lấy nguyên văn
-từ dòng tiêu đề thật (vd "lần 1"/"Độ KĐBĐ"), không phải tên chung "Lần N".
-Chỉ khi KHÔNG tìm được bảng thật khớp (mẫu mới chưa có docx, bảng chưa gắn
-tag) mới rơi về _build_generic (tên cột chung chung, không khớp docx thật).
+thật trong file mẫu (bienban.docx HOẶC bienban.xlsx) hay không — TRƯỚC KHI
+tính tới việc tự tính Đạt/Không đạt (nếu bảng có pass_rule) hay để kiểm định
+viên tự chọn tay (nếu không tính được, hoặc cần chọn value cụ thể xuất ra
+GCN qua right-click). Vì vậy build_wysiwyg_table() ưu tiên đọc TRỰC TIẾP cấu
+trúc cột từ chính file mẫu thật (_build_from_docx_grid, qua
+core/table_wizard_io.py::find_docx_table_grid/value_columns_from_grid cho
+Word, hoặc core/xlsx_wizard_io.py::find_xlsx_table_grid/value_columns_from_grid
+cho Excel) — tiêu đề cột lấy nguyên văn từ dòng tiêu đề thật (vd "lần 1"/
+"Độ KĐBĐ"), không phải tên chung "Lần N". Chỉ khi KHÔNG tìm được bảng thật
+khớp ở CẢ 2 định dạng (mẫu mới chưa có file, bảng chưa gắn tag) mới rơi về
+_build_generic (tên cột chung chung, không khớp file thật).
 _TEMPLATE_BUILDERS giữ lại làm điểm mở rộng nếu 1 template thật sự cần lưới
 tuỳ biến tay riêng (ưu tiên cao nhất, kiểm tra trước cả 2 đường trên).
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
@@ -34,6 +38,7 @@ from core.report_generator import _fmt_freq, _fmt_dbm
 from core.report_generator_nrp2 import _power_set_from_key
 from core import table_layouts as _lay
 from core import table_wizard_io as wio
+from core import xlsx_wizard_io as xwio
 from core.report_templates import get_template
 from gui.widgets import CheckBoxHeader
 from gui.theme import Colors
@@ -545,6 +550,36 @@ def _docx_grid_for(template_id: str, table_id: str):
         return None
 
 
+def _xlsx_grid_for(template_id: str, table_id: str):
+    """(grid, value_cols, header_row) đọc trực tiếp từ bienban.xlsx thật của
+    template — tương đương _docx_grid_for() ở trên nhưng cho mẫu Excel (xem
+    core/xlsx_wizard_io.py::find_xlsx_table_grid/value_columns_from_grid/
+    first_data_row_index). None nếu không tìm được (lỗi bất kỳ, mẫu không
+    dùng file .xlsx, bảng chưa gắn tag) -> caller rơi về _build_generic thay
+    vì crash.
+
+    Khác _docx_grid_for (docx: dòng 0 LUÔN là tiêu đề, vì find_docx_table_grid
+    đọc trọn 1 bảng vật lý): grid trả về từ find_xlsx_table_grid() có thể có
+    vài dòng trống/tiêu đề phụ phía TRÊN dòng dữ liệu đầu tiên, nên phải tự
+    suy ra header_row = dòng NGAY TRƯỚC dòng dữ liệu đầu tiên, không mặc
+    định là 0."""
+    try:
+        tpl = get_template(template_id)
+        bienban_path = getattr(tpl, "bienban_docx_path", None)
+        if bienban_path is None or Path(bienban_path).suffix.lower() != ".xlsx":
+            return None
+        grid = xwio.find_xlsx_table_grid(bienban_path, table_id)
+        if grid is None:
+            return None
+        header_row = max(xwio.first_data_row_index(grid, table_id) - 1, 0)
+        value_cols = xwio.value_columns_from_grid(grid, header_row)
+        if not value_cols:
+            return None
+        return grid, value_cols, header_row
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Builder RIÊNG khớp ĐÚNG layout file docx thật — TEMPLATE_FREQ (8 bảng) +
 # TEMPLATE_POWER (3 bảng). Tiêu đề cột lấy từ core/table_layouts.py — CÙNG
@@ -813,13 +848,14 @@ def build_wysiwyg_table(template_id: str, table_id: str, rows: list[TableRow],
     """Dựng bảng rà soát — thứ tự ưu tiên:
     1. Builder tay riêng trong _TEMPLATE_BUILDERS nếu template đó có đăng ký
        (hiện không có template nào đăng ký).
-    2. _build_from_docx_grid — đọc TRỰC TIẾP cấu trúc cột từ chính file
-       bienban.docx thật (tiêu đề cột nguyên văn, khớp ĐÚNG vị trí report_val()
-       thật) — áp dụng được cho MỌI template data-driven, chỉ cần bảng đã
-       gắn tag report_val() trong file Word.
-    3. _build_generic — chỉ dùng khi KHÔNG tìm được bảng thật khớp (mẫu mới
-       chưa có docx, bảng chưa gắn tag) — tên cột chung "Lần N", không khớp
-       docx thật.
+    2. _build_from_docx_grid (dùng chung cho CẢ Word lẫn Excel) — đọc TRỰC
+       TIẾP cấu trúc cột từ chính file mẫu thật (tiêu đề cột nguyên văn,
+       khớp ĐÚNG vị trí report_val() thật): _docx_grid_for() cho bienban.docx,
+       _xlsx_grid_for() cho bienban.xlsx — áp dụng được cho MỌI template
+       data-driven, chỉ cần bảng đã gắn tag report_val().
+    3. _build_generic — chỉ dùng khi KHÔNG tìm được bảng thật khớp ở CẢ 2
+       đường trên (mẫu mới chưa có file, bảng chưa gắn tag) — tên cột chung
+       "Lần N", không khớp file thật.
 
     with_status thêm cột 'Đạt/Không đạt' (combobox, ghi vào TableRow.passed)
     — chỉ hỗ trợ rà soát trong app, KHÔNG xuất hiện trong file docx.
@@ -845,6 +881,14 @@ def build_wysiwyg_table(template_id: str, table_id: str, rows: list[TableRow],
     if grid_info is not None:
         grid, value_cols = grid_info
         return _build_from_docx_grid(rows, grid, value_cols,
+                                     with_checkbox=with_checkbox, on_toggle=on_toggle,
+                                     with_status=with_status, on_status_change=on_status_change,
+                                     interactive=interactive, on_value_edited=on_value_edited,
+                                     recompute_row=recompute_row, measured_counts=measured_counts)
+    xlsx_grid_info = _xlsx_grid_for(template_id, table_id)
+    if xlsx_grid_info is not None:
+        grid, value_cols, header_row = xlsx_grid_info
+        return _build_from_docx_grid(rows, grid, value_cols, header_row=header_row,
                                      with_checkbox=with_checkbox, on_toggle=on_toggle,
                                      with_status=with_status, on_status_change=on_status_change,
                                      interactive=interactive, on_value_edited=on_value_edited,

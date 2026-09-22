@@ -52,3 +52,32 @@ def test_invalid_value_format_raises(tmp_path):
     path.write_text(json.dumps(d.to_dict()), encoding="utf-8")
     with pytest.raises(ValueError, match="value_format"):
         load_table_descriptor(path)
+
+
+# ---------------------------------------------------------------------------
+# xlsx_ref — vùng ô Excel THẬT khách đã chọn lúc "Đọc bảng từ Excel", lưu lại
+# để màn "Sửa bảng" hiện đúng vùng đó thay vì tự dò/đoán (gui/
+# template_manager_dialog.py::TableFormDialog, core/xlsx_wizard_io.py).
+# ---------------------------------------------------------------------------
+
+def test_xlsx_ref_defaults_to_none():
+    d = _minimal_descriptor()
+    assert d.xlsx_ref is None
+
+
+def test_xlsx_ref_missing_in_json_defaults_to_none(tmp_path):
+    """Bảng Word (hoặc bảng Excel tạo trước khi có field này) không có key này."""
+    raw = _minimal_descriptor().to_dict()
+    del raw["xlsx_ref"]
+    path = tmp_path / "A9.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    loaded = load_table_descriptor(path)
+    assert loaded.xlsx_ref is None
+
+
+def test_xlsx_ref_roundtrip(tmp_path):
+    d = _minimal_descriptor(xlsx_ref={"sheet": "Sheet1", "range": "A5:G26"})
+    path = tmp_path / "A9.json"
+    path.write_text(json.dumps(d.to_dict()), encoding="utf-8")
+    loaded = load_table_descriptor(path)
+    assert loaded.xlsx_ref == {"sheet": "Sheet1", "range": "A5:G26"}

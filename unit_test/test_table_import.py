@@ -183,6 +183,27 @@ def test_replace_docx_copies_new_file_byte_identical(tmp_path, monkeypatch):
     assert out.read_bytes() == new_docx.read_bytes()
 
 
+def test_replace_docx_removes_stale_sibling_extension(tmp_path, monkeypatch):
+    """Thay bienban.docx bằng 1 file .xlsx (đổi định dạng mẫu) -> file
+    bienban.docx cũ phải bị xoá, chỉ còn đúng 1 file bienban.xlsx — tránh
+    core/report_templates/generic.py mơ hồ khi cả 2 cùng tồn tại."""
+    import core.report_templates.generic as generic_mod
+    monkeypatch.setattr(generic_mod, "TEMPLATES_DIR", tmp_path)
+
+    bienban_path = tmp_path / "customer_bienban.docx"
+    _hand_tagged_bienban_docx(bienban_path)
+    _seed_template(tmp_path / "TPL", "TPL", bienban_path, _descriptor())
+    assert (tmp_path / "TPL" / "bienban.docx").exists()
+
+    new_xlsx = tmp_path / "new_bienban.xlsx"
+    new_xlsx.write_bytes(b"fake xlsx bytes")
+
+    out = timport.replace_docx("TPL", "bienban", new_xlsx)
+    assert out == tmp_path / "TPL" / "bienban.xlsx"
+    assert out.read_bytes() == new_xlsx.read_bytes()
+    assert not (tmp_path / "TPL" / "bienban.docx").exists()
+
+
 # ---------------------------------------------------------------------------
 # apply_table_to_existing — ghi JSON (thêm mới HOẶC sửa đè), không đụng docx
 # ---------------------------------------------------------------------------

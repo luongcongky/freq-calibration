@@ -138,6 +138,14 @@ class TableDescriptor:
     pass_rule: dict = field(default_factory=lambda: {"type": "none"})
     merge: list = field(default_factory=list)      # list[MergeSpec]
     gcn: Optional[dict] = None         # {"param_name": str, "limit_str": str} — chỉ CNT90XL GCN
+    xlsx_ref: Optional[dict] = None    # {"sheet": str, "range": str vd "A5:G26"} — CHỈ dùng khi mẫu
+                                        # là .xlsx: vùng ô khách đã chọn ở "Đọc bảng từ Excel"
+                                        # (gui/template_manager_dialog.py::ImportTableFromExcelDialog),
+                                        # lưu lại để màn "Sửa bảng" hiện ĐÚNG vùng đó khi xem lại cấu
+                                        # trúc thật, KHÔNG phải tự dò/đoán lại (core/xlsx_wizard_io.py::
+                                        # find_xlsx_table_grid). KHÔNG dùng bởi engine render (chỉ để
+                                        # hiển thị tham khảo) — None với mọi bảng dùng mẫu Word, hoặc
+                                        # bảng Excel tạo trước khi có field này.
 
     def to_dict(self) -> dict:
         return {
@@ -154,6 +162,7 @@ class TableDescriptor:
             "pass_rule": self.pass_rule,
             "merge": [m.to_dict() for m in self.merge],
             "gcn": self.gcn,
+            "xlsx_ref": self.xlsx_ref,
         }
 
 
@@ -216,6 +225,7 @@ def load_table_descriptor(path: Path) -> TableDescriptor:
             pass_rule=raw.get("pass_rule", {"type": "none"}),
             merge=[MergeSpec.from_dict(m) for m in raw.get("merge", [])],
             gcn=raw.get("gcn"),
+            xlsx_ref=raw.get("xlsx_ref"),
         )
     except KeyError as exc:
         raise ValueError(f"{path}: thiếu trường bắt buộc {exc}") from exc

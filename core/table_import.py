@@ -78,11 +78,22 @@ def update_meta(template_id: str, meta_fields: dict) -> Path:
 
 
 def replace_docx(template_id: str, which: str, new_path) -> Path:
-    """Thay bienban.docx hoặc gcnkd.docx của 1 mẫu ĐÃ CÓ bằng file MỚI đã
-    gắn tag sẵn (copy nguyên vẹn, không mở/sửa gì) — which: 'bienban' |
-    'gcnkd'."""
+    """Thay file mẫu bienban/gcnkd của 1 mẫu ĐÃ CÓ bằng file MỚI đã gắn tag
+    sẵn (copy nguyên vẹn, không mở/sửa gì) — which: 'bienban' | 'gcnkd'.
+    Đích ghi giữ ĐÚNG đuôi file mới (.docx hoặc .xlsx) và xoá file đuôi CÒN
+    LẠI nếu có, để luôn chỉ tồn tại đúng 1 file `{which}.*` — tránh vừa có
+    bienban.docx vừa có bienban.xlsx gây mơ hồ lúc chọn định dạng render
+    (core/report_templates/generic.py ưu tiên .xlsx nếu cả 2 cùng tồn tại)."""
     from core.report_templates.generic import TEMPLATES_DIR
-    dest = TEMPLATES_DIR / template_id / f"{which}.docx"
+    new_path = Path(new_path)
+    tpl_dir = TEMPLATES_DIR / template_id
+    new_suffix = new_path.suffix.lower()
+    dest = tpl_dir / f"{which}{new_suffix}"
+    for other_suffix in (".docx", ".xlsx"):
+        if other_suffix != new_suffix:
+            stale = tpl_dir / f"{which}{other_suffix}"
+            if stale.exists():
+                stale.unlink()
     shutil.copy(str(new_path), str(dest))
     return dest
 

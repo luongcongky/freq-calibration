@@ -1,13 +1,15 @@
 """
 gui/doc_render.py
 ==================
-Chuyển .docx sang PDF rồi render từng trang PDF thành QPixmap — dùng để hiện
-"bản xem nhanh" tài liệu ngay trong ứng dụng (khung bên phải Bước 3) mà
-không cần mở Word/LibreOffice rời.
+Chuyển .docx/.xlsx sang PDF rồi render từng trang PDF thành QPixmap — dùng để
+hiện "bản xem nhanh" tài liệu ngay trong ứng dụng (khung bên phải Bước 3) mà
+không cần mở Word/Excel/LibreOffice rời.
 
 Convert theo thứ tự ưu tiên:
-  1) Word COM (win32com) — nếu máy có cài Microsoft Word.
-  2) LibreOffice headless (soffice --convert-to pdf) — dùng khi không có Word.
+  1) COM (win32com) — Word.Application cho .docx, Excel.Application cho
+     .xlsx — nếu máy có cài Microsoft Office tương ứng.
+  2) LibreOffice headless (soffice --convert-to pdf) — dùng khi không có
+     Office (hàm này KHÔNG quan tâm đuôi file, dùng chung cho cả 2 định dạng).
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import subprocess
 from PyQt5.QtGui import QImage, QPixmap
 
 _WD_EXPORT_FORMAT_PDF = 17  # wdExportFormatPDF
+_XL_TYPE_PDF = 0  # xlTypePDF (XlFixedFormatType)
 
 _SOFFICE_CANDIDATES = [
     r"C:\Program Files\LibreOffice\program\soffice.exe",
@@ -42,6 +45,22 @@ def _docx_to_pdf_word(docx_path: str, pdf_path: str) -> None:
         word.Quit()
 
 
+def _xlsx_to_pdf_excel(xlsx_path: str, pdf_path: str) -> None:
+    import win32com.client as win32  # import lazy: máy không có pywin32 vẫn dùng được nhánh LibreOffice
+
+    excel = win32.DispatchEx("Excel.Application")
+    excel.Visible = False
+    excel.DisplayAlerts = False
+    try:
+        wb = excel.Workbooks.Open(os.path.abspath(xlsx_path), ReadOnly=True)
+        try:
+            wb.ExportAsFixedFormat(Type=_XL_TYPE_PDF, Filename=os.path.abspath(pdf_path))
+        finally:
+            wb.Close(False)
+    finally:
+        excel.Quit()
+
+
 def _find_soffice() -> str:
     found = shutil.which("soffice") or shutil.which("soffice.exe")
     if found:
@@ -54,16 +73,18 @@ def _find_soffice() -> str:
         "cần cài 1 trong 2 để dùng tính năng xem nhanh tài liệu.")
 
 
-def _docx_to_pdf_libreoffice(docx_path: str, pdf_path: str) -> None:
+def _convert_to_pdf_libreoffice(src_path: str, pdf_path: str) -> None:
+    """Không quan tâm đuôi file (.docx/.xlsx/...) — dùng chung cho mọi định
+    dạng LibreOffice mở được."""
     soffice = _find_soffice()
     out_dir = os.path.dirname(os.path.abspath(pdf_path))
     result = subprocess.run(
         [soffice, "--headless", "--norestore", "--convert-to", "pdf",
-         "--outdir", out_dir, os.path.abspath(docx_path)],
+         "--outdir", out_dir, os.path.abspath(src_path)],
         capture_output=True, text=True, timeout=60,
     )
     generated = os.path.join(
-        out_dir, os.path.splitext(os.path.basename(docx_path))[0] + ".pdf")
+        out_dir, os.path.splitext(os.path.basename(src_path))[0] + ".pdf")
     if not os.path.isfile(generated):
         raise RuntimeError(
             f"LibreOffice không tạo được PDF: {result.stderr or result.stdout}")
@@ -78,7 +99,17 @@ def docx_to_pdf(docx_path: str, pdf_path: str) -> None:
         return
     except Exception:
         pass
-    _docx_to_pdf_libreoffice(docx_path, pdf_path)
+    _convert_to_pdf_libreoffice(docx_path, pdf_path)
+
+
+def xlsx_to_pdf(xlsx_path: str, pdf_path: str) -> None:
+    """Thử Excel COM trước, lỗi (không có Excel) thì tự chuyển sang LibreOffice."""
+    try:
+        _xlsx_to_pdf_excel(xlsx_path, pdf_path)
+        return
+    except Exception:
+        pass
+    _convert_to_pdf_libreoffice(xlsx_path, pdf_path)
 
 
 def render_pdf_pages(pdf_path: str, dpi: int = 150) -> list[QPixmap]:
@@ -106,4 +137,11 @@ def docx_to_page_pixmaps(docx_path: str, dpi: int = 150) -> list[QPixmap]:
     """Convert 1 file .docx -> PDF tạm (cùng thư mục, cùng tên) -> list ảnh từng trang."""
     pdf_path = os.path.splitext(docx_path)[0] + ".pdf"
     docx_to_pdf(docx_path, pdf_path)
+    return render_pdf_pages(pdf_path, dpi=dpi)
+
+
+def xlsx_to_page_pixmaps(xlsx_path: str, dpi: int = 150) -> list[QPixmap]:
+    """Convert 1 file .xlsx -> PDF tạm (cùng thư mục, cùng tên) -> list ảnh từng trang."""
+    pdf_path = os.path.splitext(xlsx_path)[0] + ".pdf"
+    xlsx_to_pdf(xlsx_path, pdf_path)
     return render_pdf_pages(pdf_path, dpi=dpi)

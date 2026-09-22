@@ -39,7 +39,7 @@ from core import table_engine
 from core.paths import get_app_version
 from gui.theme import Colors, build_global_qss
 from gui.report_preview import build_wysiwyg_table
-from gui.doc_render import docx_to_page_pixmaps
+from gui.doc_render import docx_to_page_pixmaps, xlsx_to_page_pixmaps
 from gui.file_dialog_utils import get_open_file_name, get_save_file_name
 from gui.widgets import CheckBoxHeader, set_badge
 
@@ -1772,16 +1772,25 @@ class SessionManagerWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._log(f"Không tự mở được file (hãy mở thủ công): {exc}", Colors.ACCENT_WARN)
 
+    @staticmethod
+    def _save_filter_for(docx_path) -> tuple:
+        """(tên file mặc định, bộ lọc lưu) đúng đuôi file mẫu THẬT của
+        template (.xlsx hay .docx) — tpl.bienban_docx_path/gcnkd_docx_path
+        đã trỏ đúng file thật dù mẫu là Word hay Excel."""
+        if str(docx_path).lower().endswith(".xlsx"):
+            return ".xlsx", "Excel (*.xlsx)"
+        return ".docx", "Word Document (*.docx)"
+
     def _export_bienban(self):
         self._sync_meta()
+        tpl = get_template(self._session.template_id)
+        ext, filt = self._save_filter_for(getattr(tpl, "bienban_docx_path", None) or "")
         path, _ = get_save_file_name(
             self, "Lưu Biên Bản Kiểm Định",
-            f"bien_ban_{datetime.now().strftime('%Y%m%d')}.docx",
-            "Word Document (*.docx)")
+            f"bien_ban_{datetime.now().strftime('%Y%m%d')}{ext}", filt)
         if not path:
             return
         try:
-            tpl = get_template(self._session.template_id)
             tpl.generate_bienban(self._session, path)
             self._log(f"Đã xuất Biên Bản: {path}", Colors.ACCENT_GREEN)
             self._open_file(path)
@@ -1790,14 +1799,14 @@ class SessionManagerWindow(QMainWindow):
 
     def _export_gcnkd(self):
         self._sync_meta()
+        tpl = get_template(self._session.template_id)
+        ext, filt = self._save_filter_for(getattr(tpl, "gcnkd_docx_path", None) or "")
         path, _ = get_save_file_name(
             self, "Lưu Giấy Chứng Nhận Kiểm Định",
-            f"gcnkd_{datetime.now().strftime('%Y%m%d')}.docx",
-            "Word Document (*.docx)")
+            f"gcnkd_{datetime.now().strftime('%Y%m%d')}{ext}", filt)
         if not path:
             return
         try:
-            tpl = get_template(self._session.template_id)
             tpl.generate_gcnkd(self._session, path)
             self._log(f"Đã xuất GCN: {path}", Colors.ACCENT_GREEN)
             self._open_file(path)
@@ -1822,12 +1831,14 @@ class SessionManagerWindow(QMainWindow):
             stamp = datetime.now().strftime("%H%M%S")
             sections = []
             for kind in kinds:
-                path = str(tmp_dir / f"xem_nhanh_{kind}_{stamp}.docx")
+                doc_attr = "bienban_docx_path" if kind == "bienban" else "gcnkd_docx_path"
+                ext, _filt = self._save_filter_for(getattr(tpl, doc_attr, None) or "")
+                path = str(tmp_dir / f"xem_nhanh_{kind}_{stamp}{ext}")
                 if kind == "bienban":
                     tpl.generate_bienban(self._session, path)
                 else:
                     tpl.generate_gcnkd(self._session, path)
-                pixmaps = docx_to_page_pixmaps(path)
+                pixmaps = xlsx_to_page_pixmaps(path) if ext == ".xlsx" else docx_to_page_pixmaps(path)
                 sections.append((f"{self._PREVIEW_KIND_LABEL[kind]} — {os.path.basename(path)}", pixmaps))
             self._step_export.show_doc_pages(sections)
             self._log("Đã dựng bản xem nhanh (chưa lưu chính thức).", Colors.ACCENT_GREEN)

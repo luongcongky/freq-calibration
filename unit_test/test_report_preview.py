@@ -13,6 +13,8 @@ test đầu file dưới đây xác nhận đúng hành vi fallback (3) + các h
 chung (checkbox/status column, khung rỗng) vẫn hoạt động đúng.
 """
 
+from pathlib import Path
+
 import pytest
 
 QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
@@ -324,3 +326,71 @@ def test_docx_grid_lookup_error_falls_back_to_generic(monkeypatch):
     rows = [TableRow(key="x", value_measured=1.0)]
     tbl = build_wysiwyg_table("KHONG_TON_TAI", "A5", rows)
     assert tbl.item(0, 0).text() == "x"
+
+
+# ---------------------------------------------------------------------------
+# _xlsx_grid_for — tương đương nhóm test trên nhưng cho mẫu Excel. Khác Word
+# (dòng 0 của bảng LUÔN là tiêu đề), file .xlsx thật của khách hàng có VÀI
+# DÒNG TRỐNG/TIÊU ĐỀ PHỤ phía TRÊN dòng tiêu đề chính ("lần 1"..."lần 5")
+# trước khi tới dòng dữ liệu đầu tiên — _xlsx_grid_for() phải tự suy ra ĐÚNG
+# dòng tiêu đề đó, không mặc định là dòng 0 của grid trả về.
+# ---------------------------------------------------------------------------
+
+class _FakeXlsxTemplate:
+    def __init__(self, xlsx_path):
+        self.bienban_docx_path = xlsx_path
+
+
+def _write_bienban_xlsx(tmp_path, cells: dict) -> Path:
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    for coord, value in cells.items():
+        ws[coord] = value
+    path = tmp_path / "bienban.xlsx"
+    wb.save(str(path))
+    return path
+
+
+def test_xlsx_grid_headers_used_when_table_tagged_in_excel(tmp_path, monkeypatch):
+    """Mô phỏng ĐÚNG cấu trúc file thật của khách hàng: 2 dòng trống/tiêu đề
+    phụ (dòng 1-2) phía trên dòng tiêu đề thật (dòng 3: "lần 1"/"Độ KĐBĐ"),
+    dữ liệu bắt đầu dòng 4 — tiêu đề cột ở Bước 2 phải lấy ĐÚNG dòng 3, không
+    phải dòng 1 (trống) như mặc định header_row=0 sẽ cho ra."""
+    xlsx_path = _write_bienban_xlsx(tmp_path, {
+        "A3": "Khoá", "B3": "lần 1", "C3": "Độ KĐBĐ",
+        "A4": "1 mW", "B4": "report_val('A1')", "C4": "report_val('A1')",
+    })
+    monkeypatch.setattr(report_preview, "get_template", lambda tid: _FakeXlsxTemplate(xlsx_path))
+
+    rows = [TableRow(key="1 mW", raw_readings=[1.5, 0.02], value_measured=1.5)]
+    tbl = build_wysiwyg_table("FAKE_XLSX_TPL", "A1", rows)
+
+    headers = [tbl.horizontalHeaderItem(c).text() for c in range(tbl.columnCount())]
+    assert headers == ["Khoá", "lần 1", "Độ KĐBĐ"]
+    assert tbl.item(0, 1).text() == "1,5"
+    assert tbl.item(0, 2).text() == "0,02"
+
+
+def test_xlsx_grid_not_used_when_table_id_not_tagged(tmp_path, monkeypatch):
+    xlsx_path = _write_bienban_xlsx(tmp_path, {
+        "A1": "Khoá", "B1": "lần 1",
+        "A2": "10MHz", "B2": "report_val('A1')",
+    })
+    monkeypatch.setattr(report_preview, "get_template", lambda tid: _FakeXlsxTemplate(xlsx_path))
+
+    rows = [TableRow(key="x", raw_readings=[1.0], value_measured=1.0)]
+    tbl = build_wysiwyg_table("FAKE_XLSX_TPL", "A9", rows)
+
+    headers = [tbl.horizontalHeaderItem(c).text() for c in range(tbl.columnCount())]
+    assert headers == ["Khoá", "Giá trị report_val() đã đẩy"]
+
+
+def test_xlsx_grid_ignored_when_bienban_is_docx(tmp_path, monkeypatch):
+    """Mẫu dùng file .docx (không phải .xlsx) -> _xlsx_grid_for() phải bỏ
+    qua, không được nhầm sang đọc bằng openpyxl."""
+    docx_path = _write_bienban(tmp_path, [["Khoá", "lần 1"], ["1 mW", "raw"]])
+    monkeypatch.setattr(report_preview, "get_template", lambda tid: _FakeTemplate(docx_path))
+
+    assert report_preview._xlsx_grid_for("FAKE_DOCX_TPL", "A1") is None

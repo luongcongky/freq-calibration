@@ -1,0 +1,11 @@
+{
+  "template_id": "DEMO_A2_XLSX",
+  "template_name": "Demo — Bảng A2 dùng mẫu Excel (khách hàng cung cấp)",
+  "kind": "hieu_chuan",
+  "dut_models": [
+    "N1922A"
+  ],
+  "standard": "",
+  "measurement_range": "",
+  "dut_manufacturer_default": "Keysight"
+}
