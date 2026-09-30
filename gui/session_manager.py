@@ -14,6 +14,7 @@ Scenario Builder mở như cửa sổ phụ từ đây.
 from __future__ import annotations
 
 import os
+import re
 import logging
 import tempfile
 from datetime import date, datetime
@@ -123,6 +124,25 @@ def _make_recompute_row(template_id: str, table_id: str):
             return None
         return table_engine.recompute_row(descriptor, row_index, raw_readings)
     return _recompute
+
+
+def _table_has_pass_fail(template_id: str, table_id: str) -> bool:
+    """False chỉ khi descriptor.pass_rule.type == "none" (bảng kiểu "hiệu
+    chuẩn", không có khái niệm đạt/không đạt — vd TEMPLATE_POWER). True nếu
+    không xác định được (template/bảng lỗi cấu hình) để KHÔNG ẩn mất cột ở
+    những bảng thật sự cần nó. Trước đây cột "Đạt/Không đạt" luôn hiện cho
+    MỌI bảng, cho phép người dùng tự chọn Đạt/Không đạt trên bảng hiệu
+    chuẩn rồi kết luận tổng ăn luôn giá trị tự chọn đó -> ra "KHÔNG ĐẠT" dù
+    bảng không có khái niệm này (báo cáo lỗi #12)."""
+    try:
+        tpl = get_template(template_id)
+        descriptor_for = getattr(tpl, "descriptor_for", None)
+        descriptor = descriptor_for(table_id) if descriptor_for else None
+    except Exception:  # noqa: BLE001
+        return True
+    if descriptor is None:
+        return True
+    return descriptor.pass_rule.get("type") != "none"
 
 
 def _measured_counts_for(template_id: str, table_id: str, n_rows: int):
@@ -483,10 +503,13 @@ class _MetaTab(QScrollArea):
         self.e_humidity.setText(m.humidity)
         self.e_location.setText(m.location)
         self.e_conditions.setText(m.calibration_conditions)
-        if m.date:
-            self.de_date.setDate(QDate(m.date.year, m.date.month, m.date.day))
-        if m.valid_until:
-            self.de_valid.setDate(QDate(m.valid_until.year, m.valid_until.month, m.valid_until.day))
+        # Luôn đặt lại (không chỉ khi có giá trị) — phiên mới có date/valid_until
+        # = None, nếu bỏ qua thì ô ngày giữ nguyên giá trị người dùng gõ tay ở
+        # PHIÊN TRƯỚC (vd 2028/2020) thay vì về lại hôm nay/+1 năm (báo cáo lỗi #8).
+        self.de_date.setDate(QDate(m.date.year, m.date.month, m.date.day) if m.date
+                              else QDate.currentDate())
+        self.de_valid.setDate(QDate(m.valid_until.year, m.valid_until.month, m.valid_until.day)
+                               if m.valid_until else QDate.currentDate().addYears(1))
 
     def save_to(self, session: CalibrationSession):
         session.template_id = self.cmb_template.currentData() or ""
@@ -511,6 +534,39 @@ class _MetaTab(QScrollArea):
         m.date = date(qd.year(), qd.month(), qd.day())
         qv = self.de_valid.date()
         m.valid_until = date(qv.year(), qv.month(), qv.day())
+
+    def validate_meta(self) -> list[str]:
+        """Kiểm tra sơ bộ các ô dễ gõ sai trước khi xuất báo cáo — CHỈ CẢNH
+        BÁO (không chặn cứng, vài phòng lab có thể có quy ước ghi khác
+        thường), để người dùng tự quyết định sửa hay xuất tiếp. Trước đây
+        không kiểm tra gì cả — "hai mươi", "150" (độ ẩm) in nguyên văn vào
+        Biên bản/GCN (báo cáo lỗi #4), và Hiệu lực đến sớm hơn Ngày kiểm
+        định mà không ai biết (báo cáo lỗi #5)."""
+        problems: list[str] = []
+
+        year = self.e_year.text().strip()
+        if year and not re.fullmatch(r"\d{4}", year):
+            problems.append(f"Năm sản xuất '{year}' không phải năm hợp lệ (4 chữ số).")
+
+        temp = self.e_temp.text().strip()
+        if temp and re.match(r"-?\d+([.,]\d+)?", temp) is None:
+            problems.append(f"Nhiệt độ '{temp}' không phải số.")
+
+        humidity = self.e_humidity.text().strip()
+        hm = re.match(r"-?\d+(?:[.,]\d+)?", humidity) if humidity else None
+        if humidity and hm is None:
+            problems.append(f"Độ ẩm '{humidity}' không phải số.")
+        elif hm is not None:
+            hum_val = float(hm.group(0).replace(",", "."))
+            if not (0 <= hum_val <= 100):
+                problems.append(f"Độ ẩm '{humidity}' ngoài khoảng hợp lệ (0–100 %).")
+
+        if self.de_valid.date() < self.de_date.date():
+            problems.append(
+                f"Hiệu lực đến ({self.de_valid.date().toString('dd/MM/yyyy')}) sớm hơn "
+                f"ngày kiểm định ({self.de_date.date().toString('dd/MM/yyyy')}).")
+
+        return problems
 
 
 # ============================================================================
@@ -811,13 +867,16 @@ class _TestReviewTab(QWidget):
             lbl.setWordWrap(True)
             lbl.setStyleSheet(f"color:{Colors.ACCENT_WARN}; font-size:11px;")
             self._result_holder.addWidget(lbl)
-        # Luôn HIỆN cả 2 cột (checkbox + Đạt/Không đạt); with_checkbox ở đây
-        # chỉ còn ý nghĩa "bài đã có kết quả thật" (interactive) -> nếu bài
-        # chưa chạy (khung xem trước rỗng) thì 2 cột vẫn hiện nhưng bị khoá,
-        # tránh tick/chọn trên dữ liệu chưa tồn tại rồi mất khi đổi bài khác.
+        # Luôn HIỆN cột checkbox; with_checkbox ở đây chỉ còn ý nghĩa "bài đã
+        # có kết quả thật" (interactive) -> nếu bài chưa chạy (khung xem
+        # trước rỗng) thì cột vẫn hiện nhưng bị khoá, tránh tick trên dữ
+        # liệu chưa tồn tại rồi mất khi đổi bài khác. Cột "Đạt/Không đạt"
+        # CHỈ hiện khi bảng thật sự có khái niệm này (xem _table_has_pass_fail).
+        has_pass_fail = _table_has_pass_fail(self._template_id, table_id)
         tbl = build_wysiwyg_table(self._template_id, table_id, rows,
                                   with_checkbox=True, on_toggle=self._on_row_confirm_toggled,
-                                  with_status=True, on_status_change=self._on_row_confirm_toggled,
+                                  with_status=has_pass_fail,
+                                  on_status_change=self._on_row_confirm_toggled if has_pass_fail else None,
                                   interactive=with_checkbox,
                                   on_value_edited=self._on_value_edited,
                                   empty_message="Chưa có kết quả",
@@ -1592,6 +1651,7 @@ class SessionManagerWindow(QMainWindow):
                                 QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
         self._session = CalibrationSession()
+        self._step_meta.load_from(self._session)
         self._on_template_changed()
         self._refresh_export_tab()
         self._log("Đã tạo phiên mới.", Colors.ACCENT_PRIMARY)
@@ -1832,6 +1892,18 @@ class SessionManagerWindow(QMainWindow):
             return ".xlsx", "Excel (*.xlsx)"
         return ".docx", "Word Document (*.docx)"
 
+    def _confirm_meta_warnings(self) -> bool:
+        """Hiện cảnh báo (nếu có) từ _MetaTab.validate_meta() trước khi
+        xuất — trả False nếu người dùng chọn quay lại sửa (báo cáo lỗi #4/#5)."""
+        problems = self._step_meta.validate_meta()
+        if not problems:
+            return True
+        return QMessageBox.question(
+            self, "Có thông tin cần kiểm tra lại",
+            "Phát hiện vài ô ở Bước 1 có thể đã gõ sai:\n\n- " + "\n- ".join(problems) +
+            "\n\nVẫn tiếp tục xuất báo cáo?",
+            QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes
+
     @staticmethod
     def _friendly_export_error(exc: Exception, path: str) -> str:
         """Thay message kỹ thuật khó hiểu ([Errno 13] Permission denied...)
@@ -1848,6 +1920,8 @@ class SessionManagerWindow(QMainWindow):
 
     def _export_bienban(self):
         self._sync_meta()
+        if not self._confirm_meta_warnings():
+            return
         tpl = get_template(self._session.template_id)
         ext, filt = self._save_filter_for(getattr(tpl, "bienban_docx_path", None) or "")
         path, _ = get_save_file_name(
@@ -1865,6 +1939,8 @@ class SessionManagerWindow(QMainWindow):
 
     def _export_gcnkd(self):
         self._sync_meta()
+        if not self._confirm_meta_warnings():
+            return
         tpl = get_template(self._session.template_id)
         ext, filt = self._save_filter_for(getattr(tpl, "gcnkd_docx_path", None) or "")
         path, _ = get_save_file_name(

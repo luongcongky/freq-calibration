@@ -20,6 +20,7 @@ class BaseReportTemplate(ABC):
     DUT_MODELS: list[str] = []       # Các model thiết bị áp dụng
     STANDARD: str = ""               # "QTKĐ 2.461 : 2018"
     MEASUREMENT_RANGE: str = ""      # "0,002 Hz đến 27 GHz"
+    DUT_MANUFACTURER_DEFAULT: str = ""  # "Pendulum" — xem meta.json["dut_manufacturer_default"]
 
     KIND: str = "kiem_dinh"          # "kiem_dinh" | "hieu_chuan" — xem meta.json["kind"]
 
@@ -51,8 +52,17 @@ class BaseReportTemplate(ABC):
         """
 
     def fill_session_defaults(self, session: CalibrationSession) -> None:
-        """Điền các giá trị mặc định từ template vào meta của session."""
+        """Điền các giá trị mặc định từ template vào meta của session — gọi
+        cả lúc nạp phiên mới LẪN lúc người dùng đổi sang mẫu khác giữa
+        phiên (xem gui/session_manager.py::_apply_template_defaults). Reset
+        "Tên phương tiện" về rỗng khi đổi mẫu: đây là mô tả riêng của DUT
+        thật đang kiểm (không phải thuộc tính của mẫu) nên không có giá trị
+        mặc định hợp lý nào để tự điền — giữ lại tên của mẫu CŨ (vd "Máy đếm
+        tần số" khi vừa đổi sang mẫu NRP2 công suất) còn sai hơn để trống
+        (báo cáo lỗi #6/#7)."""
+        session.meta.dut.name = ""
         session.meta.dut.model = self.DUT_MODELS[0] if self.DUT_MODELS else ""
+        session.meta.dut.manufacturer = self.DUT_MANUFACTURER_DEFAULT
         session.meta.dut.measurement_range = self.MEASUREMENT_RANGE
 
     def generate_bienban(self, session: CalibrationSession, output_path) -> Path:

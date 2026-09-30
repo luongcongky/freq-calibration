@@ -99,6 +99,34 @@ def test_get_template_fallback_and_list_templates(fixture_registry):
         get_template("KHONG_TON_TAI_LUON")
 
 
+def test_fill_session_defaults_sets_manufacturer_and_resets_name(fixture_registry):
+    """BUG-06: Hãng sản xuất mặc định (meta.json["dut_manufacturer_default"])
+    trước đây không bao giờ được điền vào session. BUG-07: đổi mẫu giữa
+    phiên vẫn giữ Tên/Hãng của mẫu CŨ (vd "Máy đếm tần số"/"Pendulum" sau khi
+    đổi sang mẫu NRP2) — fill_session_defaults() phải reset "Tên phương
+    tiện" về rỗng (không thuộc về mẫu, không có mặc định hợp lý) và điền
+    đúng Hãng SX của mẫu MỚI, đè lên giá trị mẫu cũ còn sót lại."""
+    import json
+    meta_path = fixture_registry / "TEST_GENERIC_TPL" / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["dut_manufacturer_default"] = "R&S"
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+    from core.report_templates import get_template
+    tpl = get_template("TEST_GENERIC_TPL")
+    assert tpl.DUT_MANUFACTURER_DEFAULT == "R&S"
+
+    session = CalibrationSession(
+        meta=SessionMeta(dut=DUTInfo(name="Máy đếm tần số", manufacturer="Pendulum",
+                                      serial="SN1")),
+    )
+    tpl.fill_session_defaults(session)
+    assert session.meta.dut.name == ""
+    assert session.meta.dut.manufacturer == "R&S"
+    assert session.meta.dut.model == "X1"
+    assert session.meta.dut.serial == "SN1"   # không đụng tới field không liên quan
+
+
 def test_record_noun_matches_kind_in_meta_json(fixture_registry, tmp_path):
     """Tiêu đề hộp thoại lưu Biên Bản/GCN (gui/session_manager.py) phải đổi
     theo meta.json["kind"] — không được hardcode "Kiểm Định" cho mẫu hiệu

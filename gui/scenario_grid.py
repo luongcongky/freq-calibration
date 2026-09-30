@@ -333,6 +333,15 @@ class StepEditorDialog(QDialog):
     # ── command list ────────────────────────────────────────────────────────
 
     def _refresh_commands(self):
+        # Tick/bỏ tick 1 thiết bị rebuild TOÀN BỘ cmd_list (clear + add lại) —
+        # nhớ lệnh đang chọn trước khi clear để chọn lại sau, tránh mất lựa
+        # chọn khi người dùng bấm chọn lệnh TRƯỚC rồi mới tick thiết bị (báo
+        # cáo lỗi #13 — trước đây currentItem() về None sau khi tick thiết
+        # bị, dù ô dưới vẫn hiện tên lệnh cũ, OK báo "Chưa chọn lệnh").
+        prev_item = self.cmd_list.currentItem()
+        prev_cmd = prev_item.data(Qt.UserRole) if prev_item is not None else None
+        prev_model_key = prev_item.data(Qt.UserRole + 1) if prev_item is not None else None
+
         devices = self._selected_devices()
         self.cmd_list.clear()
         custom = load_custom()
@@ -356,6 +365,21 @@ class StepEditorDialog(QDialog):
                 self._add_cmd_item(cmd, dk)
 
         self._filter_commands(self.cmd_search.text())
+
+        if prev_cmd is not None:
+            self._reselect_cmd(prev_cmd, prev_model_key)
+
+    def _reselect_cmd(self, prev_cmd, prev_model_key) -> None:
+        """Chọn lại đúng lệnh (so theo giá trị, không theo identity — custom
+        override dựng lại Cmd object mới mỗi lần load) nếu nó còn trong danh
+        sách vừa dựng lại (lệnh chung/điều khiển luôn còn; lệnh riêng của 1
+        thiết bị chỉ còn nếu thiết bị đó vẫn đang được tick)."""
+        for i in range(self.cmd_list.count()):
+            item = self.cmd_list.item(i)
+            cmd = item.data(Qt.UserRole)
+            if cmd == prev_cmd and item.data(Qt.UserRole + 1) == prev_model_key:
+                self.cmd_list.setCurrentItem(item)
+                return
 
     def _filter_commands(self, text: str):
         text = text.strip().lower()
@@ -977,6 +1001,7 @@ class ScenarioGridWindow(QMainWindow):
         self.setMinimumSize(1150, 680)
         self.scenario = Scenario(name="Kịch bản mới")
         self.loaded_path: str = ""
+        self._saved_snapshot = self.scenario.to_dict()  # xem closeEvent() — báo cáo lỗi #3
         self.worker: ScenarioWorker | None = None
         self._loading = False
         self._last_results: list[StepResult] = []
@@ -1471,7 +1496,11 @@ class ScenarioGridWindow(QMainWindow):
         dlg = StepEditorDialog(self, connected_keys=self._connected_keys,
                                labels=self._top_label_names())
         if dlg.exec_() == QDialog.Accepted:
-            step = dlg.get_step(); step.enabled = False
+            # ScenarioStep.enabled mặc định True (core/scenario.py) — KHÔNG
+            # ép False ở đây nữa: trước đây bước mới luôn bị tắt sẵn, người
+            # dùng bấm CHẠY ngay sau khi thêm thì bị báo "chưa có node nào
+            # được bật" dù vừa thêm xong (báo cáo lỗi #14).
+            step = dlg.get_step()
             container.insert(insert_at, step)
             self._refresh_tree()
 
@@ -1487,7 +1516,7 @@ class ScenarioGridWindow(QMainWindow):
         block = build_block()
         if block is None:
             return False
-        block.enabled = False
+        # Mặc định True (xem _add_step ở trên, cùng lý do — báo cáo lỗi #14).
         container.insert(insert_at, block)
         self._refresh_tree()
         return True
@@ -1945,15 +1974,22 @@ class ScenarioGridWindow(QMainWindow):
             if callable(self._on_device_changed):
                 self._on_device_changed(self.address_map, self.cmd_delay_s)
 
-    def _save(self):
+    def _save(self) -> bool:
+        """Trả True nếu đã lưu THẬT (người dùng không hủy hộp thoại) — dùng
+        bởi closeEvent() để biết có an toàn đóng cửa sổ không (báo cáo lỗi #3)."""
         path, _ = get_save_file_name(self, "Lưu kịch bản", "scenario.json", "JSON (*.json)")
-        if path:
-            self.scenario.save_json(path)
-            self.loaded_path = path
-            self._update_scenario_bar()
-            self._log(f"Đã lưu: {path}", Colors.ACCENT_GREEN)
+        if not path:
+            return False
+        self.scenario.save_json(path)
+        self.loaded_path = path
+        self._saved_snapshot = self.scenario.to_dict()
+        self._update_scenario_bar()
+        self._log(f"Đã lưu: {path}", Colors.ACCENT_GREEN)
+        return True
 
     def _load(self):
+        if not self._confirm_discard_unsaved():
+            return
         path, _ = get_open_file_name(self, "Mở kịch bản", "", "JSON (*.json)")
         if not path:
             return
@@ -1971,9 +2007,51 @@ class ScenarioGridWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi mở file", str(exc)); return False
         self.loaded_path = path
+        self._saved_snapshot = self.scenario.to_dict()
         self._refresh_tree(); self._update_scenario_bar()
         self._log(f"Đã mở: {path}", Colors.ACCENT_GREEN)
         return True
+
+    # ------------------------------------------------------------------
+    # Hỏi lưu trước khi mất kịch bản chưa lưu (đóng cửa sổ / mở file khác)
+    # ------------------------------------------------------------------
+
+    def _is_dirty(self) -> bool:
+        return self.scenario.to_dict() != self._saved_snapshot
+
+    def _confirm_discard_unsaved(self) -> bool:
+        """Hỏi "Lưu thay đổi?" nếu kịch bản đang sửa dở chưa lưu — trả False
+        nếu người dùng chọn Hủy (không được đóng/thay kịch bản), hoặc chọn
+        Lưu nhưng tự hủy hộp thoại chọn file (coi như chưa lưu được, không
+        được mất dữ liệu). Trước đây KHÔNG hỏi gì cả — đóng/mở file khác là
+        mất trắng kịch bản chưa lưu ngay lập tức (báo cáo lỗi #3)."""
+        if not self._is_dirty():
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Kịch bản chưa lưu")
+        box.setText("Kịch bản đang sửa chưa được lưu. Lưu thay đổi trước khi tiếp tục?")
+        btn_save = box.addButton("Lưu", QMessageBox.AcceptRole)
+        btn_discard = box.addButton("Không lưu", QMessageBox.DestructiveRole)
+        btn_cancel = box.addButton("Hủy", QMessageBox.RejectRole)
+        box.setDefaultButton(btn_save)
+        box.exec_()
+        clicked = box.clickedButton()
+        if clicked is btn_cancel:
+            return False
+        if clicked is btn_discard:
+            return True
+        return self._save()
+
+    def closeEvent(self, ev):
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.warning(self, "Đang chạy",
+                                "Kịch bản đang chạy — bấm ■ DỪNG trước khi đóng.")
+            ev.ignore()
+            return
+        if not self._confirm_discard_unsaved():
+            ev.ignore()
+            return
+        super().closeEvent(ev)
 
     # ------------------------------------------------------------------
     # Chạy

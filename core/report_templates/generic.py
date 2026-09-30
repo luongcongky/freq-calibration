@@ -75,6 +75,7 @@ class GenericReportTemplate(BaseReportTemplate):
         self.STANDARD = meta.get("standard", "")
         self.MEASUREMENT_RANGE = meta.get("measurement_range", "")
         self.KIND = meta.get("kind", "kiem_dinh")
+        self.DUT_MANUFACTURER_DEFAULT = meta.get("dut_manufacturer_default", "")
 
         self._meta_json = meta
         base = TEMPLATES_DIR / template_id
