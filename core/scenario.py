@@ -444,7 +444,16 @@ class Scenario:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Scenario":
-        # Back-compat: kịch bản cũ dạng phẳng {"steps": [...]}.
+        # Back-compat: kịch bản cũ dạng phẳng {"steps": [...]}. Thiếu CẢ 2
+        # khoá "nodes"/"steps" nghĩa là file JSON này không phải kịch bản
+        # (vd mở nhầm file phiên kiểm định .json) — trước đây âm thầm coi
+        # là kịch bản RỖNG hợp lệ (0 node), báo "Đã mở" dù sai hoàn toàn,
+        # không ai biết đã mở nhầm file (báo cáo lỗi BUG-19).
+        if "nodes" not in d and "steps" not in d:
+            raise ValueError(
+                "File này không phải file kịch bản (.json) hợp lệ — thiếu "
+                "cả 2 khoá 'nodes'/'steps'. Có thể bạn đã chọn nhầm file "
+                "khác (vd file phiên kiểm định).")
         if "nodes" in d:
             nodes = [node_from_dict(n) for n in d["nodes"]]
         else:

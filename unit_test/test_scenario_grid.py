@@ -16,7 +16,9 @@ các dialog/widget Qt khác trong repo.
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
-from gui.scenario_grid import StepEditorDialog
+from core.scenario import ScenarioStep
+from core.scenario_runner import StepResult
+from gui.scenario_grid import ScenarioGridWindow, StepEditorDialog
 
 _app = QApplication.instance() or QApplication([])
 
@@ -82,3 +84,103 @@ def test_add_step_dialog_does_not_force_disabled():
         assert step.enabled is True
     finally:
         dlg.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# REG-RAM-01: mở/đóng Scenario Builder không trả lại RAM (+30 MB/lần, chỉ
+# được GC vòng lặp dọn bất chợt) — cửa sổ top-level (parent=None) không có
+# WA_DeleteOnClose nên close() chỉ ẨN, không giải phóng cây widget C++, và
+# session_manager giữ nguyên tham chiếu Python tới cửa sổ đã đóng cho tới
+# lần mở kế tiếp.
+# ---------------------------------------------------------------------------
+
+def test_scenario_grid_window_has_delete_on_close_attribute():
+    win = ScenarioGridWindow(parent=None)
+    try:
+        assert win.testAttribute(Qt.WA_DeleteOnClose) is True
+    finally:
+        win.setAttribute(Qt.WA_DeleteOnClose, False)  # tránh double-free khi deleteLater() ở finally
+        win.deleteLater()
+
+
+def test_scenario_grid_window_on_closed_callback_fires_on_close():
+    calls = []
+    win = ScenarioGridWindow(parent=None, on_closed=lambda: calls.append(1))
+    win.setAttribute(Qt.WA_DeleteOnClose, False)  # tránh double-free trong test (không có event loop chạy deleteLater)
+    win.close()
+    assert calls == [1]
+
+
+def test_scenario_grid_window_closed_callback_not_called_when_cancelled(monkeypatch):
+    """Đang chạy dở (worker) -> closeEvent ignore, KHÔNG gọi on_closed. Chặn
+    QMessageBox.warning (modal, sẽ treo test chờ click) bằng monkeypatch."""
+    from gui import scenario_grid
+
+    class _FakeWorker:
+        def isRunning(self):
+            return True
+
+    monkeypatch.setattr(scenario_grid.QMessageBox, "warning", lambda *a, **k: None)
+    calls = []
+    win = ScenarioGridWindow(parent=None, on_closed=lambda: calls.append(1))
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win.worker = _FakeWorker()
+        win.close()
+        assert calls == []
+    finally:
+        win.worker = None
+        win.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# BUG-20: 1 bước chạy trên NHIỀU thiết bị (vd 4231A + NRVD) — ô "Kết quả"
+# chỉ hiện kết quả của 1 máy, kết quả máy còn lại chỉ thấy trong log.
+# ---------------------------------------------------------------------------
+
+def test_multi_device_step_result_shows_both_devices_tagged():
+    step = ScenarioStep(action="raw_scpi", devices=["4231A", "NRVD"],
+                        params={"__template__": "MEAS?", "__is_query__": True})
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win.scenario.nodes = [step]
+        win._refresh_tree()
+        node_id = id(step)
+
+        res1 = StepResult(action="raw_scpi", device_key="4231A", node_id=node_id,
+                          is_query=True, text="OK", value=None)
+        res2 = StepResult(action="raw_scpi", device_key="NRVD", node_id=node_id,
+                          is_query=True, text="OK", value=None)
+        win._on_result(res1)
+        win._on_result(res2)
+
+        item = win._id_to_item.get(node_id)
+        assert item is not None
+        text = item.text(4)
+        assert "[4231A]" in text and "[NRVD]" in text, (
+            f"Kết quả thiếu 1 trong 2 máy (BUG-20): {text!r}")
+    finally:
+        win.deleteLater()
+
+
+def test_single_device_step_result_not_tagged():
+    """Bước chỉ 1 thiết bị — KHÔNG gắn thêm [tên máy] vào cột Kết quả như
+    trước đây (chỉ bước nhiều máy mới cần phân biệt)."""
+    step = ScenarioStep(action="raw_scpi", devices=["4231A"],
+                        params={"__template__": "MEAS?", "__is_query__": True})
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win.scenario.nodes = [step]
+        win._refresh_tree()
+        node_id = id(step)
+
+        res = StepResult(action="raw_scpi", device_key="4231A", node_id=node_id,
+                         is_query=True, text="OK", value=None)
+        win._on_result(res)
+
+        item = win._id_to_item.get(node_id)
+        assert item.text(4) == "OK"
+    finally:
+        win.deleteLater()

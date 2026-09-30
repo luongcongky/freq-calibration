@@ -40,11 +40,21 @@ _TAG_RE = re.compile(r"^(report_val|gcn_avg|gcn_error|gcn_limit|result)\(")
 # sửa/ghi gì cả (xem docstring đầu file).
 # ---------------------------------------------------------------------------
 
+_REPORT_VAL_ID_RE = re.compile(r"report_val\(\s*['\"]([A-Za-z0-9_]+)['\"]\s*\)")
+
+
 @dataclass
 class DetectedXlsxSheet:
     sheet_name: str
     used_range: str          # vd "A1:W27" — gợi ý vùng mặc định, khách tự sửa
     already_tagged: bool     # True nếu sheet đã có chữ "report_val(" ở đâu đó
+    detected_table_id: str = ""
+    """Mã bảng xuất hiện NHIỀU NHẤT trong report_val('<id>') đã có sẵn
+    trong sheet (rỗng nếu sheet chưa gắn tag nào) — dùng để GỢI Ý đúng Mã
+    bảng khi mở wizard "Đọc bảng từ Excel" (gui/template_manager_dialog.py::
+    ImportTableFromExcelDialog._suggest_table_id), thay vì luôn gợi ý
+    "A{n} trống kế tiếp" không liên quan gì tới sheet đang chọn — trước đây
+    sheet có report_val('A1') có thể bị gợi ý "A2" (báo cáo lỗi REG-06)."""
 
 
 def list_sheets(xlsx_path) -> list:
@@ -54,15 +64,19 @@ def list_sheets(xlsx_path) -> list:
     result = []
     for ws in wb.worksheets:
         already_tagged = False
+        id_counts: dict[str, int] = {}
         for row in ws.iter_rows():
             for cell in row:
-                if isinstance(cell.value, str) and "report_val(" in cell.value:
-                    already_tagged = True
-                    break
-            if already_tagged:
-                break
+                if not isinstance(cell.value, str) or "report_val(" not in cell.value:
+                    continue
+                already_tagged = True
+                m = _REPORT_VAL_ID_RE.search(cell.value)
+                if m:
+                    id_counts[m.group(1)] = id_counts.get(m.group(1), 0) + 1
+        detected_table_id = max(id_counts, key=id_counts.get) if id_counts else ""
         result.append(DetectedXlsxSheet(
             sheet_name=ws.title, used_range=ws.dimensions, already_tagged=already_tagged,
+            detected_table_id=detected_table_id,
         ))
     wb.close()
     return result
@@ -121,6 +135,27 @@ def raw_counts_for_measured_cols(xlsx_path, sheet_name: str, data_rows_abs: list
         counts.append(n)
     wb.close()
     return counts
+
+
+def count_report_val_tags(xlsx_path, table_id: str) -> int:
+    """Đếm số ô có ĐÚNG text report_val('<table_id>') (toàn bộ workbook) —
+    dùng để so sánh với số lần đo mà bảng ĐANG cấu hình kỳ vọng
+    (sum(row.raw_count)) khi "Thay file" (gui/template_manager_dialog.py::
+    _replace_docx), cảnh báo sớm nếu file mới có cấu trúc KHÁC bảng cũ
+    (báo cáo lỗi REG-05 — "Thay file" báo thành công dù bảng cũ 21×6, file
+    mới 19×9, không cảnh báo gì)."""
+    tag = f"report_val('{table_id}')"
+    wb = openpyxl.load_workbook(str(xlsx_path), data_only=False, read_only=True)
+    try:
+        n = 0
+        for ws in wb.worksheets:
+            for row in ws.iter_rows():
+                for cell in row:
+                    if isinstance(cell.value, str) and cell.value.strip() == tag:
+                        n += 1
+        return n
+    finally:
+        wb.close()
 
 
 def find_missing_table_ids(xlsx_path, table_ids: list) -> list:

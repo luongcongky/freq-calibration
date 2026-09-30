@@ -31,7 +31,7 @@ from dataclasses import asdict
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QWidget, QApplication,
     QLabel, QListWidget, QListWidgetItem, QComboBox, QFrame,
-    QLineEdit, QAbstractItemView, QPushButton,
+    QLineEdit, QAbstractItemView, QPushButton, QCheckBox,
     QDialogButtonBox, QFormLayout, QMessageBox,
 )
 from PyQt5.QtCore import Qt
@@ -80,7 +80,8 @@ def _save_custom(data: dict[str, list[dict]]) -> None:
 
 
 def _cmds_from_json(rows: list[dict]) -> list[Cmd]:
-    return [Cmd(r.get("cmd", ""), r.get("desc", ""), r.get("note", "")) for r in rows]
+    return [Cmd(r.get("cmd", ""), r.get("desc", ""), r.get("note", ""),
+               force_query=bool(r.get("force_query", False))) for r in rows]
 
 
 def _cmds_to_json(cmds: list[Cmd]) -> list[dict]:
@@ -115,11 +116,18 @@ class _CmdEditorDialog(QDialog):
         self.note_edit.setPlaceholderText("Ghi chú tùy chọn (dải tham số, ví dụ…)")
         form.addRow("Ghi chú:", self.note_edit)
 
+        self.force_query_chk = QCheckBox("Lệnh đọc kết quả (query) — luôn đọc phản hồi sau khi gửi")
+        self.force_query_chk.setChecked(bool(cmd and getattr(cmd, "force_query", False)))
+        form.addRow("", self.force_query_chk)
+
         root.addLayout(form)
 
         hint = QLabel(
             "<font color='#a0a5ad'>Dùng <b>&lt;ch&gt;</b> cho số kênh, "
-            "<b>&lt;Hz&gt;</b> / <b>&lt;s&gt;</b> / <b>&lt;dBm&gt;</b> cho tham số.</font>"
+            "<b>&lt;Hz&gt;</b> / <b>&lt;s&gt;</b> / <b>&lt;dBm&gt;</b> cho tham số. "
+            "Lệnh kết thúc bằng <b>?</b> đã TỰ ĐỘNG được coi là lệnh đọc — chỉ cần "
+            "tick ô trên nếu lệnh KHÔNG có dấu <b>?</b> nhưng vẫn trả kết quả "
+            "(vd lệnh riêng của Boonton: MFS, TM0, TM1…).</font>"
         )
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -140,7 +148,8 @@ class _CmdEditorDialog(QDialog):
         if not desc_text:
             QMessageBox.warning(self, "Thiếu mô tả", "Vui lòng nhập mô tả cho lệnh.")
             return
-        self._result = Cmd(cmd_text, desc_text, self.note_edit.text().strip())
+        self._result = Cmd(cmd_text, desc_text, self.note_edit.text().strip(),
+                           force_query=self.force_query_chk.isChecked())
         self.accept()
 
     def get_cmd(self) -> Cmd | None:

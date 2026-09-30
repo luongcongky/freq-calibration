@@ -40,6 +40,16 @@ VALID_PASS_RULE_TYPES = {
     "relative_error_vs_fixed_limit", "value_vs_parsed_threshold",
     "correction_vs_reference", "none",
 }
+# Loại pass_rule THỰC SỰ ra Đạt/Không đạt (core/table_engine.py::apply_pass_rule
+# gán passed=True/False) — "none" VÀ "correction_vs_reference" đều luôn giữ
+# passed=None (bảng kiểu "hiệu chuẩn": chỉ tính sai số/hiệu chỉnh, không có
+# khái niệm đạt/không đạt). Dùng bởi gui/session_manager.py để quyết định có
+# hiện cột "Đạt/Không đạt" ở Bước 2/3 không — trước đây chỉ loại "none" mới
+# ẩn cột, "correction_vs_reference" (TEMPLATE_POWER A1-A3) vẫn lọt (báo cáo
+# lỗi BUG-12, vẫn chưa sửa đúng ở vòng trước).
+PASS_RULE_TYPES_WITH_VERDICT = {
+    "relative_error_vs_fixed_limit", "value_vs_parsed_threshold",
+}
 
 
 @dataclass

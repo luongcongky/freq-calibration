@@ -60,6 +60,22 @@ def test_list_sheets_reports_used_range_and_tag_state(tmp_path):
     assert sheets[0].sheet_name == "Sheet1"
     assert sheets[0].already_tagged is False
     assert sheets[0].used_range.startswith("A1:")
+    assert sheets[0].detected_table_id == ""
+
+
+def test_list_sheets_detects_table_id_from_existing_tags(tmp_path):
+    """REG-06: wizard "Đọc bảng từ Excel" gợi ý sai Mã bảng — sheet đã có
+    sẵn report_val('A1') nhưng bị gợi ý "A2" (và ngược lại). list_sheets()
+    phải đọc được ĐÚNG mã đã tag sẵn trong sheet để gui/
+    template_manager_dialog.py::ImportTableFromExcelDialog._suggest_table_id
+    gợi ý đúng, không chỉ "A{n} trống kế tiếp" không liên quan."""
+    path = tmp_path / "wb.xlsx"
+    sheet_name = _build_workbook(path)
+    _tag_cells(path, sheet_name, [(2, 2), (2, 3), (2, 4)], "A1")
+
+    sheets = xwio.list_sheets(path)
+    assert sheets[0].already_tagged is True
+    assert sheets[0].detected_table_id == "A1"
 
 
 def test_read_range_returns_text_grid(tmp_path):
@@ -240,3 +256,28 @@ def test_value_columns_from_grid_detects_report_val_with_argument():
 
 def test_value_columns_from_grid_empty_grid_returns_empty_list():
     assert xwio.value_columns_from_grid([]) == []
+
+
+def test_count_report_val_tags_counts_exact_matches_across_sheets(tmp_path):
+    """REG-05: "Thay file" phải đếm được đúng số ô report_val('<ID>') để so
+    với số lần đo (raw_count) bảng đang cấu hình kỳ vọng, phát hiện file
+    mới đổi cấu trúc (vd 21x6 -> 19x9) mà chỉ kiểm tra "có tag hay không"
+    (find_missing_table_ids) thì không thấy gì khác lạ."""
+    path = tmp_path / "wb.xlsx"
+    sheet_name = _build_workbook(path)
+    _tag_cells(path, sheet_name, [(2, 2), (2, 3), (2, 4)], "A1")  # 3 ô report_val('A1')
+
+    assert xwio.count_report_val_tags(path, "A1") == 3
+    assert xwio.count_report_val_tags(path, "A2") == 0
+
+
+def test_count_report_val_tags_does_not_match_other_table_ids(tmp_path):
+    """report_val('A1') không được tính nhầm vào report_val('A10') (hoặc
+    ngược lại) — so khớp CHÍNH XÁC cả chuỗi, không phải substring."""
+    path = tmp_path / "wb.xlsx"
+    sheet_name = _build_workbook(path)
+    _tag_cells(path, sheet_name, [(2, 2)], "A1")
+    _tag_cells(path, sheet_name, [(2, 3)], "A10")
+
+    assert xwio.count_report_val_tags(path, "A1") == 1
+    assert xwio.count_report_val_tags(path, "A10") == 1

@@ -394,3 +394,18 @@ def test_xlsx_grid_ignored_when_bienban_is_docx(tmp_path, monkeypatch):
     monkeypatch.setattr(report_preview, "get_template", lambda tid: _FakeTemplate(docx_path))
 
     assert report_preview._xlsx_grid_for("FAKE_DOCX_TPL", "A1") is None
+
+
+def test_fmt_num_rounds_binary_noise():
+    """REG-02: lưới Bước 2 hiện số thực chưa làm tròn do sai số nhị phân,
+    kiểu "0,015999999999999997" thay vì "0,016" — _fmt_num() (dùng trong
+    _build_generic khi không khớp được cấu trúc cột thật) trước đây chỉ
+    str(v), nay làm tròn 10 chữ số có nghĩa trước khi hiển thị."""
+    from gui.report_preview import _fmt_num
+    assert _fmt_num(0.015999999999999997) == "0,016"
+    assert _fmt_num(0.1105000000000002) == "0,1105"
+    assert _fmt_num(-0.022000000000000002) == "-0,022"
+    # Số nguyên/số thường vẫn hiển thị đúng như cũ, không bị làm tròn sai.
+    assert _fmt_num(1000000000.0) == "1000000000"
+    assert _fmt_num(1.5) == "1,5"
+    assert _fmt_num(None) == ""

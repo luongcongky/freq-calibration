@@ -37,6 +37,23 @@ def test_validate_table_id_available(tmp_path):
     assert wio.validate_table_id_available(tmp_path, "A9") is not None
 
 
+def test_validate_table_id_format_ignores_existence(tmp_path):
+    """Khác validate_table_id_available() — CHỈ xét định dạng, không quan
+    tâm đã có file .json hay chưa (dùng ở 2 wizard "Đọc bảng" để tách riêng
+    bước xác nhận "Thay thế" khỏi lỗi định dạng thật — báo cáo lỗi REG-05)."""
+    assert wio.validate_table_id_format("") is not None
+    assert wio.validate_table_id_format("A 9") is not None
+    assert wio.validate_table_id_format("A9") is None
+    (tmp_path / "A9.json").write_text("{}", encoding="utf-8")
+    assert wio.validate_table_id_format("A9") is None  # định dạng vẫn hợp lệ dù đã tồn tại
+
+
+def test_table_id_exists(tmp_path):
+    assert wio.table_id_exists(tmp_path, "A9") is False
+    (tmp_path / "A9.json").write_text("{}", encoding="utf-8")
+    assert wio.table_id_exists(tmp_path, "A9") is True
+
+
 def test_validate_rows():
     pass_rule = {"type": "relative_error_vs_fixed_limit", "params": {"fixed_limit": 1e-7, "limit_str": "x"}}
     rows_missing_ref = [wio.WizardRowSpec(key="a", reference=None)]

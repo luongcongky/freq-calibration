@@ -37,6 +37,7 @@ from core.scenario import Scenario
 from core.scenario_runner import ScenarioRunner, StepResult
 from core.report_templates import list_templates, get_template
 from core import table_engine
+from core.table_descriptor import PASS_RULE_TYPES_WITH_VERDICT
 from core.paths import get_app_version
 from gui.theme import Colors, build_global_qss
 from gui.report_preview import build_wysiwyg_table
@@ -127,13 +128,15 @@ def _make_recompute_row(template_id: str, table_id: str):
 
 
 def _table_has_pass_fail(template_id: str, table_id: str) -> bool:
-    """False chỉ khi descriptor.pass_rule.type == "none" (bảng kiểu "hiệu
-    chuẩn", không có khái niệm đạt/không đạt — vd TEMPLATE_POWER). True nếu
-    không xác định được (template/bảng lỗi cấu hình) để KHÔNG ẩn mất cột ở
-    những bảng thật sự cần nó. Trước đây cột "Đạt/Không đạt" luôn hiện cho
-    MỌI bảng, cho phép người dùng tự chọn Đạt/Không đạt trên bảng hiệu
-    chuẩn rồi kết luận tổng ăn luôn giá trị tự chọn đó -> ra "KHÔNG ĐẠT" dù
-    bảng không có khái niệm này (báo cáo lỗi #12)."""
+    """False nếu descriptor.pass_rule.type KHÔNG thuộc
+    PASS_RULE_TYPES_WITH_VERDICT (bảng kiểu "hiệu chuẩn", không có khái
+    niệm đạt/không đạt — vd TEMPLATE_POWER dùng "correction_vs_reference",
+    không chỉ "none"). True nếu không xác định được (template/bảng lỗi cấu
+    hình) để KHÔNG ẩn mất cột ở những bảng thật sự cần nó. Trước đây cột
+    "Đạt/Không đạt" luôn hiện cho MỌI bảng, cho phép người dùng tự chọn
+    Đạt/Không đạt trên bảng hiệu chuẩn rồi kết luận tổng ăn luôn giá trị tự
+    chọn đó -> ra "KHÔNG ĐẠT" dù bảng không có khái niệm này (báo cáo lỗi
+    BUG-12 — lần sửa trước chỉ chặn "none", bỏ sót "correction_vs_reference")."""
     try:
         tpl = get_template(template_id)
         descriptor_for = getattr(tpl, "descriptor_for", None)
@@ -142,7 +145,7 @@ def _table_has_pass_fail(template_id: str, table_id: str) -> bool:
         return True
     if descriptor is None:
         return True
-    return descriptor.pass_rule.get("type") != "none"
+    return descriptor.pass_rule.get("type") in PASS_RULE_TYPES_WITH_VERDICT
 
 
 def _measured_counts_for(template_id: str, table_id: str, n_rows: int):
@@ -513,6 +516,17 @@ class _MetaTab(QScrollArea):
 
     def save_to(self, session: CalibrationSession):
         session.template_id = self.cmb_template.currentData() or ""
+        self.save_meta_fields_to(session)
+
+    def save_meta_fields_to(self, session: CalibrationSession):
+        """Như save_to() nhưng KHÔNG đụng session.template_id — dùng ở
+        _on_template_changed() để gộp mọi ô Bước 1 đang gõ (kể cả chưa qua
+        _sync_meta() lần nào) vào session TRƯỚC KHI đổi mẫu, để
+        fill_session_defaults()/load_from() sau đó không vô tình ghi đè
+        bằng dữ liệu rỗng/cũ (báo cáo lỗi REG-01 — đổi mẫu xoá sạch thông
+        tin phiên: Kiểm định viên, Số GCN, Nhiệt độ, Serial, cả 2 ngày).
+        Việc đổi template_id phải do _apply_template_defaults() quyết định
+        (sau khi người dùng đã xác nhận đổi mẫu), không phải ở đây."""
         m = session.meta
         m.dut.name              = self.e_name.text().strip()
         m.dut.model             = self.e_model.text().strip()
@@ -1509,6 +1523,9 @@ class SessionManagerWindow(QMainWindow):
                       Colors.ACCENT_WARN)
             return
 
+        # Cùng lý do với _on_template_changed() — xem ghi chú ở đó (REG-01).
+        self._step_meta.save_meta_fields_to(self._session)
+
         if not self._session.tests:
             self._apply_template_defaults(tpl, tid)
             self._log("Đã áp dụng mẫu báo cáo vừa cập nhật.", Colors.ACCENT_GREEN)
@@ -1569,11 +1586,24 @@ class SessionManagerWindow(QMainWindow):
                 address_map=dict(self.address_map),
                 cmd_delay_s=self.cmd_delay_s,
                 on_device_changed=self._on_scenario_builder_device_changed,
+                on_closed=self._on_scenario_builder_closed,
             )
             self._scenario_win.show()
         else:
             self._scenario_win.raise_()
             self._scenario_win.activateWindow()
+
+    def _on_scenario_builder_closed(self):
+        """Cửa sổ Scenario Builder vừa đóng THẬT (không chỉ ẩn, xem
+        ScenarioGridWindow.closeEvent/WA_DeleteOnClose) — bỏ tham chiếu
+        Python duy nhất giữ nó sống ngay, không chờ tới lần mở kế tiếp mới
+        bị ghi đè (REG-RAM-01: +30 MB/lần mở-đóng, chỉ được GC dọn bất chợt).
+        Trim Working Set ngay để số RAM khách thấy trong Task Manager phản
+        ánh đúng phần vừa giải phóng, không phải chờ Windows tự dọn."""
+        self._scenario_win = None
+        from core.ram_monitor import trim_working_set
+        trim_working_set()
+        self._log_ram("sau khi đóng Scenario Builder")
 
     def _open_scenario_for_test(self, index: int):
         test = self._session.tests[index]
@@ -1605,6 +1635,14 @@ class SessionManagerWindow(QMainWindow):
             tpl = get_template(tid)
         except KeyError:
             return
+
+        # Gộp mọi ô Bước 1 đang gõ vào session TRƯỚC khi áp mẫu mới — tránh
+        # fill_session_defaults()/load_from() ghi đè bằng dữ liệu rỗng/cũ
+        # (báo cáo lỗi REG-01/REG-08). KHÔNG dùng _sync_meta()/save_to() vì
+        # 2 hàm đó set luôn session.template_id = tid MỚI, phá mất so sánh
+        # "tid == self._session.template_id" và bước phục hồi combobox khi
+        # người dùng chọn Không ở hộp xác nhận dưới.
+        self._step_meta.save_meta_fields_to(self._session)
 
         if not self._session.tests:
             # Phiên trống (mới khởi động / vừa "Mới") -> nạp mặc định luôn.
@@ -1652,6 +1690,13 @@ class SessionManagerWindow(QMainWindow):
             return
         self._session = CalibrationSession()
         self._step_meta.load_from(self._session)
+        # load_from() ở trên đặt combobox về mục "— Chọn mẫu —" (template_id
+        # rỗng của phiên mới) -> TỰ fire currentIndexChanged -> _on_template_changed()
+        # chạy 1 lần với tid rỗng rồi return ngay ("if not tid: return"),
+        # không kịp xoá nhãn mẫu cũ ở rail. Gọi _on_template_changed() lại
+        # lần nữa ở dưới cũng gặp tid rỗng y hệt nên không tự xoá được —
+        # phải xoá tay (báo cáo lỗi REG-07 — rail vẫn ghi tên mẫu CŨ sau "Mới").
+        self.rail.set_template_info("", "")
         self._on_template_changed()
         self._refresh_export_tab()
         self._log("Đã tạo phiên mới.", Colors.ACCENT_PRIMARY)
@@ -1918,11 +1963,28 @@ class SessionManagerWindow(QMainWindow):
                     "File cũ chưa bị thay đổi/hỏng.")
         return str(exc)
 
+    def _check_template_file_exists(self, tpl, attr: str, label: str) -> bool:
+        """Báo trước "Mẫu này chưa có file {label}" và KHÔNG mở hộp thoại
+        lưu nếu file mẫu thật không tồn tại trên đĩa — trước đây app vẫn
+        cho chọn nơi lưu rồi mới báo lỗi kỹ thuật tiếng Anh "Package not
+        found at '...'" (docxtpl/python-docx mở file không tồn tại), khó
+        hiểu với người dùng (báo cáo lỗi REG-04)."""
+        path = getattr(tpl, attr, None)
+        if path and Path(path).is_file():
+            return True
+        QMessageBox.warning(
+            self, "Chưa có file mẫu",
+            f"Mẫu báo cáo '{tpl.TEMPLATE_NAME}' chưa có file {label} — "
+            "vào Quản lý mẫu để thêm file trước khi xuất.")
+        return False
+
     def _export_bienban(self):
         self._sync_meta()
         if not self._confirm_meta_warnings():
             return
         tpl = get_template(self._session.template_id)
+        if not self._check_template_file_exists(tpl, "bienban_docx_path", "Biên Bản"):
+            return
         ext, filt = self._save_filter_for(getattr(tpl, "bienban_docx_path", None) or "")
         path, _ = get_save_file_name(
             self, f"Lưu Biên Bản {tpl.record_noun}",
@@ -1942,6 +2004,8 @@ class SessionManagerWindow(QMainWindow):
         if not self._confirm_meta_warnings():
             return
         tpl = get_template(self._session.template_id)
+        if not self._check_template_file_exists(tpl, "gcnkd_docx_path", "GCN"):
+            return
         ext, filt = self._save_filter_for(getattr(tpl, "gcnkd_docx_path", None) or "")
         path, _ = get_save_file_name(
             self, f"Lưu Giấy Chứng Nhận {tpl.record_noun}",
@@ -2008,7 +2072,14 @@ class SessionManagerWindow(QMainWindow):
             sections = []
             for kind in kinds:
                 doc_attr = "bienban_docx_path" if kind == "bienban" else "gcnkd_docx_path"
-                ext, _filt = self._save_filter_for(getattr(tpl, doc_attr, None) or "")
+                doc_path = getattr(tpl, doc_attr, None)
+                if not doc_path or not Path(doc_path).is_file():
+                    # Mẫu chưa có file này (vd mẫu mới chưa gắn GCN) — bỏ qua
+                    # phần này, không crash cả lượt xem nhanh (báo cáo lỗi REG-04).
+                    self._log(f"Mẫu '{tpl.TEMPLATE_NAME}' chưa có file "
+                              f"{self._PREVIEW_KIND_LABEL[kind]} — bỏ qua.", Colors.ACCENT_WARN)
+                    continue
+                ext, _filt = self._save_filter_for(doc_path)
                 path = str(tmp_dir / f"xem_nhanh_{kind}_{stamp}{ext}")
                 if kind == "bienban":
                     tpl.generate_bienban(self._session, path)
@@ -2030,6 +2101,15 @@ class SessionManagerWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
             self._step_export.btn_print.setEnabled(True)
+            # Ảnh preview cũ vừa bị deleteLater() trong show_doc_pages() —
+            # xử lý hết sự kiện đang chờ để Qt thực sự giải phóng chúng
+            # NGAY (không chờ tới lúc rảnh), rồi trim Working Set — cùng
+            # nguyên nhân/cách xử lý như _on_scenario_builder_closed()
+            # (REG-RAM-02: +5 MB/lần Xem nhanh, chỉ giảm bất chợt).
+            QApplication.processEvents()
+            from core.ram_monitor import trim_working_set
+            trim_working_set()
+            self._log_ram("sau khi Xem nhanh")
 
     # -------------------------------------------------------------------------
     # Helpers

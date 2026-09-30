@@ -15,6 +15,8 @@ thay vì thêm psutil làm dependency mới.
 
 from __future__ import annotations
 
+import ctypes
+
 import win32api
 import win32process
 
@@ -23,3 +25,24 @@ def get_process_memory_mb() -> float:
     """RAM (Working Set) hiện tại của tiến trình app, đơn vị MB."""
     info = win32process.GetProcessMemoryInfo(win32api.GetCurrentProcess())
     return info["WorkingSetSize"] / (1024 * 1024)
+
+
+def trim_working_set() -> None:
+    """Yêu cầu Windows thu hồi ngay các trang RAM đã free nhưng tiến trình
+    còn giữ trong Working Set (EmptyWorkingSet, psapi.dll) — gọi sau 1 thao
+    tác tốn RAM vừa xong (đóng Scenario Builder, Xem nhanh...).
+
+    Windows KHÔNG tự trả trang heap đã free về OS ngay (đặc điểm quản lý bộ
+    nhớ chuẩn của Windows, không phải lỗi của app) — Working Set đo bằng
+    Task Manager/Get-Process chỉ giảm khi OS tự dọn (không đoán được lúc
+    nào) hoặc khi gọi hàm này. Đây là nguyên nhân chính của hiện tượng
+    khách báo "RAM tăng đột xuất, chỉ giảm bất chợt" (REG-RAM-01/02): sau
+    khi đóng Scenario Builder/chạy Xem nhanh, object Python/Qt thật ra ĐÃ
+    được giải phóng ở tầng heap, chỉ là Windows chưa báo cáo lại số liệu.
+    Không ảnh hưởng hiệu năng kế tiếp — trang bị thu hồi sẽ được cấp phát
+    lại bình thường nếu app cần dùng tiếp (chỉ tốn thêm vài ms page fault).
+    Best-effort: lỗi (nếu có) chỉ bỏ qua, không được làm crash app."""
+    try:
+        ctypes.windll.psapi.EmptyWorkingSet(win32api.GetCurrentProcess())
+    except Exception:  # noqa: BLE001
+        pass

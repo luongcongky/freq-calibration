@@ -336,8 +336,16 @@ def _add_gcn_export_column(tbl: QTableWidget, row_groups: list):
 def _fmt_num(v) -> str:
     if v is None:
         return ""
-    if isinstance(v, float) and v == int(v) and abs(v) < 1e15:
-        v = int(v)
+    if isinstance(v, float):
+        if v == int(v) and abs(v) < 1e15:
+            v = int(v)
+        else:
+            # Loại nhiễu sai số nhị phân (vd 0,015999999999999997 lúc hiển
+            # thị lại đúng là 0,016 — phép tính thật trong kịch bản/scenario
+            # vẫn dùng số float đầy đủ, CHỈ màn hình rà soát này bị ảnh
+            # hưởng) — 10 chữ số có nghĩa dư nhiều so với độ chính xác thực
+            # tế của mọi thiết bị đo trong app (báo cáo lỗi REG-02).
+            v = float(f"{v:.10g}")
     return str(v).replace(".", ",")
 
 

@@ -30,6 +30,13 @@ class Cmd:
     cmd: str        # cú pháp lệnh SCPI, ví dụ "SOUR<ch>:FREQ:CW <Hz> HZ"
     desc: str       # mô tả tiếng Việt
     note: str = ""  # ghi chú (dải tham số, ví dụ, cảnh báo…)
+    force_query: bool = False
+    """Ép is_query=True dù cú pháp KHÔNG có "?" — 1 số lệnh riêng của thiết
+    bị (vd Boonton MFS/TM0/TM1) vẫn trả kết quả về dù không theo quy ước
+    SCPI "kết thúc bằng ? mới là lệnh đọc". Đặt qua checkbox "Lệnh đọc kết
+    quả (query)" ở gui/command_reference.py::_CmdEditorDialog khi khách
+    không tự tạo được bước đọc cho lệnh native của thiết bị từ GUI (báo cáo
+    lỗi REG-03). Mặc định False — không đổi hành vi của mọi lệnh cũ."""
 
 
 @dataclass
@@ -387,7 +394,9 @@ def parse_cmd(cmd: Cmd) -> tuple[str, list[ParsedParam], bool]:
                                   default=choices[0], choices=choices))
         template = template.replace(enum_str, f"{{{name}}}")
 
-    is_query = "?" in raw   # ? anywhere marks a SCPI query, even inside parentheses
+    # ? ở bất kỳ đâu (kể cả trong dấu ngoặc) đánh dấu query, HOẶC lệnh được
+    # ép query tay qua Cmd.force_query (báo cáo lỗi REG-03).
+    is_query = ("?" in raw) or cmd.force_query
     return template, params, is_query
 
 

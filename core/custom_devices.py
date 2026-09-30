@@ -95,8 +95,14 @@ def validate_new_model_key(model_key: str) -> str:
     key = model_key.strip().upper().replace(" ", "_")
     if not key:
         raise ValueError("Mã dòng máy không được để trống.")
-    if not all(c.isalnum() or c == "_" for c in key):
-        raise ValueError("Mã dòng máy chỉ gồm chữ, số, dấu gạch dưới (_).")
+    # str.isalnum() tính CẢ chữ có dấu (vd "Á", "Đ") là alnum (Unicode) nên
+    # trước đây "Máy đo 1" lọt qua thành "MÁY_ĐO_1" dù placeholder ghi rõ
+    # "không dấu" — gõ lại không dấu ("may do 1") tạo thêm "MAY_DO_1", ra 2
+    # dòng gần trùng cho cùng 1 ý (báo cáo lỗi BUG-22). Chỉ cho A-Z/0-9/_
+    # (ASCII thật) để thống nhất với hướng dẫn, không âm thầm nhận chữ có dấu.
+    if not all(("A" <= c <= "Z") or ("0" <= c <= "9") or c == "_" for c in key):
+        raise ValueError("Mã dòng máy chỉ gồm chữ KHÔNG DẤU (A-Z), số, dấu gạch dưới (_) "
+                         "— không được có dấu tiếng Việt.")
     if key in DEVICE_REGISTRY:
         raise ValueError(f"Mã '{key}' đã là 1 dòng máy có sẵn trong phần mềm.")
     if key in load_custom_devices():

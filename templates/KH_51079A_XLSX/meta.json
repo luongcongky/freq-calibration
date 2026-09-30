@@ -1,6 +1,6 @@
 {
-  "template_id": "DEMO_A2_XLSX",
-  "template_name": "Demo — Bảng A2 dùng mẫu Excel (khách hàng cung cấp)",
+  "template_id": "KH_51079A_XLSX",
+  "template_name": "Khách – 51079A 0dBm (Excel 5 sheet)",
   "kind": "hieu_chuan",
   "dut_models": [
     "N1922A"

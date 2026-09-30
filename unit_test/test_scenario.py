@@ -57,6 +57,23 @@ def test_backward_compat_old_steps_format():
     assert len(scn.nodes) == 1 and node_kind(scn.nodes[0]) == "step"
 
 
+def test_from_dict_rejects_file_without_nodes_or_steps_key():
+    """BUG-19: mở nhầm file khác (vd phiên kiểm định .json, top-level
+    {"template_id", "meta", "tests"}) trong 'Mở kịch bản' trước đây âm
+    thầm thành kịch bản RỖNG hợp lệ (0 node), báo "Đã mở" như bình thường —
+    phải raise để GUI báo lỗi rõ ràng (gui/scenario_grid.py::load_scenario_file,
+    gui/flow_editor.py::_do_pick_scenario đều đã bọc try/except sẵn)."""
+    with pytest.raises(ValueError, match="không phải file kịch bản"):
+        Scenario.from_dict({"template_id": "X", "meta": {}, "tests": []})
+
+
+def test_from_dict_accepts_explicitly_empty_nodes():
+    """Kịch bản THẬT nhưng rỗng ({"nodes": []}) vẫn phải nạp được, không bị
+    chặn nhầm như file sai định dạng ở test trên."""
+    scn = Scenario.from_dict({"name": "rỗng", "nodes": []})
+    assert scn.nodes == []
+
+
 def test_move_node():
     scn = _flat_scenario()
     first = scn.nodes[0]

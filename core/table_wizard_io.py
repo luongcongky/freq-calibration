@@ -99,15 +99,35 @@ def descriptor_to_spec(d: TableDescriptor) -> WizardTableSpec:
                             rows=rows, pass_rule=d.pass_rule, gcn=d.gcn)
 
 
-def validate_table_id_available(tables_dir, table_id: str) -> Optional[str]:
-    """Trả về thông báo lỗi (str) nếu table_id không hợp lệ/đã tồn tại, None
-    nếu hợp lệ."""
+def validate_table_id_format(table_id: str) -> Optional[str]:
+    """Trả về thông báo lỗi (str) nếu table_id sai định dạng (rỗng/ký tự lạ),
+    None nếu hợp lệ — KHÔNG kiểm tra đã tồn tại hay chưa (xem
+    table_id_exists()/validate_table_id_available())."""
     if not table_id or not table_id.strip():
         return "Mã bảng không được để trống."
     if not table_id.replace("_", "").isalnum():
         return "Mã bảng chỉ được chứa chữ/số/gạch dưới (vd 'A9')."
-    tables_dir = Path(tables_dir)
-    if (tables_dir / f"{table_id}.json").exists():
+    return None
+
+
+def table_id_exists(tables_dir, table_id: str) -> bool:
+    """True nếu đã có descriptor JSON cho table_id này — dùng ở các wizard
+    "Đọc bảng từ Word/Excel" để hỏi xác nhận THAY THẾ (xem
+    gui/template_manager_dialog.py::ImportTableFromWordDialog/
+    ImportTableFromExcelDialog._continue) thay vì chặn cứng, cho phép khách
+    re-import 1 bảng đã có để cập nhật cấu trúc (báo cáo lỗi REG-05 — trước
+    đây phải xoá bảng cũ rồi làm lại từ đầu, cấu hình lại từng cột tay)."""
+    return (Path(tables_dir) / f"{table_id}.json").exists()
+
+
+def validate_table_id_available(tables_dir, table_id: str) -> Optional[str]:
+    """Trả về thông báo lỗi (str) nếu table_id không hợp lệ/đã tồn tại, None
+    nếu hợp lệ — dùng ở màn "Thêm bảng mới"/"Sửa bảng" (luôn chặn cứng
+    trùng mã, không có luồng xác nhận thay thế như 2 wizard "Đọc bảng")."""
+    err = validate_table_id_format(table_id)
+    if err:
+        return err
+    if table_id_exists(tables_dir, table_id):
         return f"Bảng '{table_id}' đã tồn tại — hãy chọn mã khác."
     return None
 

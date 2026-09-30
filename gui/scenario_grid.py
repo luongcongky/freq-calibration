@@ -993,8 +993,16 @@ class ScenarioWorker(QThread):
 class ScenarioGridWindow(QMainWindow):
     def __init__(self, parent=None, address_map: dict | None = None,
                  cmd_delay_s: float | None = None,
-                 on_device_changed=None):
+                 on_device_changed=None, on_closed=None):
         super().__init__(parent)
+        # Cửa sổ top-level (parent=None) — không có ai ở tầng C++ huỷ nó khi
+        # đóng. KHÔNG đặt cờ này thì close() chỉ ẨN cửa sổ, toàn bộ cây
+        # widget (tree, log, icon...) vẫn sống trong RAM cho tới khi chu kỳ
+        # GC vòng lặp (tham chiếu chéo qua các signal/slot) dọn tới — đúng
+        # kiểu "tăng đột xuất rồi tụt bất chợt" khách báo (REG-RAM-01, mỗi
+        # lần mở/đóng +30 MB không trả lại). Đặt cờ này để Qt tự giải phóng
+        # object C++ ngay khi đóng.
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowTitle(f"FREQ-CAL PRO v{get_app_version()} :: Scenario Builder")
         self.setWindowIcon(QIcon("gui/logo.png"))
         self.resize(1600, 900)
@@ -1010,6 +1018,7 @@ class ScenarioGridWindow(QMainWindow):
         self.address_map: dict[str, str] = {}
         self.cmd_delay_s: float = 0.1
         self._on_device_changed = on_device_changed   # callback → Phiên Kiểm Định
+        self._on_closed = on_closed                    # callback → Phiên Kiểm Định (REG-RAM-01)
 
         self._id_to_item: dict = {}
         self._item_results: dict = {}          # id(item) -> deque[str], tối đa _MAX_RESULT_HISTORY
@@ -2051,6 +2060,21 @@ class ScenarioGridWindow(QMainWindow):
         if not self._confirm_discard_unsaved():
             ev.ignore()
             return
+        # Dọn cache còn giữ tham chiếu qua lại giữa QTreeWidgetItem <-> node
+        # kịch bản <-> chính window (self._id_to_item v.v.) TRƯỚC khi đóng —
+        # WA_DeleteOnClose giải phóng được cây widget C++ ngay, nhưng các
+        # dict/tham chiếu Python này vẫn giữ sống phần RAM lớn (node kịch
+        # bản dài vài nghìn bước) nếu còn ai (vd session_manager) giữ thêm
+        # 1 tham chiếu Python tới self (REG-RAM-01).
+        self.tree.clear()
+        self._id_to_item.clear()
+        self._item_results.clear()
+        self._item_result_totals.clear()
+        self._flatidx_to_item.clear()
+        self._status_badges.clear()
+        self.scenario = Scenario(name="Kịch bản mới")
+        if callable(self._on_closed):
+            self._on_closed()
         super().closeEvent(ev)
 
     # ------------------------------------------------------------------
@@ -2133,7 +2157,19 @@ class ScenarioGridWindow(QMainWindow):
         self._loading = True
         key = id(item)
         history = self._item_results.setdefault(key, deque(maxlen=_MAX_RESULT_HISTORY))
-        history.append(res.result_cell())
+        cell = res.result_cell()
+        # 1 bước chạy TRÊN NHIỀU THIẾT BỊ (step.devices > 1 máy) phát 1
+        # StepResult riêng cho MỖI máy, cùng đổ vào 1 history chung của
+        # CÙNG 1 dòng cây — nếu không gắn tên máy, 2 kết quả không phân
+        # biệt được sẽ bị bước "gộp giá trị trùng LIÊN TIẾP" dưới đây coi là
+        # 1 giá trị (vd 2 máy cùng đọc ra "OK"/cùng 1 số) -> chỉ còn thấy kết
+        # quả của 1 máy trên lưới, máy còn lại chỉ thấy được trong log (báo
+        # cáo lỗi BUG-20). Lệnh GHI (cell rỗng) vẫn để trống như cũ.
+        step_obj = self._obj_of(item)
+        devices = getattr(step_obj, "devices", None) or []
+        if cell and res.device_key and len(devices) > 1:
+            cell = f"[{res.device_key}] {cell}"
+        history.append(cell)
         total = self._item_result_totals.get(key, 0) + 1
         self._item_result_totals[key] = total
         # Bỏ ô trống (lệnh ghi) + gộp giá trị trùng LIÊN TIẾP cho gọn.

@@ -135,7 +135,7 @@ class DeviceManagerDialog(QDialog):
 
         # Hàng nút
         bar = QHBoxLayout()
-        self.btn_scan = QPushButton("🔍 Scan & Identify")
+        self.btn_scan = QPushButton("🔍 Scan && Identify")  # && -> hiện đúng 1 dấu & (Qt coi 1 dấu & là phím tắt — báo cáo lỗi BUG-21)
         self.btn_scan.setStyleSheet(
             f"background:{Colors.ACCENT_GREEN}; color:{Colors.BG_WINDOW};"
             f" font-weight:bold; border:none; border-radius:6px; padding:8px 14px;")
@@ -163,7 +163,21 @@ class DeviceManagerDialog(QDialog):
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setSectionResizeMode(_COL_NUM, QHeaderView.Fixed)
         self.table.setColumnWidth(_COL_NUM, 36)
-        hdr.setSectionResizeMode(_COL_IDN, QHeaderView.Stretch)
+        # *IDN? chỉ chứa chữ ngắn ("OK"/"—") nhưng trước đây được đặt Stretch
+        # -> nuốt hết chỗ trống, các cột còn lại (Địa chỉ VISA/Trạng thái —
+        # chữ dài hơn nhiều) phải co về độ rộng mặc định quá hẹp, bị cắt chữ
+        # (báo cáo lỗi BUG-21). Đặt độ rộng khởi điểm hợp lý cho từng cột
+        # theo đúng độ dài nội dung thật, để "Trạng thái" (cột cuối, chữ dài
+        # nhất/hay đổi nhất) nhận Stretch thay cho *IDN?. Vẫn Interactive —
+        # người dùng tự kéo lại được.
+        self.table.setColumnWidth(_COL_ADDR, 190)
+        self.table.setColumnWidth(_COL_IDN, 60)
+        self.table.setColumnWidth(_COL_MATCH, 90)
+        self.table.setColumnWidth(_COL_ASSIGN, 220)
+        self.table.setColumnWidth(_COL_LABEL, 130)
+        self.table.setColumnWidth(_COL_SERIAL, 110)
+        self.table.setColumnWidth(_COL_TEST, 90)
+        hdr.setSectionResizeMode(_COL_STATUS, QHeaderView.Stretch)
         root.addWidget(self.table)
 
         # Hàng dưới: profile + xác nhận
@@ -208,7 +222,8 @@ class DeviceManagerDialog(QDialog):
         """Trả True nếu idn là chuỗi *IDN? thực sự (không rỗng, không phải placeholder '—')."""
         return bool(idn) and idn.strip() not in ("", "—")
 
-    def _add_row(self, dev: DiscoveredDevice, label: str = "", assign: str | None = None):
+    def _add_row(self, dev: DiscoveredDevice, label: str = "", assign: str | None = None,
+                 from_profile: bool = False):
         r = self.table.rowCount()
         self.table.insertRow(r)
 
@@ -228,8 +243,15 @@ class DeviceManagerDialog(QDialog):
         idn_lay.setAlignment(Qt.AlignCenter)
         idn_lbl = QLabel()
         has_idn = self._has_idn(dev.idn)
-        set_badge(idn_lbl, "OK" if has_idn else "—",
-                 Colors.ACCENT_GREEN if has_idn else Colors.TEXT_DIM)
+        if has_idn and from_profile:
+            # Nạp từ profile ĐÃ LƯU (phiên trước) — CHƯA kiểm tra lại máy có
+            # còn trả lời *IDN? này hay không (vd đã rút cáp, đổi địa chỉ).
+            # Trước đây hiện "OK" xanh y như vừa quét thật -> hiểu lầm là đã
+            # xác nhận kết nối (báo cáo lỗi BUG-21).
+            set_badge(idn_lbl, "Đã lưu", Colors.TEXT_DIM)
+        else:
+            set_badge(idn_lbl, "OK" if has_idn else "—",
+                     Colors.ACCENT_GREEN if has_idn else Colors.TEXT_DIM)
         idn_lbl.setToolTip(dev.idn or "")
         idn_lay.addWidget(idn_lbl)
         self.table.setCellWidget(r, _COL_IDN, idn_w)
@@ -494,7 +516,7 @@ class DeviceManagerDialog(QDialog):
                 continue   # ẩn thiết bị không có *IDN? — dùng Wizard để thêm
             dev = DiscoveredDevice(address=e.address, idn=e.idn,
                                    matched_key=e.model_key, serial=e.serial)
-            self._add_row(dev, label=e.label, assign=e.model_key)
+            self._add_row(dev, label=e.label, assign=e.model_key, from_profile=True)
         if hidden:
             logger.info("_load_profile_into_table: ẩn %d thiết bị không có *IDN?", hidden)
 

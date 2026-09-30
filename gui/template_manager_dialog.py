@@ -197,6 +197,15 @@ def _open_path(path) -> None:
         QMessageBox.warning(None, "Không mở được file", str(exc))
 
 
+def _is_xlsx_template(tpl_dir: Path) -> bool:
+    """True nếu mẫu dùng file Excel (bienban.xlsx/gcnkd.xlsx) — dùng để
+    đổi nhãn tab/hướng dẫn giữa "File Word"/".docx" và "File Excel"/".xlsx"
+    thay vì hardcode "File Word"/".docx" cho MỌI mẫu dù là Excel (báo cáo
+    lỗi REG-09)."""
+    tpl_dir = Path(tpl_dir)
+    return (tpl_dir / "bienban.xlsx").exists() or (tpl_dir / "gcnkd.xlsx").exists()
+
+
 # =============================================================================
 # 1) Danh sách mẫu — điểm vào
 # =============================================================================
@@ -383,8 +392,9 @@ class TemplateManagerDialog(QDialog):
         # tab liền trước thay vì quay lại đúng tab -> phải tự lưu/khôi phục
         # currentIndex().
         current = self.tabs.currentIndex()
+        doc_tab_label = "2. File Excel" if _is_xlsx_template(self.tpl_dir) else "2. File Word"
         self._swap_tab(0, self._build_meta_tab(), "1. Thông tin chung")
-        self._swap_tab(1, self._build_docx_tab(), "2. File Word")
+        self._swap_tab(1, self._build_docx_tab(), doc_tab_label)
         self._swap_tab(2, self._build_tables_tab(), f"3. Bảng dữ liệu ({len(self._descriptors)})")
         if current >= 0:
             self.tabs.setCurrentIndex(current)
@@ -566,12 +576,14 @@ class TemplateManagerDialog(QDialog):
         if dlg.imported_any:
             self._mark_changed()
             self._load_template(self.template_id)
+            self._reload_list()  # "n bảng kết quả" ở danh sách trái phải đổi theo (báo cáo lỗi REG-09)
 
     def _copy_table(self, table_id: str, table_name: str):
         dlg = CopyTableDialog(self.tables_dir, table_id, table_name, parent=self)
         if dlg.exec_() == QDialog.Accepted and dlg.new_table_id:
             self._mark_changed()
             self._load_template(self.template_id)
+            self._reload_list()  # xem _import_table() — cùng lý do (REG-09)
 
     def _delete_table(self, table_id: str, table_name: str):
         msg = (f"Xoá bảng '{table_id} — {table_name}'?\n\n"
@@ -587,6 +599,7 @@ class TemplateManagerDialog(QDialog):
             return
         self._mark_changed()
         self._load_template(self.template_id)
+        self._reload_list()  # xem _import_table() — cùng lý do (REG-09)
 
     # -- Tab 3: File Word ----------------------------------------------------
 
@@ -655,6 +668,31 @@ class TemplateManagerDialog(QDialog):
                    f"Có thể do gõ nhầm mã bảng hoặc chưa gắn tag. Vẫn dùng file này?")
             if QMessageBox.question(self, "Cảnh báo", msg) != QMessageBox.Yes:
                 return
+
+        # Có đủ tag không có nghĩa là ĐÚNG số lượng ô report_val() — file mới
+        # có thể đổi hẳn số dòng/lần đo so với bảng đang cấu hình (vd 21×6 ->
+        # 19×9) mà "đủ tag" vẫn báo "thành công" như cũ, không ai biết cấu
+        # trúc đã lệch cho tới khi xem báo cáo xuất ra (báo cáo lỗi REG-05).
+        # Chỉ làm được cho .xlsx (report_val() là text đếm được trực tiếp;
+        # .docx dùng vòng lặp Jinja {%tr for %} nên KHÔNG đếm được số dòng
+        # thật theo cách này).
+        if is_xlsx:
+            mismatches = []
+            for d in self._descriptors:
+                if d.table_id in missing or any(r.raw_count is None for r in d.rows):
+                    continue  # không xác định được tổng kỳ vọng -> bỏ qua, tránh báo sai
+                expected = sum(r.raw_count for r in d.rows)
+                actual = xwio.count_report_val_tags(path, d.table_id)
+                if actual != expected:
+                    mismatches.append(f"- {d.table_id}: đang cấu hình {expected} ô report_val(), "
+                                      f"file mới có {actual}")
+            if mismatches:
+                msg = ("Số ô report_val() trong file mới KHÁC với cấu hình bảng hiện tại "
+                       "(có thể do đổi số dòng/lần đo):\n\n" + "\n".join(mismatches) +
+                       "\n\nDùng sai số lượng sẽ làm lệch/kẹt phần kết quả khi xuất báo cáo. "
+                       "Vẫn dùng file này?")
+                if QMessageBox.question(self, "Cảnh báo lệch cấu trúc", msg) != QMessageBox.Yes:
+                    return
         try:
             timport.replace_docx(self.template_id, which, path)
         except Exception as exc:  # noqa: BLE001
@@ -755,8 +793,9 @@ class CopyTableDialog(QDialog):
         self.e_new_name = QLineEdit(f"{source_name} (bản sao)")
         form.addRow("Tên bài test:", self.e_new_name)
 
+        file_label = "file .xlsx" if _is_xlsx_template(self.tables_dir.parent) else "file .docx"
         hint = QLabel("Sao chép nguyên vẹn toàn bộ dữ liệu dòng (kể cả cấu trúc nâng cao nếu có) — "
-                       "bảng mới chưa gán kịch bản, tự gõ thêm tag report_val() tương ứng trong file .docx.")
+                       f"bảng mới chưa gán kịch bản, tự gõ thêm tag report_val() tương ứng trong {file_label}.")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color:{Colors.TEXT_DIM}; font-size:11px;")
         form.addRow(hint)
@@ -1049,9 +1088,16 @@ class ImportTableFromWordDialog(QDialog):
 
     def _continue(self, detected, e_table_id, e_name, role_combos):
         table_id = e_table_id.text().strip()
-        err = wio.validate_table_id_available(self.tables_dir, table_id)
+        err = wio.validate_table_id_format(table_id)
         if err:
             QMessageBox.warning(self, "Lỗi", err)
+            return
+        if wio.table_id_exists(self.tables_dir, table_id) and QMessageBox.question(
+                self, "Bảng đã tồn tại",
+                f"Bảng '{table_id}' đã có — tiếp tục sẽ THAY THẾ toàn bộ cấu hình "
+                f"(cột/ngưỡng/định dạng...) của bảng này bằng dữ liệu vừa đọc. "
+                f"Tiếp tục?",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
         name = e_name.text().strip()
         if not name:
@@ -1202,7 +1248,16 @@ class ImportTableFromExcelDialog(QDialog):
             self.list_sheets.setCurrentRow(idx)
             self.stack.setCurrentIndex(idx)
 
-    def _suggest_table_id(self) -> str:
+    def _suggest_table_id(self, sheet=None) -> str:
+        """Ưu tiên mã bảng ĐÃ THẤY trong report_val('<id>') của chính sheet
+        này (sheet.detected_table_id) — khách thường tự gõ tag sẵn trong
+        Excel trước khi dùng wizard, nên tag đó LÀ mã bảng đúng, không phải
+        "A{n} trống kế tiếp" không liên quan (báo cáo lỗi REG-06). Gợi ý
+        này được ưu tiên NGAY CẢ KHI mã đã tồn tại (khách muốn re-import để
+        cập nhật cấu trúc 1 bảng đã có — xem table_id_exists()/hộp xác nhận
+        "Thay thế" ở _continue(), không chặn cứng như trước)."""
+        if sheet is not None and sheet.detected_table_id:
+            return sheet.detected_table_id
         used = {d.table_id for d in self.existing_descriptors}
         n = 1
         while f"A{n}" in used:
@@ -1219,7 +1274,7 @@ class ImportTableFromExcelDialog(QDialog):
         lay = QVBoxLayout(w)
 
         form_top = QFormLayout()
-        e_table_id = QLineEdit(self._suggest_table_id())
+        e_table_id = QLineEdit(self._suggest_table_id(sheet))
         form_top.addRow("Mã bảng:", e_table_id)
         e_name = QLineEdit()
         form_top.addRow("Tên bài test:", e_name)
@@ -1329,9 +1384,16 @@ class ImportTableFromExcelDialog(QDialog):
             QMessageBox.warning(self, "Lỗi", "Chưa đọc được vùng dữ liệu nào hợp lệ — kiểm tra lại 'Vùng dữ liệu'.")
             return
         table_id = e_table_id.text().strip()
-        err = wio.validate_table_id_available(self.tables_dir, table_id)
+        err = wio.validate_table_id_format(table_id)
         if err:
             QMessageBox.warning(self, "Lỗi", err)
+            return
+        if wio.table_id_exists(self.tables_dir, table_id) and QMessageBox.question(
+                self, "Bảng đã tồn tại",
+                f"Bảng '{table_id}' đã có — tiếp tục sẽ THAY THẾ toàn bộ cấu hình "
+                f"(cột/ngưỡng/định dạng...) của bảng này bằng dữ liệu vừa đọc. "
+                f"Tiếp tục?",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
         name = e_name.text().strip()
         if not name:
@@ -1767,8 +1829,9 @@ class TableFormDialog(QDialog):
                 adv_row.addWidget(btn_row_advanced)
             lay.addLayout(adv_row)
 
+        _file_label = "file .xlsx" if _is_xlsx_template(self.tables_dir.parent) else "file .docx"
         lay.addWidget(QLabel("Dữ liệu từng dòng (điểm đo cố định của bảng — đúng số dòng "
-                              "bạn đã gõ report_val() trong file .docx):"))
+                              f"bạn đã gõ report_val() trong {_file_label}):"))
 
         def _add_row():
             row = self.rows_table.rowCount()
@@ -1880,9 +1943,21 @@ class TableFormDialog(QDialog):
     def _do_save(self):
         table_id = self.e_table_id.text().strip()
         if self.is_new:
-            err = wio.validate_table_id_available(self.tables_dir, table_id)
+            err = wio.validate_table_id_format(table_id)
             if err:
                 QMessageBox.warning(self, "Lỗi", err)
+                return
+            # Mã bảng còn SỬA ĐƯỢC ở màn này (e_table_id.setEnabled(is_new))
+            # nên người dùng có thể đổi sang 1 mã KHÁC đã tồn tại ngay ở đây,
+            # dù _continue() của wizard đã hỏi xác nhận cho mã GỢI Ý ban đầu
+            # — kiểm tra lại lần cuối trước khi ghi đè (báo cáo lỗi REG-05:
+            # trước đây chặn cứng "đã tồn tại", phải xoá bảng cũ rồi làm lại
+            # từ đầu chỉ để cập nhật cấu trúc 1 bảng đã có).
+            if wio.table_id_exists(self.tables_dir, table_id) and QMessageBox.question(
+                    self, "Bảng đã tồn tại",
+                    f"Bảng '{table_id}' đã có — Lưu sẽ THAY THẾ toàn bộ cấu hình "
+                    f"(cột/ngưỡng/định dạng...) của bảng này. Tiếp tục?",
+                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
                 return
         name = self.e_name.text().strip()
         value_unit = self.e_value_unit.currentText().strip()
