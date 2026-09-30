@@ -3,6 +3,7 @@ pyvisa-py
 PyQt5
 pandas
 openpyxl
+Pillow
 python-docx
 docxtpl
 send2trash

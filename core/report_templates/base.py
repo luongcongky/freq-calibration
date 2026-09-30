@@ -21,6 +21,8 @@ class BaseReportTemplate(ABC):
     STANDARD: str = ""               # "QTKĐ 2.461 : 2018"
     MEASUREMENT_RANGE: str = ""      # "0,002 Hz đến 27 GHz"
 
+    KIND: str = "kiem_dinh"          # "kiem_dinh" | "hieu_chuan" — xem meta.json["kind"]
+
     GCN_STYLE: str = "same_as_bienban"
     """Cách GCN thể hiện dữ liệu bảng — dùng bởi gui/template_manager_dialog.py
     để quyết định có hiện form "gcn.param_name/limit_str" khi thêm 1 bảng
@@ -64,6 +66,14 @@ class BaseReportTemplate(ABC):
         QTKĐ 2.461 (CNT-90XL). Template khác override để dùng mẫu riêng."""
         from core.report_generator import generate_gcnkd as _gen
         return _gen(session, output_path)
+
+    @property
+    def record_noun(self) -> str:
+        """"Kiểm Định" hay "Hiệu Chuẩn" — dùng để dựng tiêu đề hộp thoại lưu
+        Biên Bản/GCN (gui/session_manager.py::_export_bienban/_export_gcnkd)
+        đúng với LOẠI của template đang dùng, tránh hardcode "Kiểm Định" cho
+        cả mẫu hiệu chuẩn (báo cáo lỗi #6)."""
+        return "Hiệu Chuẩn" if self.KIND == "hieu_chuan" else "Kiểm Định"
 
     @property
     def scenarios_dir(self) -> Path:

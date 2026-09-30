@@ -99,6 +99,28 @@ def test_get_template_fallback_and_list_templates(fixture_registry):
         get_template("KHONG_TON_TAI_LUON")
 
 
+def test_record_noun_matches_kind_in_meta_json(fixture_registry, tmp_path):
+    """Tiêu đề hộp thoại lưu Biên Bản/GCN (gui/session_manager.py) phải đổi
+    theo meta.json["kind"] — không được hardcode "Kiểm Định" cho mẫu hiệu
+    chuẩn (báo cáo lỗi #6)."""
+    from core.report_templates import get_template
+    import core.report_templates.generic as generic_mod
+
+    tpl = get_template("TEST_GENERIC_TPL")
+    assert tpl.KIND == "kiem_dinh"
+    assert tpl.record_noun == "Kiểm Định"
+
+    _build_fixture_template(tmp_path, "TEST_HIEU_CHUAN_TPL")
+    meta_path = tmp_path / "TEST_HIEU_CHUAN_TPL" / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["kind"] = "hieu_chuan"
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+    tpl2 = generic_mod.GenericReportTemplate("TEST_HIEU_CHUAN_TPL")
+    assert tpl2.KIND == "hieu_chuan"
+    assert tpl2.record_noun == "Hiệu Chuẩn"
+
+
 def test_generic_template_full_roundtrip(fixture_registry, tmp_path):
     from core.report_templates import get_template
 

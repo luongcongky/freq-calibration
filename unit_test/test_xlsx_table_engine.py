@@ -7,6 +7,7 @@ gõ text report_val('<id>')/result('<id>') vào ô, quét + ghi số liệu THÔ
 đúng ô, giữ nguyên công thức khác trong sheet.
 """
 
+import zipfile
 from datetime import date
 
 import openpyxl
@@ -225,3 +226,73 @@ def test_build_raw_rows_by_table_returns_raw_readings(tmp_path):
     assert list(raw_by_table.keys()) == ["T1"]
     rows = raw_by_table["T1"]
     assert [r.raw_readings for r in rows] == [[1.0, 2.0, 3.0], [10.0]]
+
+
+def _inject_fake_header_logo(xlsx_path):
+    """Giả lập 1 file mẫu THẬT có logo/đường kẻ chữ ký trong header trang
+    (ảnh gắn qua VML legacy drawing, như khách hàng mô tả ở báo cáo lỗi #1/
+    #2) — chỉ cần đủ cấu trúc zip để kiểm tra các phần này còn NGUYÊN VẸN
+    sau khi render, không cần đúng 100% schema VML (app không mở lại file
+    bằng Excel trong test)."""
+    with zipfile.ZipFile(str(xlsx_path), "r") as z:
+        names = {n: z.read(n) for n in z.namelist()}
+
+    sheet_xml = names["xl/worksheets/sheet1.xml"].decode("utf-8")
+    assert "</worksheet>" in sheet_xml
+    if "xmlns:r=" not in sheet_xml.split(">", 1)[0]:
+        sheet_xml = sheet_xml.replace(
+            "<worksheet ",
+            '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ',
+            1,
+        )
+    sheet_xml = sheet_xml.replace(
+        "</worksheet>",
+        "<headerFooter><oddHeader>&amp;G</oddHeader></headerFooter>"
+        '<legacyDrawingHF r:id="rId100"/></worksheet>',
+    )
+    names["xl/worksheets/sheet1.xml"] = sheet_xml.encode("utf-8")
+    names["xl/worksheets/_rels/sheet1.xml.rels"] = (
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        b'<Relationship Id="rId100" '
+        b'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" '
+        b'Target="../drawings/vmlDrawing1.vml"/></Relationships>'
+    )
+    names["xl/drawings/vmlDrawing1.vml"] = b"<xml>FAKE VML LOGO + SIGNATURE LINE</xml>"
+    names["xl/media/image1.png"] = b"FAKE-LOGO-PNG-BYTES-NOT-A-REAL-IMAGE"
+
+    with zipfile.ZipFile(str(xlsx_path), "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in names.items():
+            z.writestr(name, data)
+
+
+def test_render_xlsx_preserves_header_logo_and_other_zip_parts_untouched(tmp_path):
+    """Lỗi khách báo: logo/textbox/đường kẻ chữ ký trong HEADER trang bị mất
+    sau khi xuất, dù đã cài Pillow (openpyxl không giữ được VML legacy
+    drawing khi ghi lại) — render_xlsx_with_table_contexts không còn
+    wb.save() nữa nên các phần này phải còn NGUYÊN VẸN (byte-for-byte)."""
+    descriptor = _descriptor()
+    session = _session_with_result(descriptor)
+
+    tpl_path = tmp_path / "tpl.xlsx"
+    _build_template_xlsx(tpl_path)
+    _inject_fake_header_logo(tpl_path)
+    out_path = tmp_path / "out.xlsx"
+
+    xlsx_table_engine.render_xlsx_with_table_contexts(session, [descriptor], tpl_path, out_path)
+
+    with zipfile.ZipFile(str(tpl_path)) as src, zipfile.ZipFile(str(out_path)) as dst:
+        for name in ("xl/drawings/vmlDrawing1.vml", "xl/media/image1.png",
+                      "xl/worksheets/_rels/sheet1.xml.rels"):
+            assert dst.read(name) == src.read(name)
+
+        out_sheet_xml = dst.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        assert "<headerFooter><oddHeader>&amp;G</oddHeader></headerFooter>" in out_sheet_xml
+        assert '<legacyDrawingHF r:id="rId100"/>' in out_sheet_xml
+
+    # Giá trị vẫn được ghi đúng như test gốc — không vì vá XML tay mà hỏng
+    # phần thay dữ liệu.
+    wb = openpyxl.load_workbook(str(out_path), data_only=False)
+    ws = wb.active
+    assert ws["B2"].value == 1.0
+    assert ws["E2"].value == "=AVERAGE(B2:D2)"

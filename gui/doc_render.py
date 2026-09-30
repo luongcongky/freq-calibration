@@ -100,23 +100,41 @@ def _convert_to_pdf_libreoffice(src_path: str, pdf_path: str) -> None:
 
 
 def docx_to_pdf(docx_path: str, pdf_path: str) -> None:
-    """Thử Word COM trước, lỗi (không có Word) thì tự chuyển sang LibreOffice."""
+    """Thử Word COM trước, lỗi (không có Word) thì tự chuyển sang LibreOffice.
+    Nếu CẢ HAI đều lỗi, nén cả 2 lỗi gốc vào message — không nuốt mất lỗi
+    thật của Word (vd lỗi vì máy chưa có máy in mặc định) chỉ để báo chung
+    "không tìm thấy Word hoặc LibreOffice" dù máy có Word (xem báo cáo lỗi
+    #3 — doc_render.py:113-120 cũ)."""
     try:
         _docx_to_pdf_word(docx_path, pdf_path)
         return
-    except Exception:
-        pass
-    _convert_to_pdf_libreoffice(docx_path, pdf_path)
+    except Exception as word_exc:  # noqa: BLE001
+        try:
+            _convert_to_pdf_libreoffice(docx_path, pdf_path)
+        except Exception as lo_exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Không xuất được PDF để xem nhanh.\n"
+                f"- Lỗi Word: {word_exc}\n"
+                f"- Lỗi LibreOffice: {lo_exc}"
+            ) from lo_exc
 
 
 def xlsx_to_pdf(xlsx_path: str, pdf_path: str) -> None:
-    """Thử Excel COM trước, lỗi (không có Excel) thì tự chuyển sang LibreOffice."""
+    """Thử Excel COM trước, lỗi (không có Excel) thì tự chuyển sang
+    LibreOffice. Nếu CẢ HAI đều lỗi, nén cả 2 lỗi gốc vào message (xem
+    docx_to_pdf ở trên, cùng lý do — báo cáo lỗi #3)."""
     try:
         _xlsx_to_pdf_excel(xlsx_path, pdf_path)
         return
-    except Exception:
-        pass
-    _convert_to_pdf_libreoffice(xlsx_path, pdf_path)
+    except Exception as excel_exc:  # noqa: BLE001
+        try:
+            _convert_to_pdf_libreoffice(xlsx_path, pdf_path)
+        except Exception as lo_exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Không xuất được PDF để xem nhanh.\n"
+                f"- Lỗi Excel: {excel_exc}\n"
+                f"- Lỗi LibreOffice: {lo_exc}"
+            ) from lo_exc
 
 
 def render_pdf_pages(pdf_path: str, dpi: int = 150) -> list[QPixmap]:

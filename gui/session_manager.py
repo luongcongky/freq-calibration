@@ -1832,12 +1832,26 @@ class SessionManagerWindow(QMainWindow):
             return ".xlsx", "Excel (*.xlsx)"
         return ".docx", "Word Document (*.docx)"
 
+    @staticmethod
+    def _friendly_export_error(exc: Exception, path: str) -> str:
+        """Thay message kỹ thuật khó hiểu ([Errno 13] Permission denied...)
+        bằng câu rõ nguyên nhân hay gặp nhất — app tự mở file sau khi xuất
+        nên tình huống "xuất đè lên file đang mở trong Excel/Word" rất phổ
+        biến (báo cáo lỗi #4). File CŨ không bị ảnh hưởng vì lỗi xảy ra
+        trước khi ghi đè được (hệ điều hành khoá file đang mở)."""
+        if isinstance(exc, PermissionError):
+            return (f"Không thể lưu vào:\n{path}\n\n"
+                    "File này có thể đang được MỞ trong Word/Excel (hoặc "
+                    "chương trình khác) — hãy đóng file đó rồi bấm xuất lại.\n"
+                    "File cũ chưa bị thay đổi/hỏng.")
+        return str(exc)
+
     def _export_bienban(self):
         self._sync_meta()
         tpl = get_template(self._session.template_id)
         ext, filt = self._save_filter_for(getattr(tpl, "bienban_docx_path", None) or "")
         path, _ = get_save_file_name(
-            self, "Lưu Biên Bản Kiểm Định",
+            self, f"Lưu Biên Bản {tpl.record_noun}",
             f"bien_ban_{datetime.now().strftime('%Y%m%d')}{ext}", filt)
         if not path:
             return
@@ -1847,14 +1861,14 @@ class SessionManagerWindow(QMainWindow):
             self._open_file(path)
             self._log_ram("sau khi xuất Biên Bản")
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Lỗi xuất Biên Bản", str(exc))
+            QMessageBox.critical(self, "Lỗi xuất Biên Bản", self._friendly_export_error(exc, path))
 
     def _export_gcnkd(self):
         self._sync_meta()
         tpl = get_template(self._session.template_id)
         ext, filt = self._save_filter_for(getattr(tpl, "gcnkd_docx_path", None) or "")
         path, _ = get_save_file_name(
-            self, "Lưu Giấy Chứng Nhận Kiểm Định",
+            self, f"Lưu Giấy Chứng Nhận {tpl.record_noun}",
             f"gcnkd_{datetime.now().strftime('%Y%m%d')}{ext}", filt)
         if not path:
             return
@@ -1864,7 +1878,7 @@ class SessionManagerWindow(QMainWindow):
             self._open_file(path)
             self._log_ram("sau khi xuất GCN")
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Lỗi xuất GCN", str(exc))
+            QMessageBox.critical(self, "Lỗi xuất GCN", self._friendly_export_error(exc, path))
 
     def _export_diagnostics(self):
         """Xuất 1 file .zip gồm log + thông tin máy — khách hàng gửi lại cho
@@ -1887,6 +1901,19 @@ class SessionManagerWindow(QMainWindow):
 
     _PREVIEW_KIND_LABEL = {"bienban": "Biên Bản", "gcnkd": "GCN"}
 
+    @staticmethod
+    def _cleanup_preview_tmp_dir(tmp_dir: Path) -> None:
+        """Xoá mọi file còn sót trong thư mục tạm "Xem nhanh" — file preview
+        chỉ cần tồn tại trong lúc convert sang PDF/render pixmap, không ai
+        cần đọc lại sau đó (ảnh đã nạp vào RAM). Best-effort: 1 file đang bị
+        khoá (vd LibreOffice/Excel COM chưa kịp nhả) thì bỏ qua, dọn tiếp ở
+        lần "Xem nhanh" sau — không raise, không chặn luồng chính."""
+        for f in tmp_dir.iterdir():
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
     def _quick_preview_current_doc(self):
         """Sinh nhanh file tạm theo Loại tài liệu đang chọn (không hỏi nơi lưu),
         convert sang PDF rồi render từng trang ngay trong khung bên phải Bước 3
@@ -1900,6 +1927,7 @@ class SessionManagerWindow(QMainWindow):
             tpl = get_template(self._session.template_id)
             tmp_dir = Path(tempfile.gettempdir()) / "freq_calibration_preview"
             tmp_dir.mkdir(exist_ok=True)
+            self._cleanup_preview_tmp_dir(tmp_dir)
             stamp = datetime.now().strftime("%H%M%S")
             sections = []
             for kind in kinds:
@@ -1910,7 +1938,14 @@ class SessionManagerWindow(QMainWindow):
                     tpl.generate_bienban(self._session, path)
                 else:
                     tpl.generate_gcnkd(self._session, path)
-                pixmaps = xlsx_to_page_pixmaps(path) if ext == ".xlsx" else docx_to_page_pixmaps(path)
+                try:
+                    pixmaps = xlsx_to_page_pixmaps(path) if ext == ".xlsx" else docx_to_page_pixmaps(path)
+                finally:
+                    # Chỉ cần ảnh preview (đã nạp vào pixmaps ở trên) — xoá
+                    # ngay file .docx/.xlsx/.pdf tạm, không để tồn lại trong
+                    # %TEMP% (báo cáo lỗi #5 — thư mục preview không bao giờ
+                    # được dọn, tích tụ dần qua mỗi lần "Xem nhanh").
+                    self._cleanup_preview_tmp_dir(tmp_dir)
                 sections.append((f"{self._PREVIEW_KIND_LABEL[kind]} — {os.path.basename(path)}", pixmaps))
             self._step_export.show_doc_pages(sections)
             self._log("Đã dựng bản xem nhanh (chưa lưu chính thức).", Colors.ACCENT_GREEN)
