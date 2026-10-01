@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from drivers import DEVICE_REGISTRY
+from core.custom_devices import get_device_registry
 from core.expr import validate as _expr_validate, ExprError
 
 
@@ -154,9 +154,10 @@ def actions_for_category(category: str) -> list[str]:
 def actions_for_devices(device_keys: list[str]) -> list[str]:
     if not device_keys:
         return [k for k, s in ACTION_SPECS.items() if not s["needs_device"]]
+    registry = get_device_registry()
     sets = []
     for dk in device_keys:
-        cat = DEVICE_REGISTRY[dk]["category"]
+        cat = registry[dk]["category"]
         sets.append(set(k for k, s in ACTION_SPECS.items()
                         if s["needs_device"] and cat in s["categories"]))
     common = set.intersection(*sets) if sets else set()
@@ -494,10 +495,11 @@ def _validate_step(step: ScenarioStep, where: str, problems: list[str]) -> None:
         return
 
     if step.action == "raw_scpi":
+        registry = get_device_registry()
         if not step.devices:
             problems.append(f"{where}: lệnh SCPI cần ít nhất 1 thiết bị.")
         for dk in step.devices:
-            if dk not in DEVICE_REGISTRY:
+            if dk not in registry:
                 problems.append(f"{where}: thiết bị không có trong registry '{dk}'.")
         # tham số dạng '=biểu_thức' phải parse được.
         for k, v in step.params.items():
@@ -520,14 +522,15 @@ def _validate_step(step: ScenarioStep, where: str, problems: list[str]) -> None:
         problems.append(f"{where}: action không hợp lệ '{step.action}'.")
         return
     spec = ACTION_SPECS[step.action]
+    registry = get_device_registry()
     for dk in step.devices:
-        if dk not in DEVICE_REGISTRY:
+        if dk not in registry:
             problems.append(f"{where}: thiết bị không có trong registry '{dk}'.")
     if spec["needs_device"] and not step.devices:
         problems.append(f"{where}: action '{step.action}' cần ít nhất 1 thiết bị.")
     for dk in step.devices:
-        if dk in DEVICE_REGISTRY:
-            cat = DEVICE_REGISTRY[dk]["category"]
+        if dk in registry:
+            cat = registry[dk]["category"]
             if spec["needs_device"] and cat not in spec["categories"]:
                 problems.append(
                     f"{where}: action '{step.action}' không áp dụng cho '{dk}' "
@@ -545,7 +548,7 @@ def _validate_condition(cond: Condition, where: str, problems: list[str]) -> Non
     if cond.kind == "measure":
         if cond.op not in OPERATORS:
             problems.append(f"{where}: toán tử không hợp lệ '{cond.op}'.")
-        if cond.device and cond.device not in DEVICE_REGISTRY:
+        if cond.device and cond.device not in get_device_registry():
             problems.append(f"{where}: thiết bị điều kiện không có trong registry '{cond.device}'.")
         if cond.op in ("between", "outside") and cond.value2 == cond.value:
             problems.append(f"{where}: khoảng [{cond.value}, {cond.value2}] không hợp lệ.")

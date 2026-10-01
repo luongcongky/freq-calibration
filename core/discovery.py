@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from drivers import DEVICE_REGISTRY
+from core.custom_devices import get_device_registry
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class DiscoveredDevice:
     @property
     def vendor(self) -> str:
         if self.matched_key:
-            return DEVICE_REGISTRY[self.matched_key]["vendor"]
+            return get_device_registry()[self.matched_key]["vendor"]
         return ""
 
     def display_model(self) -> str:
@@ -116,7 +116,7 @@ def identify_resource(
         key = MOCK_TOPOLOGY.get(address)
         if key is None:
             return ""        # mô phỏng máy không có *IDN?
-        cls = DEVICE_REGISTRY[key]["cls"]
+        cls = get_device_registry()[key]["cls"]
         with cls(f"MOCK::{address}", mock=True) as dev:
             return dev.identify()
 
@@ -151,7 +151,7 @@ def match_driver(idn: str) -> Optional[str]:
     """Khớp chuỗi *IDN? với DEVICE_REGISTRY qua IDN_KEYWORDS. Trả model_key hoặc None."""
     if not idn:
         return None
-    for key, entry in DEVICE_REGISTRY.items():
+    for key, entry in get_device_registry().items():
         keywords = getattr(entry["cls"], "IDN_KEYWORDS", ())
         if keywords and any(k in idn for k in keywords):
             return key
@@ -225,9 +225,10 @@ class ConnectionTest:
 
 def test_connection(model_key: str, address: str, mock: bool = False) -> ConnectionTest:
     """Mở driver model_key tại address, thử identify(), rồi đóng. Báo OK/lỗi."""
-    if model_key not in DEVICE_REGISTRY:
+    registry = get_device_registry()
+    if model_key not in registry:
         return ConnectionTest(ok=False, error=f"Model không có trong registry: {model_key}")
-    cls = DEVICE_REGISTRY[model_key]["cls"]
+    cls = registry[model_key]["cls"]
     try:
         with cls(address if not mock else f"MOCK::{address}", mock=mock) as dev:
             return ConnectionTest(ok=True, model=dev.get_model(), idn=dev.identify())
@@ -255,7 +256,7 @@ def _probe_identify(
     """
     import pyvisa
     candidates: list[tuple[str, str, str]] = []  # (model_key, probe_cmd, synthetic_idn)
-    for key, entry in DEVICE_REGISTRY.items():
+    for key, entry in get_device_registry().items():
         cls = entry["cls"]
         probe_cmd = getattr(cls, "PROBE_CMD", None)
         synthetic_idn = getattr(cls, "PROBE_SYNTHETIC_IDN", None)

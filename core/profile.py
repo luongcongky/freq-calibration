@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
-from drivers import DEVICE_REGISTRY
+from core.custom_devices import get_device_registry
 
 
 @dataclass
@@ -69,8 +69,9 @@ class ConnectionProfile:
         out: list[str] = []
         seen_addr: dict[str, str] = {}
         seen_model: set[str] = set()
+        registry = get_device_registry()
         for e in self.entries:
-            if e.model_key not in DEVICE_REGISTRY:
+            if e.model_key not in registry:
                 out.append(f"Model không có trong registry: {e.model_key}")
             if e.address in seen_addr:
                 out.append(f"Địa chỉ {e.address} bị gán cho cả "

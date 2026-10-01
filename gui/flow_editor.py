@@ -316,7 +316,7 @@ class FlowView(QGraphicsView):
 
 class FlowRunWorker(QThread):
     result_ready = pyqtSignal(object)   # StepResult
-    finished_all = pyqtSignal(int)      # tổng kết quả
+    finished_all = pyqtSignal(int, str)  # (tổng kết quả, lý do tự dừng — rỗng nếu chạy hết)
     failed = pyqtSignal(str)            # thông báo lỗi nghiêm trọng
 
     def __init__(self, scenario, address_map: dict | None = None, cmd_delay_s: float = 0.1):
@@ -341,7 +341,7 @@ class FlowRunWorker(QThread):
                 cmd_delay_s=self._cmd_delay_s,
             )
             results = runner.run(self._scn)
-            self.finished_all.emit(len(results))
+            self.finished_all.emit(len(results), runner.stop_reason)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
 
@@ -921,10 +921,17 @@ class FlowEditorWindow(QMainWindow):
             self._update_result_display(node)
 
     # --- hoàn thành toàn bộ kịch bản ---
-    def _on_run_finished(self, total: int):
+    def _on_run_finished(self, total: int, stop_reason: str = ""):
         self._pulse_timer.stop()
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        if stop_reason:
+            QMessageBox.critical(
+                self, "Kịch bản đã tự dừng",
+                "Phần mềm đã TỰ DỪNG kịch bản vì thiết bị gặp sự cố, tránh gửi "
+                f"tiếp lệnh vào máy đang lỗi:\n\n{stop_reason}\n\n"
+                "Hãy kiểm tra lại kết nối/thiết bị rồi chạy lại.",
+            )
 
     # --- lỗi nghiêm trọng trong worker ---
     def _on_run_failed(self, msg: str):

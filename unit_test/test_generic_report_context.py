@@ -103,9 +103,11 @@ def test_header_dict_maps_all_nineteen_fields():
     assert header["Characteristics"] == "0,002 Hz đến 27 GHz"
     assert header["conclusion"] == ctx["meta"]["conclusion"]
     assert header["expire"] == ctx["meta"]["valid_until_str"]
+    # reviewer/inspector/manager đều được in HOA trong khối ký tên (quy ước
+    # văn bản hiệu chuẩn) — xem core/generic_report_context.py.
     assert header["reviewer"] == "B"
     assert header["inspector"] == "A"
-    assert header["manager"] == "Lê Văn C"
+    assert header["manager"] == "LÊ VĂN C"
     assert header["temperature"] == "23 °C"
     assert header["humidity"] == "55 %"
     assert header["equipment"] == "Máy chuẩn X"

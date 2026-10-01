@@ -53,36 +53,46 @@ def render_xlsx_with_table_contexts(session: CalibrationSession, descriptors: li
     ctx_by_table = table_engine.build_all_table_contexts(session, descriptors)
     raw_cursors = {tid: iter(_flatten_raw(rows)) for tid, rows in raw_by_table.items()}
 
+    # LƯU Ý RÒ RỈ BỘ NHỚ (đã gặp thật — khách báo RAM tăng nhanh khi dùng
+    # mẫu Excel): openpyxl Workbook giữ tham chiếu CHÉO giữa cell/row/
+    # worksheet/style manager (reference cycle), KHÔNG tự giải phóng ngay
+    # bằng refcounting thường của Python, và còn giữ 1 file handle (đọc
+    # .xlsx qua zipfile) cho tới khi gọi wb.close() tường minh. Hàm này được
+    # gọi lại MỖI LẦN bấm "Xem nhanh"/"Xuất Biên Bản" — thiếu wb.close() ở
+    # đây khiến RAM cộng dồn dần theo từng lần bấm trong 1 phiên làm việc.
+    # try/finally đảm bảo đóng workbook dù có lỗi giữa chừng.
     wb = openpyxl.load_workbook(str(template_path), data_only=False)
+    try:
+        for ws in wb.worksheets:
+            for row in ws.iter_rows():
+                for cell in row:
+                    v = cell.value
+                    if not isinstance(v, str):
+                        continue
+                    m = _MARKER_RE.match(v)
+                    if not m:
+                        continue
+                    fn_name, table_id = m.group(1), m.group(2)
+                    if fn_name == "report_val":
+                        it = raw_cursors.get(table_id)
+                        cell.value = next(it, None) if it is not None else None
+                        continue
+                    tctx = ctx_by_table.get(table_id)
+                    if tctx is None:
+                        cell.value = None
+                        continue
+                    val = tctx.get(fn_name)
+                    result = val() if callable(val) else val
+                    cell.value = result if result else None
 
-    for ws in wb.worksheets:
-        for row in ws.iter_rows():
-            for cell in row:
-                v = cell.value
-                if not isinstance(v, str):
-                    continue
-                m = _MARKER_RE.match(v)
-                if not m:
-                    continue
-                fn_name, table_id = m.group(1), m.group(2)
-                if fn_name == "report_val":
-                    it = raw_cursors.get(table_id)
-                    cell.value = next(it, None) if it is not None else None
-                    continue
-                tctx = ctx_by_table.get(table_id)
-                if tctx is None:
-                    cell.value = None
-                    continue
-                val = tctx.get(fn_name)
-                result = val() if callable(val) else val
-                cell.value = result if result else None
+        # Ép Excel tự tính lại MỌI công thức khi mở file kết quả — phòng hờ
+        # file mẫu không tự bật fullCalcOnLoad (openpyxl không tự tính công
+        # thức nên không có cached value nào để hiện tạm, nếu thiếu cờ này 1
+        # số máy có thể hiện 0/trống cho tới khi người dùng tự F9).
+        if wb.calculation is not None:
+            wb.calculation.fullCalcOnLoad = True
 
-    # Ép Excel tự tính lại MỌI công thức khi mở file kết quả — phòng hờ file
-    # mẫu không tự bật fullCalcOnLoad (openpyxl không tự tính công thức nên
-    # không có cached value nào để hiện tạm, nếu thiếu cờ này 1 số máy có
-    # thể hiện 0/trống cho tới khi người dùng tự F9).
-    if wb.calculation is not None:
-        wb.calculation.fullCalcOnLoad = True
-
-    wb.save(str(output_path))
+        wb.save(str(output_path))
+    finally:
+        wb.close()
     return output_path

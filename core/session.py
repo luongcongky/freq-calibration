@@ -53,6 +53,7 @@ class SessionMeta:
     temperature: str = ""        # "23 °C"
     humidity: str = ""           # "55 %"
     inspection_equipment: str = ""  # Phương tiện kiểm định
+    calibration_conditions: str = ""  # Điều kiện hiệu chuẩn (tự gõ, có thể khác nhau mỗi phiên)
     date: Optional[date] = None
     valid_until: Optional[date] = None
     location: str = "Thành phố Hồ Chí Minh"
@@ -98,6 +99,7 @@ class SessionMeta:
             temperature=d.get("temperature", ""),
             humidity=d.get("humidity", ""),
             inspection_equipment=d.get("inspection_equipment", ""),
+            calibration_conditions=d.get("calibration_conditions", ""),
             date=date_val,
             valid_until=valid_val,
             location=d.get("location", "Thành phố Hồ Chí Minh"),

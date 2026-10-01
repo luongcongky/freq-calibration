@@ -146,7 +146,7 @@ def _measured_counts_for(template_id: str, table_id: str, n_rows: int):
 
 class _TestWorker(QThread):
     result_ready = pyqtSignal(object)
-    finished_all = pyqtSignal(int)
+    finished_all = pyqtSignal(int, str)   # (tổng bước, lý do tự dừng — rỗng nếu chạy hết)
     failed       = pyqtSignal(str)
 
     def __init__(self, scenario: Scenario, address_map: dict, cmd_delay_s: float):
@@ -169,7 +169,7 @@ class _TestWorker(QThread):
                 cmd_delay_s=self._delay,
             )
             results = runner.run(self._scn)
-            self.finished_all.emit(len(results))
+            self.finished_all.emit(len(results), runner.stop_reason)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Test worker failed")
             self.failed.emit(str(exc))
@@ -438,6 +438,9 @@ class _MetaTab(QScrollArea):
         self.de_valid.setDisplayFormat("dd/MM/yyyy")
         _row3(meta_lay, ("Hiệu lực đến:", self.de_valid))
 
+        self.e_conditions = QLineEdit()
+        _row1(meta_lay, "Điều kiện hiệu chuẩn:", self.e_conditions)
+
         layout.addWidget(meta_group)
         layout.addStretch()
 
@@ -475,6 +478,7 @@ class _MetaTab(QScrollArea):
         self.e_temp.setText(m.temperature)
         self.e_humidity.setText(m.humidity)
         self.e_location.setText(m.location)
+        self.e_conditions.setText(m.calibration_conditions)
         if m.date:
             self.de_date.setDate(QDate(m.date.year, m.date.month, m.date.day))
         if m.valid_until:
@@ -498,6 +502,7 @@ class _MetaTab(QScrollArea):
         m.temperature            = self.e_temp.text().strip()
         m.humidity               = self.e_humidity.text().strip()
         m.location               = self.e_location.text().strip()
+        m.calibration_conditions = self.e_conditions.text().strip()
         qd = self.de_date.date()
         m.date = date(qd.year(), qd.month(), qd.day())
         qv = self.de_valid.date()
@@ -1706,7 +1711,8 @@ class SessionManagerWindow(QMainWindow):
 
         self._worker = _TestWorker(scenario, self.address_map, self.cmd_delay_s)
         self._worker.result_ready.connect(self._on_step_result)
-        self._worker.finished_all.connect(lambda n, idx=index: self._on_test_done(idx, n))
+        self._worker.finished_all.connect(
+            lambda n, reason, idx=index: self._on_test_done(idx, n, reason))
         self._worker.failed.connect(lambda msg, idx=index: self._on_test_failed(idx, msg))
         self._worker.start()
 
@@ -1723,7 +1729,7 @@ class SessionManagerWindow(QMainWindow):
                     os.path.normcase(os.path.abspath(running_path))):
                 win.apply_external_result(res)
 
-    def _on_test_done(self, index: int, n_steps: int):
+    def _on_test_done(self, index: int, n_steps: int, stop_reason: str = ""):
         test = self._session.tests[index]
         test.step_results = list(self._step_results_current)
         try:
@@ -1731,6 +1737,26 @@ class SessionManagerWindow(QMainWindow):
             test.result_table = tpl.map_test_result(test)
         except Exception as exc:  # noqa: BLE001
             self._log(f"[{test.table_id}] Lỗi map kết quả: {exc}", Colors.ACCENT_WARN)
+
+        if stop_reason:
+            # Thiết bị thật gặp sự cố -> ScenarioRunner đã tự dừng kịch bản
+            # giữa chừng (xem core/scenario_runner.py::stop_reason). KHÔNG
+            # đánh dấu "done" (dữ liệu chưa chạy hết) và KHÔNG tự chuyển sang
+            # bài test kế tiếp khi đang "Chạy tất cả" — máy vẫn đang lỗi, chạy
+            # tiếp bài khác chỉ tổ gửi thêm lệnh vào thiết bị hỏng.
+            test.status = "failed"; test.error_msg = stop_reason
+            self._step_review.refresh_row(index)
+            self._step_review.set_running(False)
+            self._log(f"⛔ TỰ DỪNG [{test.table_id}]: {stop_reason}", Colors.ACCENT_RED)
+            QMessageBox.critical(
+                self, "Đã tự dừng do sự cố thiết bị",
+                f"Bài test [{test.table_id}] đã TỰ DỪNG vì thiết bị gặp sự cố:\n\n"
+                f"{stop_reason}\n\n"
+                "Đã dừng luôn các bài test còn lại (nếu đang 'Chạy tất cả') để "
+                "tránh gửi tiếp lệnh vào máy đang lỗi. Hãy kiểm tra thiết bị rồi chạy lại.",
+            )
+            return
+
         test.status = "done"
         self._step_review.refresh_row(index)
         self._log(f"✅ Xong [{test.table_id}] ({n_steps} bước)", Colors.ACCENT_GREEN)

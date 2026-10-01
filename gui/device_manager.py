@@ -22,11 +22,15 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget,
     QTableWidgetItem, QComboBox, QHeaderView, QFileDialog, QMessageBox,
     QAbstractItemView, QInputDialog, QSpinBox, QFrame, QWidget,
+    QListWidget, QListWidgetItem, QLineEdit, QFormLayout, QDialogButtonBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QColor
 
-from drivers import DEVICE_REGISTRY
+from core.custom_devices import (
+    get_device_registry, add_custom_device, remove_custom_device,
+    load_custom_devices, CATEGORY_CHOICES,
+)
 from core.discovery import (
     scan_and_identify, scan_and_identify_safe,
     snapshot_resources, diff_new_resources,
@@ -54,10 +58,13 @@ _COL_STATUS = 8
 DM_COLS = ["#", "Địa chỉ VISA", "*IDN?", "Nhận diện", "Gán model",
            "Tên gợi nhớ", "Serial", "Kiểm tra", "Trạng thái"]
 
-# Danh sách model cho combo (kèm nhóm để dễ chọn).
-_MODEL_ITEMS = [("", "— (không gán) —")] + [
-    (k, f"{k}  ({v['vendor']}, {v['category']})") for k, v in DEVICE_REGISTRY.items()
-]
+def _model_items() -> list[tuple[str, str]]:
+    """Danh sách model cho combo (kèm nhóm để dễ chọn) — tính lại mỗi lần gọi
+    để luôn thấy cả dòng máy tự thêm (xem core/custom_devices.py)."""
+    return [("", "— (không gán) —")] + [
+        (k, f"{k}  ({v['vendor']}, {v['category']})" + ("  ★ tự thêm" if v.get("is_custom") else ""))
+        for k, v in get_device_registry().items()
+    ]
 
 
 class ScanWorker(QThread):
@@ -135,8 +142,15 @@ class DeviceManagerDialog(QDialog):
         self.btn_scan.clicked.connect(self._scan)
         self.btn_wizard = QPushButton("🔌 Wizard cắm-từng-máy")
         self.btn_wizard.clicked.connect(self._wizard)
+        self.btn_custom_device = QPushButton("➕ Thêm dòng máy mới")
+        self.btn_custom_device.setToolTip(
+            "Thêm 1 dòng máy CHƯA có driver riêng — chỉ dùng để gửi lệnh SCPI "
+            "thô (qua Tập lệnh thiết bị / bước 'Lệnh thiết bị' trong kịch bản)."
+        )
+        self.btn_custom_device.clicked.connect(self._manage_custom_devices)
         bar.addWidget(self.btn_scan)
         bar.addWidget(self.btn_wizard)
+        bar.addWidget(self.btn_custom_device)
         bar.addStretch()
         root.addLayout(bar)
 
@@ -230,7 +244,7 @@ class DeviceManagerDialog(QDialog):
 
         # combo gán model
         combo = QComboBox()
-        for key, label_text in _MODEL_ITEMS:
+        for key, label_text in _model_items():
             combo.addItem(label_text, key)
         target = assign if assign is not None else (dev.matched_key or "")
         idx = combo.findData(target)
@@ -377,8 +391,9 @@ class DeviceManagerDialog(QDialog):
                                serial=(idn.split(",")[2].strip() if idn.count(",") >= 2 else ""))
 
         # Cho user chọn model (preselect nếu đã khớp) + đặt tên.
-        keys = [k for k, _ in _MODEL_ITEMS]
-        labels = [lbl for _, lbl in _MODEL_ITEMS]
+        items = _model_items()
+        keys = [k for k, _ in items]
+        labels = [lbl for _, lbl in items]
         preidx = keys.index(dev.matched_key) if dev.matched_key in keys else 0
         choice, ok = QInputDialog.getItem(
             self, "Gán model",
@@ -391,6 +406,34 @@ class DeviceManagerDialog(QDialog):
                                        "Đặt tên thân thiện (vd 'Máy đếm phòng A'):")
         self._add_row(dev, label=name or "", assign=model_key)
         self.lbl_status.setText(f"Đã thêm {addr} → {model_key or '(chưa gán)'}.")
+
+    # ------------------------------------------------------------------
+    # Dòng máy tự thêm (chưa có driver riêng — chỉ gửi lệnh SCPI thô)
+    # ------------------------------------------------------------------
+
+    def _manage_custom_devices(self):
+        dlg = _CustomDeviceManagerDialog(self)
+        dlg.exec_()
+        self._refresh_all_model_combos()
+
+    def _refresh_all_model_combos(self):
+        """Nạp lại danh sách model cho combo 'Gán model' ở MỌI dòng đang có
+        trong bảng, giữ nguyên lựa chọn hiện tại — gọi sau khi thêm/xoá 1
+        dòng máy tự thêm để danh sách cập nhật ngay, không cần mở lại dialog."""
+        items = _model_items()
+        for r in range(self.table.rowCount()):
+            combo: QComboBox = self.table.cellWidget(r, _COL_ASSIGN)
+            if combo is None:
+                continue
+            current = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            for key, label_text in items:
+                combo.addItem(label_text, key)
+            idx = combo.findData(current)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Test một dòng
@@ -501,3 +544,146 @@ class DeviceManagerDialog(QDialog):
 
     def is_mock(self) -> bool:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Dialog: dòng máy tự thêm (chưa có driver riêng)
+# ---------------------------------------------------------------------------
+
+class _CustomDeviceManagerDialog(QDialog):
+    """Quản lý các dòng máy người dùng tự thêm (data/custom_devices.json).
+
+    Mỗi dòng máy tự thêm chạy qua 1 driver 'rỗng' dùng chung
+    (drivers.GenericVisaInstrument) — chỉ gửi/nhận lệnh SCPI thô, KHÔNG có
+    logic đo lường riêng như các driver chuyên biệt (measure_frequency,
+    set_rf_power, ...). Phù hợp khi khách hàng có 1 máy mới, máy tính đã cài
+    sẵn VISA driver, và chỉ cần gửi lệnh SCPI tay qua Tập lệnh thiết bị / bước
+    'Lệnh thiết bị' trong kịch bản — không cần đợi dev viết driver + build lại.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Dòng máy tự thêm")
+        self.setMinimumSize(720, 480)
+        self._build_ui()
+        self._reload_list()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        tip = QLabel(
+            "Dùng mục này khi máy đo CHƯA có driver riêng trong phần mềm — máy tính "
+            "đã cài VISA driver và bạn chỉ cần gửi lệnh SCPI thô (gõ tay trong "
+            "<b>Tập lệnh thiết bị</b>, hoặc chọn action 'Lệnh thiết bị' khi soạn kịch bản). "
+            "Nếu cần phần mềm tự đo/tính theo đúng cấu trúc máy (như các dòng máy có sẵn), "
+            "liên hệ nhà phát triển để viết driver riêng."
+        )
+        tip.setWordWrap(True)
+        tip.setStyleSheet(f"color:{Colors.TEXT_DIM};")
+        root.addWidget(tip)
+
+        splitter = QHBoxLayout()
+
+        left = QVBoxLayout()
+        left.addWidget(QLabel("Dòng máy đã tự thêm:"))
+        self.list_w = QListWidget()
+        self.list_w.currentRowChanged.connect(self._update_buttons)
+        left.addWidget(self.list_w, 1)
+        self.btn_remove = QPushButton("🗑 Xoá dòng máy này")
+        self.btn_remove.setEnabled(False)
+        self.btn_remove.clicked.connect(self._remove_selected)
+        left.addWidget(self.btn_remove)
+        splitter.addLayout(left, 1)
+
+        right = QVBoxLayout()
+        right.addWidget(QLabel("Thêm dòng máy mới:"))
+        form = QFormLayout()
+        self.key_edit = QLineEdit()
+        self.key_edit.setPlaceholderText("vd: MAY_DO_A  (không dấu, không khoảng trắng)")
+        form.addRow("Mã dòng máy:", self.key_edit)
+        self.label_edit = QLineEdit()
+        self.label_edit.setPlaceholderText("vd: Máy đo tần số phòng B")
+        form.addRow("Tên hiển thị:", self.label_edit)
+        self.vendor_edit = QLineEdit()
+        self.vendor_edit.setPlaceholderText("vd: Keysight (tuỳ chọn)")
+        form.addRow("Hãng sản xuất:", self.vendor_edit)
+        self.cat_combo = QComboBox()
+        for key, label in CATEGORY_CHOICES:
+            self.cat_combo.addItem(label, key)
+        form.addRow("Nhóm:", self.cat_combo)
+        self.idn_edit = QLineEdit()
+        self.idn_edit.setPlaceholderText("vd: MY_MODEL_X  (phân cách bởi dấu phẩy, tuỳ chọn)")
+        self.idn_edit.setToolTip(
+            "Nếu máy có trả lời *IDN?, nhập 1 đoạn chuỗi xuất hiện trong đó để "
+            "Scan & Identify tự nhận diện được dòng máy này ở lần quét sau."
+        )
+        form.addRow("Từ khóa *IDN? (tuỳ chọn):", self.idn_edit)
+        right.addLayout(form)
+
+        self.btn_add = QPushButton("➕ Thêm dòng máy")
+        self.btn_add.clicked.connect(self._add)
+        right.addWidget(self.btn_add)
+        right.addStretch()
+        splitter.addLayout(right, 1)
+
+        root.addLayout(splitter, 1)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.accept)
+        bb.accepted.connect(self.accept)
+        root.addWidget(bb)
+
+    def _reload_list(self):
+        self.list_w.clear()
+        for key, info in load_custom_devices().items():
+            label = info.get("label") or key
+            vendor = info.get("vendor") or ""
+            suffix = f"  —  {vendor}" if vendor else ""
+            item = QListWidgetItem(f"{key}  ({label}){suffix}")
+            item.setData(Qt.UserRole, key)
+            self.list_w.addItem(item)
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.btn_remove.setEnabled(self.list_w.currentItem() is not None)
+
+    def _add(self):
+        idn_keywords = [s.strip() for s in self.idn_edit.text().split(",") if s.strip()]
+        try:
+            key = add_custom_device(
+                model_key=self.key_edit.text(),
+                label=self.label_edit.text(),
+                vendor=self.vendor_edit.text(),
+                category=self.cat_combo.currentData(),
+                idn_keywords=idn_keywords,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Không thêm được", str(exc))
+            return
+
+        self.key_edit.clear()
+        self.label_edit.clear()
+        self.vendor_edit.clear()
+        self.idn_edit.clear()
+        self._reload_list()
+        QMessageBox.information(
+            self, "Đã thêm",
+            f"Đã thêm dòng máy '{key}'. Giờ có thể gán địa chỉ VISA cho nó ở "
+            "bảng phía sau, và tự soạn lệnh SCPI trong 'Tập lệnh thiết bị'.",
+        )
+
+    def _remove_selected(self):
+        item = self.list_w.currentItem()
+        if item is None:
+            return
+        key = item.data(Qt.UserRole)
+        reply = QMessageBox.question(
+            self, "Xác nhận xoá",
+            f"Xoá dòng máy tự thêm '{key}'?\n\n"
+            "Mọi kịch bản/profile đang dùng model này sẽ báo lỗi 'không có trong "
+            "registry' cho tới khi bạn thêm lại.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        remove_custom_device(key)
+        self._reload_list()

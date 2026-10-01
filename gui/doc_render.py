@@ -21,6 +21,7 @@ import subprocess
 from PyQt5.QtGui import QImage, QPixmap
 
 _WD_EXPORT_FORMAT_PDF = 17  # wdExportFormatPDF
+_WD_ALERTS_NONE = 0  # wdAlertsNone (WdAlertLevel)
 _XL_TYPE_PDF = 0  # xlTypePDF (XlFixedFormatType)
 
 _SOFFICE_CANDIDATES = [
@@ -34,6 +35,12 @@ def _docx_to_pdf_word(docx_path: str, pdf_path: str) -> None:
 
     word = win32.DispatchEx("Word.Application")
     word.Visible = False
+    # Visible=False nên KHÔNG được để lọt bất kỳ hộp thoại cảnh báo nào (vd
+    # "định dạng/phần mở rộng không khớp", cảnh báo tương thích) — không ai
+    # thấy để bấm, Word treo vô thời hạn chờ phản hồi, WINWORD.EXE kẹt lại
+    # nền (ẩn, không Quit() được) tốn RAM mỗi lần "Xem nhanh". Excel COM bên
+    # dưới (_xlsx_to_pdf_excel) đã có DisplayAlerts=False tương tự.
+    word.DisplayAlerts = _WD_ALERTS_NONE
     try:
         doc = word.Documents.Open(os.path.abspath(docx_path), ReadOnly=True)
         try:

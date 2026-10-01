@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 
-from drivers import DEVICE_REGISTRY
+from core.custom_devices import get_device_registry
 from gui.theme import Colors
 from gui.widgets import paint_corner_brackets
 from core.commands import (
@@ -55,8 +55,9 @@ _CAT_LABEL = {
     "generator": "Máy phát tín hiệu",
     "counter":   "Máy đếm tần số",
     "power":     "Máy đo công suất",
+    "other":     "Khác (tự thêm)",
 }
-_CAT_ORDER = ["generator", "counter", "power"]
+_CAT_ORDER = ["generator", "counter", "power", "other"]
 
 _MONO = QFont("Consolas", 9)
 _MONO.setStyleHint(QFont.Monospace)
@@ -305,11 +306,11 @@ class CommandReferenceDialog(QDialog):
     # Danh sách thiết bị (trái)
     # ------------------------------------------------------------------
     def _populate_device_list(self):
+        registry = get_device_registry()
         groups: dict[str, list[str]] = {c: [] for c in _CAT_ORDER}
-        for key, entry in DEVICE_REGISTRY.items():
-            cat = entry["category"]
-            if cat in groups:
-                groups[cat].append(key)
+        for key, entry in registry.items():
+            cat = entry["category"] if entry["category"] in groups else "other"
+            groups[cat].append(key)
 
         first_row: int | None = None
         for cat in _CAT_ORDER:
@@ -323,7 +324,7 @@ class CommandReferenceDialog(QDialog):
             hdr.setBackground(QColor(Colors.BG_CARD))
             self.dev_list.addItem(hdr)
             for key in keys:
-                entry = DEVICE_REGISTRY[key]
+                entry = registry[key]
                 item = QListWidgetItem(f"    {key}   —   {entry['vendor']}")
                 item.setData(Qt.UserRole, key)
                 self.dev_list.addItem(item)
@@ -376,7 +377,7 @@ class CommandReferenceDialog(QDialog):
         self.cmd_list.clear()
         self._show_detail(None)
 
-        cls = DEVICE_REGISTRY.get(self._model_key, {}).get("cls")
+        cls = get_device_registry().get(self._model_key, {}).get("cls")
         model_name = getattr(cls, "MODEL_NAME", self._model_key) if cls else self._model_key
 
         common_rows = [(s, c) for s, c in self._rows if s == "common"]
@@ -510,7 +511,7 @@ class CommandReferenceDialog(QDialog):
 
         template, params, is_query = parse_cmd(cmd)
         self._current_template = template
-        cls = DEVICE_REGISTRY.get(self._model_key, {}).get("cls")
+        cls = get_device_registry().get(self._model_key, {}).get("cls")
         model_name = getattr(cls, "MODEL_NAME", self._model_key) if cls else self._model_key
         device_tag = "Lệnh chung" if src == "common" else model_name
         self._set_tags(device_tag, "Query" if is_query else "Set")
@@ -596,7 +597,7 @@ class CommandReferenceDialog(QDialog):
         if src is None or old_cmd is None:
             return
 
-        cls = DEVICE_REGISTRY.get(self._model_key, {}).get("cls")
+        cls = get_device_registry().get(self._model_key, {}).get("cls")
         model_name = getattr(cls, "MODEL_NAME", self._model_key) if cls else self._model_key
         dlg = _CmdEditorDialog(self, cmd=old_cmd, title=f"Sửa lệnh  —  {model_name}")
         if dlg.exec_() != QDialog.Accepted:
@@ -649,7 +650,7 @@ class CommandReferenceDialog(QDialog):
     def _reset_defaults(self):
         if not self._model_key:
             return
-        cls = DEVICE_REGISTRY.get(self._model_key, {}).get("cls")
+        cls = get_device_registry().get(self._model_key, {}).get("cls")
         model_name = getattr(cls, "MODEL_NAME", self._model_key) if cls else self._model_key
 
         reply = QMessageBox.question(

@@ -25,7 +25,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from drivers import DEVICE_REGISTRY, Reading
+from drivers import Reading
+from core.custom_devices import get_device_registry
 from core.scenario import (
     Scenario, ScenarioStep, LoopBlock, IfBlock, Branch, Condition,
     ACTION_SPECS, enumerate_nodes,
@@ -311,11 +312,19 @@ class ScenarioRunner:
         self._results: list[StepResult] = []
         self._ctx = _Ctx()
         self._devices: dict[str, Any] = {}
+        # Khác stop_flag (người dùng bấm "Dừng" — external): lý do kịch bản TỰ
+        # dừng vì 1 lệnh gửi xuống thiết bị thất bại (mất kết nối, timeout, lỗi
+        # phần cứng...) — tránh cứ tiếp tục gửi lệnh vào máy đang gặp sự cố
+        # suốt phần còn lại của kịch bản/vòng lặp. Rỗng = chưa gặp sự cố nào.
+        self.stop_reason: str = ""
+
+    def _should_stop(self) -> bool:
+        return self._stop_flag() or bool(self.stop_reason)
 
     # ------------------------------------------------------------------
 
     def _open_device(self, device_key: str):
-        cls = DEVICE_REGISTRY[device_key]["cls"]
+        cls = get_device_registry()[device_key]["cls"]
         if self._mock:
             return cls(f"MOCK::{device_key}", mock=True)
         addr = self._addr.get(device_key)
@@ -348,8 +357,12 @@ class ScenarioRunner:
 
             pc, jumps = 0, 0
             while pc < len(nodes):
-                if self._stop_flag():
-                    log.warning("ScenarioRunner: dừng theo yêu cầu tại node %d", pc + 1)
+                if self._should_stop():
+                    if self.stop_reason:
+                        log.warning("ScenarioRunner: tự dừng tại node %d — %s",
+                                   pc + 1, self.stop_reason)
+                    else:
+                        log.warning("ScenarioRunner: dừng theo yêu cầu tại node %d", pc + 1)
                     break
                 node = nodes[pc]
                 if not getattr(node, "enabled", True):
@@ -395,7 +408,7 @@ class ScenarioRunner:
     def _run_body(self, idx: int, body, iteration: int) -> None:
         """Chạy thân khối — dispatch bước/loop/if (cho phép LỒNG NHAU)."""
         for node in body:
-            if self._stop_flag():
+            if self._should_stop():
                 break
             if not getattr(node, "enabled", True):
                 continue
@@ -414,7 +427,7 @@ class ScenarioRunner:
         self._ctx.iter_stack.append(0)
         try:
             for i in range(1, loop.count + 1):
-                if self._stop_flag():
+                if self._should_stop():
                     break
                 self._ctx.iter_stack[-1] = i
                 try:
@@ -436,7 +449,7 @@ class ScenarioRunner:
         i = 0
         try:
             while i < max_iter:
-                if self._stop_flag():
+                if self._should_stop():
                     break
                 i += 1
                 self._ctx.iter_stack[-1] = i
@@ -455,7 +468,7 @@ class ScenarioRunner:
                         break
         finally:
             self._ctx.iter_stack.pop()
-        if not reached and not broke_early and not self._stop_flag():
+        if not reached and not broke_early and not self._should_stop():
             self._emit(StepResult(step_index=idx, action="loop", kind="control",
                                   node_id=id(loop), flat_index=self._fidx(loop), ok=False,
                                   error=f"chưa đạt điều kiện sau {i} vòng (max_iter={max_iter})"))
@@ -578,7 +591,16 @@ class ScenarioRunner:
                 res.is_query = bool(info.get("is_query", False))
             except Exception as exc:  # noqa: BLE001
                 res.ok = False; res.error = str(exc)
+                # Thiết bị THẬT lỗi (mất kết nối, timeout, lệnh bị từ chối...) ->
+                # tự dừng cả kịch bản thay vì cứ tiếp tục gửi lệnh vào máy đang
+                # gặp sự cố (có thể lặp hàng trăm/nghìn lần nếu đang trong loop).
+                # Mock bỏ qua: lỗi mock thường là bug kịch bản, không phải máy
+                # hỏng thật, không nên chặn cả việc soạn/thử kịch bản.
+                if not self._mock and not self.stop_reason:
+                    self.stop_reason = f"Thiết bị '{dk}' lỗi khi '{step.action}': {exc}"
             self._emit(res)
             # Nghỉ giữa các lệnh khi chạy máy thật (mock chạy nhanh, không nghỉ).
             if not self._mock and self._cmd_delay_s > 0:
                 time.sleep(self._cmd_delay_s)
+            if self.stop_reason:
+                break   # không gửi tiếp lệnh này cho các thiết bị còn lại trong CÙNG bước

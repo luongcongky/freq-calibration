@@ -86,12 +86,16 @@ def build_meta_context(session: CalibrationSession, meta_json: dict) -> dict:
         "Characteristics": ctx["dut"]["measurement_range"],
         "conclusion": ctx["meta"]["conclusion"],
         "expire": ctx["meta"]["valid_until_str"],
-        "reviewer": meta.reviewer,
-        "inspector": meta.operator,
-        "manager": meta.manager,
+        # In HOA tên dưới chữ ký (quy ước văn bản hiệu chuẩn) — chỉ áp dụng ở
+        # đây (khối ký tên), KHÔNG đổi meta.reviewer/operator gốc vì các field
+        # đó còn dùng cho mục đích khác (vd câu văn tự nhiên "do ông ... kiểm định").
+        "reviewer": meta.reviewer.upper(),
+        "inspector": meta.operator.upper(),
+        "manager": meta.manager.upper(),
         "temperature": meta.temperature,
         "humidity": meta.humidity,
         "equipment": meta.inspection_equipment,
+        "conditions": meta.calibration_conditions,
         "cert_no": meta.cert_number,
         "today": date_line,
         "cal_date": date_line,

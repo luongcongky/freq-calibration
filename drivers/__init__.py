@@ -12,6 +12,7 @@ from .base_visa import (
     InstrumentError, ConnectionError_, CommandError,
     MeasurementError, IdentificationError,
 )
+from .generic import GenericVisaInstrument
 
 # --- Driver gốc / Signal Generator -----------------------------------------
 from .smw200a import SMW200A, SMW200AError, SMW200AConnectionError
@@ -71,6 +72,7 @@ __all__ = [
     "VisaInstrument", "Reading",
     "InstrumentError", "ConnectionError_", "CommandError",
     "MeasurementError", "IdentificationError",
+    "GenericVisaInstrument",
     # gốc
     "SMW200A", "SMW200AError", "SMW200AConnectionError",
     "CNT90XL", "CNT90XLError", "CNT90XLConnectionError",

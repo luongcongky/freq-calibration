@@ -252,8 +252,8 @@ def test_runner_real_without_address_raises():
 
 def _open_mock_device(dk):
     """Mở thiết bị giả (mock) để test luồng REAL mà không cần phần cứng."""
-    import core.scenario_runner as sr
-    return sr.DEVICE_REGISTRY[dk]["cls"](f"MOCK::{dk}", mock=True)
+    from core.custom_devices import get_device_registry
+    return get_device_registry()[dk]["cls"](f"MOCK::{dk}", mock=True)
 
 
 def test_cmd_delay_applied_between_real_commands(monkeypatch):
@@ -291,6 +291,50 @@ def test_cmd_delay_zero_disables(monkeypatch):
     runner.run(_flat_scenario())
     # cmd_delay_s=0 -> không chèn nghỉ nào (sleep(0.0) còn lại chỉ do action wait).
     assert all(s == 0.0 for s in sleeps)
+
+
+# ---------------------------------------------------------------------------
+# Tự dừng khi thiết bị THẬT gặp sự cố (không hầm hố tiếp lệnh vào máy hỏng)
+# ---------------------------------------------------------------------------
+
+def _loop_scenario(count: int) -> Scenario:
+    return Scenario(name="Loop", nodes=[
+        LoopBlock(count=count, body=[
+            ScenarioStep(action="measure_frequency", devices=["CNT91"]),
+        ]),
+    ])
+
+
+def test_real_run_auto_stops_when_device_fails_mid_loop(monkeypatch):
+    import core.scenario_runner as sr
+    monkeypatch.setattr(sr, "execute_action",
+                        lambda *a, **k: (_ for _ in ()).throw(ConnectionError("mất kết nối")))
+
+    runner = ScenarioRunner(mock=False, address_map={"x": "y"}, settle_wait=False, cmd_delay_s=0.0)
+    monkeypatch.setattr(runner, "_open_device", _open_mock_device)
+    results = runner.run(_loop_scenario(100))
+
+    # Phải dừng NGAY sau lần lỗi đầu tiên — không chạy hết 100 vòng.
+    device_results = [r for r in results if r.action == "measure_frequency"]
+    assert len(device_results) == 1
+    assert device_results[0].ok is False
+    assert runner.stop_reason and "CNT91" in runner.stop_reason
+
+
+def test_mock_run_does_not_auto_stop_on_error(monkeypatch):
+    import core.scenario_runner as sr
+    monkeypatch.setattr(sr, "execute_action",
+                        lambda *a, **k: (_ for _ in ()).throw(ConnectionError("mất kết nối")))
+
+    runner = ScenarioRunner(mock=True)
+    results = runner.run(_loop_scenario(5))
+
+    # Mock: lỗi (thường là bug kịch bản, không phải máy hỏng thật) KHÔNG chặn
+    # việc soạn/thử kịch bản -> vẫn chạy hết toàn bộ vòng lặp.
+    device_results = [r for r in results if r.action == "measure_frequency"]
+    assert len(device_results) == 5
+    assert all(not r.ok for r in device_results)
+    assert runner.stop_reason == ""
 
 
 def test_profile_cmd_delay_round_trip(tmp_path):

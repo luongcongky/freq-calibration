@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 import logging
+from collections import deque
 from datetime import datetime
 
 from PyQt5.QtWidgets import (
@@ -26,7 +27,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPointF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF, QPixmap, QIcon
 
-from drivers import DEVICE_REGISTRY
+from core.custom_devices import get_device_registry
 from core.scenario import (
     Scenario, ScenarioStep, LoopBlock, IfBlock, Branch, Condition,
     ACTION_SPECS, OPERATORS, OP_LABELS, MAX_NEST_DEPTH,
@@ -45,6 +46,12 @@ from gui.file_dialog_utils import get_open_file_name, get_save_file_name
 from gui.widgets import ThemeToggle, EXPR_HELP, CheckBoxHeader, set_badge, paint_corner_brackets
 
 COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
+
+# Số kết quả GẦN NHẤT giữ lại cho 1 node (xem _apply_step_result) — 1 node
+# trong loop chạy với thiết bị thật có thể nhận hàng trăm/nghìn kết quả
+# trong 1 lần chạy; giữ hết sẽ phình bộ nhớ dần theo số vòng lặp trong khi ô
+# "Kết quả" chỉ hiển thị tóm tắt 1 dòng, không cần giữ toàn bộ lịch sử.
+_MAX_RESULT_HISTORY = 50
 
 # Lưu metadata vào item qua các role riêng. KHÔNG lưu list/dict (PyQt sao chép
 # list/dict -> mất tham chiếu tới scenario thật); chỉ lưu object/str (giữ ref).
@@ -151,7 +158,7 @@ class StepEditorDialog(QDialog):
         dp.addWidget(QLabel("🟢 = đang kết nối   ·   ○ = chưa thấy"))
         self.dev_list = QListWidget()
         self.dev_list.setSelectionMode(QAbstractItemView.NoSelection)
-        ordered = sorted(DEVICE_REGISTRY.items(),
+        ordered = sorted(get_device_registry().items(),
                          key=lambda kv: (kv[0] not in self._connected, kv[0]))
         for key, entry in ordered:
             is_conn = key in self._connected
@@ -342,7 +349,7 @@ class StepEditorDialog(QDialog):
             cmds = get_commands_for(dk, custom)
             if not cmds:
                 continue
-            cls = DEVICE_REGISTRY.get(dk, {}).get("cls")
+            cls = get_device_registry().get(dk, {}).get("cls")
             model_name = getattr(cls, "MODEL_NAME", dk) if cls else dk
             self._add_header_item(f"── {model_name} ({dk}) ──")
             for cmd in cmds:
@@ -615,7 +622,7 @@ class LoopEditorDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Soạn vòng lặp (Loop)")
         self.setMinimumWidth(420)
-        self._devices = device_choices or list(DEVICE_REGISTRY.keys())
+        self._devices = device_choices or list(get_device_registry().keys())
         self._condition = loop.condition if (loop and loop.condition) else None
         root = QVBoxLayout(self)
         form = QFormLayout()
@@ -708,7 +715,7 @@ class ConditionDialog(QDialog):
 
         self.device = QComboBox()
         self.device.addItem("(đo gần nhất — bất kỳ)", "")
-        for k in (device_choices or list(DEVICE_REGISTRY.keys())):
+        for k in (device_choices or list(get_device_registry().keys())):
             self.device.addItem(k, k)
         self.device.currentIndexChanged.connect(self._update_preview)
         self._form.addRow("Thiết bị nguồn:", self.device)
@@ -832,7 +839,7 @@ class IfEditorDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Soạn rẽ nhánh (If / Ngược lại nếu / Ngược lại)")
         self.setMinimumWidth(520)
-        self._devices = device_choices or list(DEVICE_REGISTRY.keys())
+        self._devices = device_choices or list(get_device_registry().keys())
         # làm việc trên bản sao branch (giữ body nếu sửa).
         self.branches: list[Branch] = []
         if ib is not None:
@@ -929,7 +936,7 @@ class IfEditorDialog(QDialog):
 
 class ScenarioWorker(QThread):
     result_ready = pyqtSignal(object)
-    finished_all = pyqtSignal(int)
+    finished_all = pyqtSignal(int, str)   # (tổng kết quả, lý do tự dừng — rỗng nếu chạy hết)
     failed = pyqtSignal(str)
 
     def __init__(self, scenario: Scenario, mock: bool, address_map: dict | None = None,
@@ -949,7 +956,7 @@ class ScenarioWorker(QThread):
                                     stop_flag=lambda: self._stop,
                                     cmd_delay_s=self._cmd_delay_s)
             results = runner.run(self._scn)
-            self.finished_all.emit(len(results))
+            self.finished_all.emit(len(results), runner.stop_reason)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Scenario run failed")
             self.failed.emit(str(exc))
@@ -980,7 +987,8 @@ class ScenarioGridWindow(QMainWindow):
         self._on_device_changed = on_device_changed   # callback → Phiên Kiểm Định
 
         self._id_to_item: dict = {}
-        self._item_results: dict = {}
+        self._item_results: dict = {}          # id(item) -> deque[str], tối đa _MAX_RESULT_HISTORY
+        self._item_result_totals: dict = {}    # id(item) -> tổng số kết quả THẬT đã nhận (có thể > len(deque))
         self._flatidx_to_item: dict = {}
         self._status_badges: dict = {}   # id(item) -> QLabel[badge=...] cột Trạng thái
 
@@ -1184,7 +1192,8 @@ class ScenarioGridWindow(QMainWindow):
     def _refresh_tree(self):
         self._loading = True
         self.tree.clear()
-        self._id_to_item.clear(); self._item_results.clear(); self._status_badges.clear()
+        self._id_to_item.clear(); self._item_results.clear(); self._item_result_totals.clear()
+        self._status_badges.clear()
         root = self.tree.invisibleRootItem()
         for node in self.scenario.nodes:
             self._add_node_item(node, root, None)
@@ -1975,6 +1984,7 @@ class ScenarioGridWindow(QMainWindow):
             QMessageBox.warning(self, "Kịch bản chưa hợp lệ", "\n".join(problems[:12])); return
 
         self._item_results.clear()
+        self._item_result_totals.clear()
         self._last_results = []
         self.btn_export.setEnabled(False)
         self._loading = True
@@ -2029,20 +2039,36 @@ class ScenarioGridWindow(QMainWindow):
     def _apply_step_result(self, item, res: StepResult):
         """Cập nhật cột Kết quả/Trạng thái + tô sáng cho 1 item cây theo
         StepResult — dùng chung cho tự chạy (_on_result) và khi nhận forward
-        từ cửa sổ khác đang chạy CÙNG file kịch bản (apply_external_result)."""
+        từ cửa sổ khác đang chạy CÙNG file kịch bản (apply_external_result).
+
+        1 node NẰM TRONG loop (vd report_val() ở kịch bản thật kết nối thiết
+        bị, lặp hàng trăm/nghìn vòng) nhận lại _apply_step_result() MỖI VÒNG
+        — nếu giữ hết TOÀN BỘ kết quả (list không giới hạn) thì vừa phình bộ
+        nhớ dần suốt 1 lần chạy (đã gặp thật: RAM tăng nhanh khi chạy kịch
+        bản vòng lặp dài với thiết bị thật), vừa join() lại cả chuỗi mỗi vòng
+        (tốn O(n²) theo số vòng). self._item_results giờ chỉ giữ ĐÚNG
+        _MAX_RESULT_HISTORY kết quả GẦN NHẤT (deque có maxlen tự loại kết
+        quả cũ) — đủ để xem nhanh vài giá trị cuối, không cần giữ hết cho 1
+        bảng chỉ hiển thị tóm tắt 1 dòng."""
         self.tree.setCurrentItem(item)
         self.tree.scrollToItem(item, QAbstractItemView.EnsureVisible)
         self._loading = True
         key = id(item)
-        self._item_results.setdefault(key, []).append(res.result_cell())
+        history = self._item_results.setdefault(key, deque(maxlen=_MAX_RESULT_HISTORY))
+        history.append(res.result_cell())
+        total = self._item_result_totals.get(key, 0) + 1
+        self._item_result_totals[key] = total
         # Bỏ ô trống (lệnh ghi) + gộp giá trị trùng LIÊN TIẾP cho gọn.
         collapsed = []
-        for c in self._item_results[key]:
+        for c in history:
             if c and (not collapsed or collapsed[-1] != c):
                 collapsed.append(c)
-        item.setText(4, "  |  ".join(collapsed))   # cột Kết quả
+        text = "  |  ".join(collapsed)
+        if total > len(history):   # đã cắt bớt kết quả cũ hơn _MAX_RESULT_HISTORY
+            text = f"… (ẩn {total - len(history)} kết quả đầu)  |  {text}"
+        item.setText(4, text)   # cột Kết quả
         if res.kind != "control":
-            any_err = any("LỖI" in s for s in self._item_results[key])
+            any_err = any("LỖI" in s for s in history)
             badge = self._status_badges.get(key)
             if badge is not None:
                 set_badge(badge, "LỖI" if any_err else "OK",
@@ -2070,11 +2096,21 @@ class ScenarioGridWindow(QMainWindow):
         self._log(f"B{res.step_index} {res.summary()}",
                   Colors.ACCENT_RED if not res.ok else Colors.ACCENT_GREEN)
 
-    def _on_finished(self, total):
+    def _on_finished(self, total, stop_reason: str = ""):
         self.btn_run.setEnabled(True); self.btn_stop.setEnabled(False)
         self.btn_export.setEnabled(bool(self._last_results))
-        self._log(f"--- Hoàn tất: {total} kết quả ---", Colors.ACCENT_PRIMARY)
-        self.statusBar().showMessage(f"Hoàn tất: {total} kết quả.")
+        if stop_reason:
+            self._log(f"--- Đã TỰ DỪNG: {stop_reason} ---", Colors.ACCENT_RED)
+            self.statusBar().showMessage("Đã tự dừng do thiết bị gặp sự cố.")
+            QMessageBox.critical(
+                self, "Kịch bản đã tự dừng",
+                "Phần mềm đã TỰ DỪNG kịch bản vì thiết bị gặp sự cố, tránh gửi "
+                f"tiếp lệnh vào máy đang lỗi:\n\n{stop_reason}\n\n"
+                "Hãy kiểm tra lại kết nối/thiết bị rồi chạy lại.",
+            )
+        else:
+            self._log(f"--- Hoàn tất: {total} kết quả ---", Colors.ACCENT_PRIMARY)
+            self.statusBar().showMessage(f"Hoàn tất: {total} kết quả.")
 
     def _on_failed(self, msg):
         self.btn_run.setEnabled(True); self.btn_stop.setEnabled(False)
