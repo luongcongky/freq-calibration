@@ -78,7 +78,7 @@ def test_missing_field_in_template_renders_blank_not_error():
     assert tpl.render(ctx) == "[]"
 
 
-def test_header_dict_maps_all_nineteen_fields():
+def test_header_dict_maps_all_fields():
     session = _session(date_val=date(2026, 7, 30), valid_until=date(2027, 7, 30))
     session.meta.dut.name = "Máy đếm tần số"
     session.meta.dut.model = "CNT-90XL"
@@ -88,8 +88,10 @@ def test_header_dict_maps_all_nineteen_fields():
     session.meta.temperature = "23 °C"
     session.meta.humidity = "55 %"
     session.meta.inspection_equipment = "Máy chuẩn X"
+    session.meta.calibration_conditions = "Phòng LAB đạt chuẩn ISO 17025"
     session.meta.cert_number = "GCN-001"
-    meta_json = {"kind": "kiem_dinh", "measurement_range": "0,002 Hz đến 27 GHz"}
+    meta_json = {"kind": "kiem_dinh", "measurement_range": "0,002 Hz đến 27 GHz",
+                 "standard": "QTHC 2.515 : 2021"}
 
     ctx = build_meta_context(session, meta_json)
     header = ctx["header"]
@@ -111,6 +113,8 @@ def test_header_dict_maps_all_nineteen_fields():
     assert header["temperature"] == "23 °C"
     assert header["humidity"] == "55 %"
     assert header["equipment"] == "Máy chuẩn X"
+    assert header["conditions"] == "Phòng LAB đạt chuẩn ISO 17025"
+    assert header["standard"] == "QTHC 2.515 : 2021"
     assert header["cert_no"] == "GCN-001"
     assert header["today"] == ctx["meta"]["date_line"] and header["today"] != ""
     assert header["cal_date"] == ctx["meta"]["cal_date_line"]

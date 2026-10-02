@@ -5,7 +5,7 @@
   "dut_models": [
     "N1922A"
   ],
-  "standard": "",
+  "standard": "A1-01.PP01.01 (2023)",
   "measurement_range": "",
   "dut_manufacturer_default": "Keysight"
 }

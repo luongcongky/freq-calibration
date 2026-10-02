@@ -96,6 +96,12 @@ def build_meta_context(session: CalibrationSession, meta_json: dict) -> dict:
         "humidity": meta.humidity,
         "equipment": meta.inspection_equipment,
         "conditions": meta.calibration_conditions,
+        # Mã/số hiệu phương pháp thực hiện (vd "A1-01.PP01.01 (2023)",
+        # "QTHC 2.515 : 2021") — hằng số CỦA TEMPLATE (meta.json["standard"],
+        # đã đọc sẵn vào self.STANDARD ở core/report_templates/generic.py),
+        # không đổi theo từng phiên nên KHÔNG có field GUI ở Bước 1 — admin
+        # chỉnh trong meta.json khi tạo/sửa mẫu.
+        "standard": meta_json.get("standard", ""),
         "cert_no": meta.cert_number,
         "today": date_line,
         "cal_date": date_line,

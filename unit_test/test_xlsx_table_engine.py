@@ -113,6 +113,110 @@ def test_render_xlsx_missing_table_id_writes_empty_result(tmp_path):
     assert wb2.active["A1"].value is None
 
 
+def test_render_xlsx_binds_header_fields_when_meta_context_fn_given(tmp_path):
+    from core.generic_report_context import build_meta_context
+
+    descriptor = _descriptor()
+    session = _session_with_result(descriptor)
+    session.meta.dut.name = "Cảm biến công suất"
+    session.meta.dut.serial = "SN-999"
+    session.meta.operator = "nguyễn văn a"
+
+    tpl_path = tmp_path / "tpl.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = "header('name')"
+    ws["A2"] = "header('serial')"
+    ws["A3"] = "header('khong_ton_tai')"
+    wb.save(str(tpl_path))
+    out_path = tmp_path / "out.xlsx"
+
+    xlsx_table_engine.render_xlsx_with_table_contexts(
+        session, [descriptor], tpl_path, out_path,
+        lambda s: build_meta_context(s, {"kind": "kiem_dinh"}),
+    )
+
+    wb2 = openpyxl.load_workbook(str(out_path))
+    ws2 = wb2.active
+    assert ws2["A1"].value == "Cảm biến công suất"
+    assert ws2["A2"].value == "SN-999"
+    assert ws2["A3"].value is None   # field header không tồn tại -> rỗng, không lỗi
+
+
+def test_render_xlsx_header_marker_embedded_in_static_text(tmp_path):
+    """Khách hàng hỏi: 1 ô ghi 'Nhiệt độ: header(...)' (nhãn + tag CHUNG 1 ô)
+    thì app có link được không? -> Có, với header()/result()/gcn_*() (luôn
+    là chuỗi hiển thị) — chỉ report_val() mới bắt buộc chiếm trọn ô (cần giữ
+    số thực cho công thức khác tham chiếu)."""
+    from core.generic_report_context import build_meta_context
+
+    descriptor = _descriptor()
+    session = _session_with_result(descriptor)
+    session.meta.temperature = "23 °C"
+
+    tpl_path = tmp_path / "tpl.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = "Nhiệt độ: header('temperature')"
+    ws["A2"] = "Trước: header('khong_ton_tai')"    # field rỗng nhưng CÓ chữ tĩnh kèm -> giữ chữ tĩnh
+    ws["A3"] = "Trước header('temperature') sau"   # 2 đoạn chữ tĩnh bao quanh
+    ws["A4"] = "header('khong_ton_tai')"           # CHỈ marker, không ra giá trị -> None (như cũ)
+    wb.save(str(tpl_path))
+    out_path = tmp_path / "out.xlsx"
+
+    xlsx_table_engine.render_xlsx_with_table_contexts(
+        session, [descriptor], tpl_path, out_path,
+        lambda s: build_meta_context(s, {"kind": "kiem_dinh"}),
+    )
+
+    wb2 = openpyxl.load_workbook(str(out_path))
+    ws2 = wb2.active
+    assert ws2["A1"].value == "Nhiệt độ: 23 °C"
+    assert ws2["A2"].value == "Trước: "
+    assert ws2["A3"].value == "Trước 23 °C sau"
+    assert ws2["A4"].value is None
+
+
+def test_render_xlsx_report_val_requires_whole_cell_not_embedded(tmp_path):
+    """report_val() nhúng trong chữ tĩnh KHÔNG được hỗ trợ (phải ghi SỐ THẬT
+    để công thức khác tính tiếp, mix với chữ sẽ ép cả ô thành chuỗi) -> ô giữ
+    nguyên y hệt chữ gốc, không bị thay thế/không bị lỗi."""
+    descriptor = _descriptor()
+    session = _session_with_result(descriptor)
+
+    tpl_path = tmp_path / "tpl.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = "Giá trị: report_val('T1')"
+    wb.save(str(tpl_path))
+    out_path = tmp_path / "out.xlsx"
+
+    xlsx_table_engine.render_xlsx_with_table_contexts(session, [descriptor], tpl_path, out_path)
+
+    wb2 = openpyxl.load_workbook(str(out_path))
+    assert wb2.active["A1"].value == "Giá trị: report_val('T1')"
+
+
+def test_render_xlsx_header_marker_stays_untouched_without_meta_context_fn(tmp_path):
+    """Mẫu cũ không có ô header('...') nào, hoặc gọi không truyền
+    meta_context_fn -> tương thích ngược, không crash, ô header('...') (nếu
+    có) chỉ đơn giản bị xoá rỗng như mọi field không tìm thấy."""
+    descriptor = _descriptor()
+    session = _session_with_result(descriptor)
+
+    tpl_path = tmp_path / "tpl.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = "header('name')"
+    wb.save(str(tpl_path))
+    out_path = tmp_path / "out.xlsx"
+
+    xlsx_table_engine.render_xlsx_with_table_contexts(session, [descriptor], tpl_path, out_path)
+
+    wb2 = openpyxl.load_workbook(str(out_path))
+    assert wb2.active["A1"].value is None
+
+
 def test_build_raw_rows_by_table_returns_raw_readings(tmp_path):
     descriptor = _descriptor()
     session = _session_with_result(descriptor)

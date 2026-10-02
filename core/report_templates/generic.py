@@ -113,7 +113,9 @@ class GenericReportTemplate(BaseReportTemplate):
     def generate_bienban(self, session: CalibrationSession, output_path) -> Path:
         if self._bienban_is_xlsx:
             return xlsx_table_engine.render_xlsx_with_table_contexts(
-                session, self._descriptors, self._bienban_template, output_path)
+                session, self._descriptors, self._bienban_template, output_path,
+                lambda s: build_meta_context(s, self._meta_json),
+            )
         return table_engine.render_with_table_contexts(
             session, self._descriptors, self._bienban_template, output_path,
             lambda s: build_meta_context(s, self._meta_json),
@@ -122,7 +124,9 @@ class GenericReportTemplate(BaseReportTemplate):
     def generate_gcnkd(self, session: CalibrationSession, output_path) -> Path:
         if self._gcnkd_is_xlsx:
             return xlsx_table_engine.render_xlsx_with_table_contexts(
-                session, self._descriptors, self._gcnkd_template, output_path)
+                session, self._descriptors, self._gcnkd_template, output_path,
+                lambda s: build_meta_context(s, self._meta_json),
+            )
         return table_engine.render_with_table_contexts(
             session, self._descriptors, self._gcnkd_template, output_path,
             lambda s: build_meta_context(s, self._meta_json),
