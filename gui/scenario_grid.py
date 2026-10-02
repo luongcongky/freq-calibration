@@ -2112,6 +2112,15 @@ class ScenarioGridWindow(QMainWindow):
             self._log(f"--- Hoàn tất: {total} kết quả ---", Colors.ACCENT_PRIMARY)
             self.statusBar().showMessage(f"Hoàn tất: {total} kết quả.")
 
+        # Ghi log RAM sau mỗi lần chạy — chẩn đoán sự cố tăng RAM ở máy khách
+        # hàng (đặc biệt kịch bản có loop dài + report_val() với thiết bị
+        # thật) mà dev không truy cập từ xa được. Xem core/ram_monitor.py.
+        try:
+            from core.ram_monitor import get_process_memory_mb
+            logger.info("[RAM] sau khi chạy kịch bản: %.1f MB", get_process_memory_mb())
+        except Exception:  # noqa: BLE001
+            pass
+
     def _on_failed(self, msg):
         self.btn_run.setEnabled(True); self.btn_stop.setEnabled(False)
         self._log(f"LỖI: {msg}", Colors.ACCENT_RED)

@@ -1,4 +1,3 @@
-import logging
 import sys
 
 
@@ -33,11 +32,8 @@ def main():
         _run_identify_probe(sys.argv[2:])
         return
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    from core.app_logging import setup_logging
+    setup_logging()
     from gui.session_manager import run_session_manager
     run_session_manager()
 

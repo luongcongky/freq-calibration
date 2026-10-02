@@ -28,7 +28,7 @@ from PyQt5.QtWidgets import (
     QListWidget, QAbstractItemView, QCheckBox,
     QGroupBox, QScrollArea, QApplication, QFrame, QStackedWidget,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDate
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDate, QTimer
 from PyQt5.QtGui import QColor, QIcon, QPixmap
 
 from core.session import CalibrationSession, SessionMeta, DUTInfo, SessionTest
@@ -48,6 +48,10 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # Hằng số
 # ============================================================================
+
+# Chu kỳ ghi log RAM định kỳ (xem _log_ram) — phục vụ chẩn đoán RAM tăng bất
+# thường ở máy khách hàng mà dev không truy cập từ xa được (core/app_logging.py).
+RAM_LOG_INTERVAL_MS = 5 * 60 * 1000   # 5 phút
 
 STATUS_LABELS = {
     "pending":  ("⏳ Chờ",       Colors.TEXT_DIM),
@@ -1226,6 +1230,23 @@ class SessionManagerWindow(QMainWindow):
         self._auto_load_profile()
         self._on_template_changed()   # load default tests khi khởi động
 
+        # Ghi log RAM định kỳ — chẩn đoán sự cố tăng RAM ở máy khách hàng mà
+        # dev không truy cập từ xa được (xem core/app_logging.py, core/ram_monitor.py).
+        self._log_ram("khởi động")
+        self._ram_log_timer = QTimer(self)
+        self._ram_log_timer.timeout.connect(lambda: self._log_ram("định kỳ"))
+        self._ram_log_timer.start(RAM_LOG_INTERVAL_MS)
+
+    def _log_ram(self, context: str) -> None:
+        """Ghi 1 dòng log RAM hiện tại — gọi định kỳ + sau các thao tác tốn
+        RAM (chạy kịch bản, xuất báo cáo). Không được để lỗi đo RAM làm crash
+        app, nên nuốt mọi exception."""
+        try:
+            from core.ram_monitor import get_process_memory_mb
+            logger.info("[RAM] %s: %.1f MB", context, get_process_memory_mb())
+        except Exception:  # noqa: BLE001
+            pass
+
     # -------------------------------------------------------------------------
     def _build_ui(self):
         central = QWidget()
@@ -1284,6 +1305,8 @@ class SessionManagerWindow(QMainWindow):
         mkbtn("🆕 Mới",        self._new_session)
         mkbtn("📂 Mở phiên…",  self._load_session)
         mkbtn("💾 Lưu phiên…", self._save_session)
+        mkbtn("📋 Xuất chẩn đoán", self._export_diagnostics,
+              tip="Xuất file .zip gồm log + thông tin máy để gửi cho nhà phát triển khi gặp sự cố (vd RAM tăng bất thường)")
         root.addWidget(tool_frame)
 
         # ── Step wizard (rail trái + nội dung phải) ──────────────────────────
@@ -1748,6 +1771,7 @@ class SessionManagerWindow(QMainWindow):
             self._step_review.refresh_row(index)
             self._step_review.set_running(False)
             self._log(f"⛔ TỰ DỪNG [{test.table_id}]: {stop_reason}", Colors.ACCENT_RED)
+            self._log_ram("sau khi tự dừng do sự cố thiết bị")
             QMessageBox.critical(
                 self, "Đã tự dừng do sự cố thiết bị",
                 f"Bài test [{test.table_id}] đã TỰ DỪNG vì thiết bị gặp sự cố:\n\n"
@@ -1782,6 +1806,7 @@ class SessionManagerWindow(QMainWindow):
             self._log("=== PHIÊN HOÀN TẤT — CÓ BÀI KHÔNG ĐẠT ===", Colors.ACCENT_RED)
         else:
             self._log("=== Đã chạy xong — chưa có dòng nào được xác nhận vào báo cáo ===", Colors.ACCENT_PRIMARY)
+        self._log_ram("sau khi chạy xong phiên")
 
     def _stop_run(self):
         if self._worker and self._worker.isRunning():
@@ -1820,6 +1845,7 @@ class SessionManagerWindow(QMainWindow):
             tpl.generate_bienban(self._session, path)
             self._log(f"Đã xuất Biên Bản: {path}", Colors.ACCENT_GREEN)
             self._open_file(path)
+            self._log_ram("sau khi xuất Biên Bản")
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi xuất Biên Bản", str(exc))
 
@@ -1836,8 +1862,28 @@ class SessionManagerWindow(QMainWindow):
             tpl.generate_gcnkd(self._session, path)
             self._log(f"Đã xuất GCN: {path}", Colors.ACCENT_GREEN)
             self._open_file(path)
+            self._log_ram("sau khi xuất GCN")
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi xuất GCN", str(exc))
+
+    def _export_diagnostics(self):
+        """Xuất 1 file .zip gồm log + thông tin máy — khách hàng gửi lại cho
+        dev khi gặp sự cố (vd RAM tăng bất thường), không cần dev truy cập
+        từ xa (app chạy offline tại phòng đo/Lab)."""
+        path, _ = get_save_file_name(
+            self, "Xuất file chẩn đoán",
+            f"chan_doan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+            "Zip (*.zip)")
+        if not path:
+            return
+        try:
+            from core.diagnostics import export_diagnostic_bundle
+            export_diagnostic_bundle(path)
+            QMessageBox.information(
+                self, "Đã xuất file chẩn đoán",
+                f"Đã xuất: {path}\n\nGửi file này cho nhà phát triển khi gặp sự cố.")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Lỗi xuất file chẩn đoán", str(exc))
 
     _PREVIEW_KIND_LABEL = {"bienban": "Biên Bản", "gcnkd": "GCN"}
 
