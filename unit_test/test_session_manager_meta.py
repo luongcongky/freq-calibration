@@ -25,6 +25,7 @@ from core import table_wizard_io as wio
 from core.session import CalibrationSession, SessionTest, ReportTable, TableRow
 from gui.session_manager import (
     _MetaTab, _table_has_pass_fail, SessionManagerWindow, _StepRail, _ExportTab,
+    _TestReviewTab,
 )
 
 _app = QApplication.instance() or QApplication([])
@@ -364,5 +365,33 @@ def test_export_tab_total_stat_label_is_test_count_not_measurement_points():
                          result_table=ReportTable(table_id="A2", rows=[TableRow() for _ in range(19)]))
         tab.refresh([t1, t2], None, "TEMPLATE_FREQ")
         assert tab._rs_vals["total"].text() == "2"   # 2 BÀI, không phải 38 điểm đo
+    finally:
+        tab.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# BUG-23b: nút "Chạy tất cả"/"■ Dừng" ở Bước 2 (và tương tự ở Scenario
+# Builder) không đổi style khi bị vô hiệu — background tự đặt riêng không
+# có quy tắc :disabled nên vẫn sáng y màu dù setEnabled(False), bấm không
+# có tác dụng mà trông như đang bật.
+# ---------------------------------------------------------------------------
+
+def test_run_stop_buttons_have_disabled_style_rule():
+    tab = _TestReviewTab()
+    try:
+        assert ":disabled" in tab.btn_run.styleSheet(), (
+            "btn_run (Chạy tất cả) không có style riêng cho trạng thái vô hiệu (BUG-23b)")
+        assert ":disabled" in tab.btn_stop.styleSheet(), (
+            "btn_stop (■ Dừng) không có style riêng cho trạng thái vô hiệu (BUG-23b)")
+    finally:
+        tab.deleteLater()
+
+
+def test_stop_button_starts_disabled_and_run_button_enabled():
+    """Trạng thái khởi tạo đúng — setEnabled(False)/True khớp UI thật."""
+    tab = _TestReviewTab()
+    try:
+        assert tab.btn_stop.isEnabled() is False
+        assert tab.btn_run.isEnabled() is True
     finally:
         tab.deleteLater()

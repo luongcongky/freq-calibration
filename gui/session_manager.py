@@ -686,16 +686,23 @@ class _TestReviewTab(QWidget):
         self.btn_run_one.setEnabled(False)
         self.btn_run_one.clicked.connect(self._request_run_one)
         bar.addWidget(self.btn_run_one)
+        # QPushButton:disabled toàn cục (gui/theme.py) chỉ đổi color/
+        # border-color, KHÔNG đụng background — nút tự đặt background riêng
+        # (vàng CHẠY/đỏ DỪNG) mà không có quy tắc :disabled của riêng nó thì
+        # vẫn sáng y màu dù đã setEnabled(False) (bấm không có tác dụng,
+        # trông như đang bật) — báo cáo lỗi BUG-23b.
+        _disabled_qss = (f"QPushButton:disabled {{ background:{Colors.BG_CARD_HI};"
+                         f" color:{Colors.TEXT_DIM}; border:1px solid {Colors.BORDER}; }}")
         self.btn_run = QPushButton("▶ Chạy tất cả")
         self.btn_run.setStyleSheet(
-            f"background:{Colors.ACCENT_PRIMARY}; color:{Colors.BG_WINDOW};"
-            f" font-weight:bold; border:none; border-radius:6px; padding:8px 18px;")
+            f"QPushButton {{ background:{Colors.ACCENT_PRIMARY}; color:{Colors.BG_WINDOW};"
+            f" font-weight:bold; border:none; border-radius:6px; padding:8px 18px; }}" + _disabled_qss)
         self.btn_run.clicked.connect(self.run_all_requested)
         bar.addWidget(self.btn_run)
         self.btn_stop = QPushButton("■ Dừng")
         self.btn_stop.setStyleSheet(
-            f"background:{Colors.ACCENT_RED}; color:{Colors.BG_WINDOW};"
-            f" font-weight:bold; border:none; border-radius:6px; padding:8px 18px;")
+            f"QPushButton {{ background:{Colors.ACCENT_RED}; color:{Colors.BG_WINDOW};"
+            f" font-weight:bold; border:none; border-radius:6px; padding:8px 18px; }}" + _disabled_qss)
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.stop_requested)
         bar.addWidget(self.btn_stop)

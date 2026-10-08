@@ -1082,8 +1082,17 @@ class ScenarioGridWindow(QMainWindow):
         def mkbtn(text, slot, color=None):
             b = QPushButton(text); b.clicked.connect(slot)
             if color:
-                b.setStyleSheet(f"background:{color}; color:{Colors.BG_WINDOW}; font-weight:bold;"
-                                f" border:none; border-radius:6px; padding:8px 14px;")
+                # QPushButton:disabled toàn cục (gui/theme.py) chỉ đổi
+                # color/border-color, KHÔNG đụng background — nếu nút này
+                # TỰ đặt background riêng (vd đỏ CHẠY/DỪNG) mà không có quy
+                # tắc :disabled CỦA RIÊNG NÓ, nút vẫn hiện y màu sáng dù đã
+                # setEnabled(False) (bấm không có tác dụng gì, trông như
+                # đang bật) — báo cáo lỗi BUG-23b.
+                b.setStyleSheet(
+                    f"QPushButton {{ background:{color}; color:{Colors.BG_WINDOW}; font-weight:bold;"
+                    f" border:none; border-radius:6px; padding:8px 14px; }}"
+                    f"QPushButton:disabled {{ background:{Colors.BG_CARD_HI}; color:{Colors.TEXT_DIM};"
+                    f" border:1px solid {Colors.BORDER}; }}")
             bar.addWidget(b); return b
 
         def sep():
@@ -2113,13 +2122,24 @@ class ScenarioGridWindow(QMainWindow):
         self._last_mode = "REAL"
         # Trước đây chỉ có log cuộn "B123 ..." mỗi bước — kịch bản dài (vài
         # nghìn bước) không biết đang ở đâu/còn bao lâu (báo cáo lỗi
-        # BUG-23). flat_nodes KHÔNG có vòng lặp -> tổng số bước THẬT cố
-        # định, hiện được %; CÓ vòng lặp -> số lần thực thi thật phụ thuộc
-        # điều kiện dừng (không biết trước), chỉ hiện bộ đếm, không giả
-        # định tổng.
+        # BUG-23). flat_nodes KHÔNG có Loop/If -> tổng số KẾT QUẢ THẬT cố
+        # định, hiện được %; CÓ Loop (số lần lặp phụ thuộc điều kiện dừng,
+        # không biết trước) hoặc If (chỉ 1 nhánh THỰC SỰ chạy, không đoán
+        # trước được nhánh nào) -> chỉ hiện bộ đếm, không giả định tổng.
+        #
+        # LƯU Ý mẫu số/tử số phải CÙNG ĐƠN VỊ "số StepResult phát ra", không
+        # phải "số node tĩnh": core/scenario_runner.py phát 1 StepResult
+        # MỖI THIẾT BỊ cho 1 bước nhiều máy (vd *IDN? tick 2 máy -> 2 kết
+        # quả cho ĐÚNG 1 bước) — trước đây mẫu số đếm theo SỐ NODE
+        # (len(flat_nodes)) còn tử số đếm theo SỐ KẾT QUẢ (_run_done_steps,
+        # tăng mỗi lần _on_result()), lệch đơn vị nên ra ">100%" (báo cáo
+        # lỗi NEW-06, vd "4/3 bước (133%)" — 2 bước x 2 máy = 4 kết quả,
+        # trong khi mẫu số tính theo 3 NODE gồm cả bước WAIT 1 máy).
         flat_nodes = enumerate_nodes(self.scenario.nodes)
-        has_loop = any(isinstance(n, LoopBlock) for n in flat_nodes)
-        self._run_total_steps = None if has_loop else len(flat_nodes)
+        has_unpredictable_flow = any(isinstance(n, (LoopBlock, IfBlock)) for n in flat_nodes)
+        self._run_total_steps = (
+            None if has_unpredictable_flow
+            else sum(max(1, len(n.devices)) for n in flat_nodes))
         self._run_done_steps = 0
         self._update_run_progress_status()
         self._log(f"--- Bắt đầu chạy ({self._last_mode}) ---", Colors.ACCENT_PRIMARY)

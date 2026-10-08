@@ -243,6 +243,28 @@ def test_update_run_progress_status_shows_counter_only_with_loop():
         win.deleteLater()
 
 
+def _run_with_fake_worker(win, monkeypatch):
+    """Gọi win._run() thật nhưng né hẳn worker/thiết bị thật — chỉ cần
+    chạy tới chỗ _run_total_steps được tính xong (không chạy ScenarioWorker
+    thật, không cần thiết bị/validate_scenario)."""
+    monkeypatch.setattr(win, "worker", None)
+    monkeypatch.setattr("gui.scenario_grid.validate_scenario", lambda scn: [])
+    monkeypatch.setattr(win, "address_map", {})
+    win.scenario.all_device_keys = lambda: []
+
+    class _FakeWorker:
+        def __init__(self, *a, **k):
+            pass
+        def start(self):
+            pass
+        result_ready = type("Sig", (), {"connect": lambda self, f: None})()
+        finished_all = type("Sig", (), {"connect": lambda self, f: None})()
+        failed = type("Sig", (), {"connect": lambda self, f: None})()
+
+    monkeypatch.setattr("gui.scenario_grid.ScenarioWorker", _FakeWorker)
+    win._run()
+
+
 def test_run_detects_loop_and_leaves_total_steps_unknown(monkeypatch):
     """_run() phải tự nhận ra kịch bản có LoopBlock (ở bất kỳ độ sâu nào,
     kể cả trong nhánh If) để không hiện % tiến trình SAI cho tổng không cố
@@ -255,25 +277,69 @@ def test_run_detects_loop_and_leaves_total_steps_unknown(monkeypatch):
     win.setAttribute(Qt.WA_DeleteOnClose, False)
     try:
         win.scenario.nodes = [step, loop]
-        monkeypatch.setattr(win, "worker", None)
-        # Né đoạn thật gửi lệnh (validate_scenario/ScenarioWorker) — chỉ
-        # cần test tới chỗ _run_total_steps được tính xong.
-        monkeypatch.setattr("gui.scenario_grid.validate_scenario", lambda scn: [])
-        monkeypatch.setattr(win, "address_map", {})
-        monkeypatch.setattr(ScenarioGridWindow, "all_device_keys", lambda self: [], raising=False)
-        win.scenario.all_device_keys = lambda: []
-
-        class _FakeWorker:
-            def __init__(self, *a, **k):
-                pass
-            def start(self):
-                pass
-            result_ready = type("Sig", (), {"connect": lambda self, f: None})()
-            finished_all = type("Sig", (), {"connect": lambda self, f: None})()
-            failed = type("Sig", (), {"connect": lambda self, f: None})()
-
-        monkeypatch.setattr("gui.scenario_grid.ScenarioWorker", _FakeWorker)
-        win._run()
+        _run_with_fake_worker(win, monkeypatch)
         assert win._run_total_steps is None, "Có LoopBlock nhưng vẫn coi tổng bước là cố định"
+    finally:
+        win.deleteLater()
+
+
+def test_run_detects_if_without_loop_also_leaves_total_unknown(monkeypatch):
+    """IfBlock KHÔNG có vòng lặp vẫn phải coi tổng là không biết trước —
+    chỉ 1 nhánh THỰC SỰ chạy, không đoán được nhánh nào trước khi chạy."""
+    from core.scenario import ScenarioStep, IfBlock, Branch, Condition
+
+    step = ScenarioStep(action="wait", devices=[], params={"seconds": 0})
+    ifblock = IfBlock(branches=[Branch(condition=Condition(kind="expr", expr="1"), body=[step])])
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win.scenario.nodes = [ifblock]
+        _run_with_fake_worker(win, monkeypatch)
+        assert win._run_total_steps is None, "Có IfBlock nhưng vẫn coi tổng bước là cố định"
+    finally:
+        win.deleteLater()
+
+
+def test_run_total_steps_counts_one_result_per_device_not_per_node(monkeypatch):
+    """NEW-06: 2 bước raw_scpi x 2 máy (4231A+NRVD) + 1 bước WAIT (0 máy) ->
+    core/scenario_runner.py phát ĐÚNG 1 StepResult/máy cho mỗi bước nhiều
+    máy, nên tổng kỳ vọng phải là 2+2+1=5 kết quả — KHÔNG phải 3 (số NODE
+    tĩnh, bất kể máy) như trước, gây "4/3 bước (133%)" khi mới chạy xong 2
+    bước đầu (4 kết quả) mà bước WAIT còn chưa xong."""
+    from core.scenario import ScenarioStep
+
+    s1 = ScenarioStep(action="raw_scpi", devices=["4231A", "NRVD"],
+                      params={"__template__": "*IDN?", "__is_query__": True})
+    s2 = ScenarioStep(action="raw_scpi", devices=["4231A", "NRVD"],
+                      params={"__template__": "*CLS", "__is_query__": False})
+    s3 = ScenarioStep(action="wait", devices=[], params={"seconds": 8})
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win.scenario.nodes = [s1, s2, s3]
+        _run_with_fake_worker(win, monkeypatch)
+        assert win._run_total_steps == 5, (
+            f"Tổng kỳ vọng phải khớp số StepResult thật (5), không phải số node (3): "
+            f"{win._run_total_steps!r}")
+
+        # Mô phỏng đúng tình huống bug: 2 bước đầu xong (4 kết quả: *IDN? x2
+        # máy + *CLS x2 máy), bước WAIT còn đang chạy -> KHÔNG được vượt 100%.
+        win._run_done_steps = 4
+        win._update_run_progress_status()
+        pct = win._run_done_steps * 100 // win._run_total_steps
+        assert pct == 80, f"Tỉ lệ phải là 80% (4/5), không phải >100%: {pct}%"
+        assert win.statusBar().currentMessage() == "Đã chạy: 4/5 bước (80%)"
+    finally:
+        win.deleteLater()
+
+
+def test_run_stop_buttons_have_disabled_style_rule():
+    """BUG-23b: "▶ CHẠY"/"■ DỪNG" ở Scenario Builder cùng lỗi với Bước 2 —
+    background tự đặt riêng không có quy tắc :disabled."""
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        assert ":disabled" in win.btn_run.styleSheet()
+        assert ":disabled" in win.btn_stop.styleSheet()
     finally:
         win.deleteLater()
