@@ -47,7 +47,12 @@ def _resolve_start(directory: str) -> str:
 def get_open_file_name(parent, caption: str = "", directory: str = "", filter: str = ""):
     path, selected_filter = QFileDialog.getOpenFileName(
         parent, caption, _resolve_start(directory), filter)
+    # QFileDialog luôn trả "/" (quy ước nội bộ Qt, không theo platform) —
+    # đổi về đúng dấu phân cách của Windows ("\") để hiển thị thống nhất
+    # với các đường dẫn dựng qua pathlib ở nơi khác trong app (vd đường dẫn
+    # kịch bản mặc định của mẫu), tránh lúc "\" lúc "/" (báo cáo lỗi BUG-23).
     if path:
+        path = os.path.normpath(path)
         _remember_dir(path)
     return path, selected_filter
 
@@ -56,5 +61,6 @@ def get_save_file_name(parent, caption: str = "", directory: str = "", filter: s
     path, selected_filter = QFileDialog.getSaveFileName(
         parent, caption, _resolve_start(directory), filter)
     if path:
+        path = os.path.normpath(path)
         _remember_dir(path)
     return path, selected_filter

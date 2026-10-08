@@ -39,7 +39,7 @@ from PyQt5.QtGui import QColor, QFont
 
 from core.custom_devices import get_device_registry
 from gui.theme import Colors
-from gui.widgets import paint_corner_brackets
+from gui.widgets import paint_corner_brackets, confirm_yes_no
 from core.commands import (
     Cmd, COMMON_COMMANDS, DEVICE_COMMANDS,
     load_custom, CUSTOM_DATA_PATH, parse_cmd,
@@ -635,13 +635,12 @@ class CommandReferenceDialog(QDialog):
             return
 
         label = old_cmd.cmd[:60] + ("…" if len(old_cmd.cmd) > 60 else "")
-        reply = QMessageBox.question(
+        if not confirm_yes_no(
             self, "Xác nhận xóa",
             f"Xóa lệnh:\n  {label}\n\nLệnh tích hợp sẽ biến mất khỏi dòng máy này "
             f"(dùng ↩ Mặc định để phục hồi).",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
+            default_yes=False,
+        ):
             return
 
         self._rows = [(s, c) for s, c in self._rows if c is not old_cmd]
@@ -662,13 +661,12 @@ class CommandReferenceDialog(QDialog):
         cls = get_device_registry().get(self._model_key, {}).get("cls")
         model_name = getattr(cls, "MODEL_NAME", self._model_key) if cls else self._model_key
 
-        reply = QMessageBox.question(
+        if not confirm_yes_no(
             self, "Khôi phục mặc định",
             f"Khôi phục tập lệnh gốc cho:\n  {model_name}\n\n"
             "Mọi thay đổi (thêm / sửa / xóa) sẽ bị mất.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
+            default_yes=False,
+        ):
             return
 
         self._custom.pop(self._model_key, None)

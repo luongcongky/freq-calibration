@@ -164,6 +164,33 @@ def test_multi_device_step_result_shows_both_devices_tagged():
         win.deleteLater()
 
 
+def test_multi_device_write_command_shows_placeholder_for_each_device():
+    """Lệnh GHI (result_cell() rỗng) trên NHIỀU thiết bị — trước đây cả 2
+    kết quả rỗng bị bộ lọc "bỏ ô trống" nuốt mất hoàn toàn, không còn gì
+    hiện trên lưới (chỉ thấy trong log) dù cả 2 máy đều đã chạy xong."""
+    step = ScenarioStep(action="raw_scpi", devices=["4231A", "NRVD"],
+                        params={"__template__": "SENS:FREQ 1E9", "__is_query__": False})
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win.scenario.nodes = [step]
+        win._refresh_tree()
+        node_id = id(step)
+
+        res1 = StepResult(action="raw_scpi", device_key="4231A", node_id=node_id, ok=True)
+        res2 = StepResult(action="raw_scpi", device_key="NRVD", node_id=node_id, ok=True)
+        win._on_result(res1)
+        win._on_result(res2)
+
+        item = win._id_to_item.get(node_id)
+        text = item.text(4)
+        assert "[4231A]" in text and "[NRVD]" in text, (
+            f"Kết quả lệnh ghi của 1 trong 2 máy biến mất khỏi lưới (BUG-20): {text!r}")
+        assert item.toolTip(4) == text
+    finally:
+        win.deleteLater()
+
+
 def test_single_device_step_result_not_tagged():
     """Bước chỉ 1 thiết bị — KHÔNG gắn thêm [tên máy] vào cột Kết quả như
     trước đây (chỉ bước nhiều máy mới cần phân biệt)."""
@@ -182,5 +209,71 @@ def test_single_device_step_result_not_tagged():
 
         item = win._id_to_item.get(node_id)
         assert item.text(4) == "OK"
+    finally:
+        win.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# BUG-23: kịch bản dài chỉ có log cuộn "B123 ..." mỗi bước, không biết tổng
+# số bước/% tiến trình.
+# ---------------------------------------------------------------------------
+
+def test_update_run_progress_status_shows_percent_without_loop():
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win._run_total_steps = 4
+        win._run_done_steps = 1
+        win._update_run_progress_status()
+        assert win.statusBar().currentMessage() == "Đã chạy: 1/4 bước (25%)"
+    finally:
+        win.deleteLater()
+
+
+def test_update_run_progress_status_shows_counter_only_with_loop():
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win._run_total_steps = None   # có vòng lặp -> không biết trước tổng
+        win._run_done_steps = 137
+        win._update_run_progress_status()
+        assert win.statusBar().currentMessage() == "Đã chạy: 137 bước"
+        assert "%" not in win.statusBar().currentMessage()
+    finally:
+        win.deleteLater()
+
+
+def test_run_detects_loop_and_leaves_total_steps_unknown(monkeypatch):
+    """_run() phải tự nhận ra kịch bản có LoopBlock (ở bất kỳ độ sâu nào,
+    kể cả trong nhánh If) để không hiện % tiến trình SAI cho tổng không cố
+    định — chỉ kiểm tra việc tính total_steps, không chạy worker thật."""
+    from core.scenario import ScenarioStep, LoopBlock
+
+    step = ScenarioStep(action="wait", devices=[], params={"seconds": 0})
+    loop = LoopBlock(body=[step])
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win.scenario.nodes = [step, loop]
+        monkeypatch.setattr(win, "worker", None)
+        # Né đoạn thật gửi lệnh (validate_scenario/ScenarioWorker) — chỉ
+        # cần test tới chỗ _run_total_steps được tính xong.
+        monkeypatch.setattr("gui.scenario_grid.validate_scenario", lambda scn: [])
+        monkeypatch.setattr(win, "address_map", {})
+        monkeypatch.setattr(ScenarioGridWindow, "all_device_keys", lambda self: [], raising=False)
+        win.scenario.all_device_keys = lambda: []
+
+        class _FakeWorker:
+            def __init__(self, *a, **k):
+                pass
+            def start(self):
+                pass
+            result_ready = type("Sig", (), {"connect": lambda self, f: None})()
+            finished_all = type("Sig", (), {"connect": lambda self, f: None})()
+            failed = type("Sig", (), {"connect": lambda self, f: None})()
+
+        monkeypatch.setattr("gui.scenario_grid.ScenarioWorker", _FakeWorker)
+        win._run()
+        assert win._run_total_steps is None, "Có LoopBlock nhưng vẫn coi tổng bước là cố định"
     finally:
         win.deleteLater()

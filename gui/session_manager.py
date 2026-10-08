@@ -43,7 +43,7 @@ from gui.theme import Colors, build_global_qss
 from gui.report_preview import build_wysiwyg_table
 from gui.doc_render import docx_to_page_pixmaps, xlsx_to_page_pixmaps
 from gui.file_dialog_utils import get_open_file_name, get_save_file_name
-from gui.widgets import CheckBoxHeader, set_badge
+from gui.widgets import CheckBoxHeader, set_badge, confirm_yes_no
 
 logger = logging.getLogger(__name__)
 
@@ -298,10 +298,20 @@ class _StepRail(QWidget):
         self._lbl_tpl_standard.setText(standard or "— Chưa chọn mẫu —")
         self._lbl_tpl_name.setText(name or "")
 
-    def set_current(self, index: int):
+    def set_current(self, index: int, completed: set | None = None):
+        """completed: tập chỉ số bước ĐÃ THỰC SỰ hoàn thành (vd Bước 1 =
+        đã chọn mẫu, Bước 2 = mọi bài bật đã đo xong) — KHÔNG phải cứ đi
+        QUA (i < index) là tự coi như xong. Bỏ trống (None) thì dùng lại
+        đúng hành vi cũ (i < index) để tương thích ngược cho chỗ gọi chưa
+        kịp cập nhật. Trước đây chỉ xét vị trí điều hướng nên bấm sang Bước
+        2 ngay khi chưa chọn mẫu/chưa đo gì vẫn khiến Bước 1 hiện ✓ xanh,
+        Bước 2 cũng ✓ dù 0/8 bài đã đo và có bài đang Lỗi (báo cáo lỗi
+        BUG-09/10 — SessionManagerWindow._completed_steps() tính đúng)."""
         self._current = index
+        if completed is None:
+            completed = set(range(index))
         for i, (row, dot, title, sub) in enumerate(zip(self._rows, self._dots, self._titles, self._subtitles)):
-            if i < index:
+            if i != index and i in completed:
                 dot.setText("✓")
                 dot.setStyleSheet(f"font-size:14px; font-weight:bold; color:{Colors.ACCENT_GREEN}; background:transparent;")
                 title.setStyleSheet(f"color:{Colors.ACCENT_GREEN}; font-size:13px; font-weight:bold; "
@@ -1034,7 +1044,13 @@ class _ExportTab(QWidget):
         rs_lay.setSpacing(4)
         self._rs_vals: dict[str, QLabel] = {}
         for key, label, color in [
-            ("total",  "Tổng điểm đo",   Colors.ACCENT_PRIMARY),
+            # Đếm THEO BÀI (counts["total"] = len(tests)), không phải theo
+            # từng điểm đo trong bài — nhãn cũ "Tổng điểm đo" gây hiểu lầm
+            # khi 1 bài có hàng chục report_val() (vd "8" cho 2 bài × 19
+            # điểm, trong khi mỗi dòng list bên trên lại ghi "(0/0)" theo
+            # ĐÚNG số dòng kết quả của riêng bài đó — 2 đơn vị khác nhau
+            # dùng cùng chữ "điểm đo", báo cáo lỗi BUG-10).
+            ("total",  "Tổng số bài",    Colors.ACCENT_PRIMARY),
             ("passed", "Đạt yêu cầu",    Colors.ACCENT_GREEN),
             ("failed", "Không đạt",      Colors.ACCENT_RED),
         ]:
@@ -1204,7 +1220,14 @@ class _ExportTab(QWidget):
             rows = t.result_table.rows if t.result_table else []
             n = len(rows)
             c = sum(1 for r in rows if r.confirmed)
-            if n == 0:
+            if t.status == "failed":
+                # Trước đây không xét status — bài LỖI (result_table rỗng/
+                # None, n=0) rơi vào nhánh "n == 0" y như bài CHƯA CHẠY, hiện
+                # "⏳" (chờ) thay vì báo lỗi thật (báo cáo lỗi BUG-10 — "A1
+                # vẫn ⌛ thay vì ✗ Lỗi").
+                icon = "❌"
+                n_partial += 1
+            elif n == 0:
                 icon = "⏳"
             elif c == 0:
                 icon = "🟡"
@@ -1425,9 +1448,24 @@ class SessionManagerWindow(QMainWindow):
         self._step_review.row_edited.connect(self._refresh_export_tab)
 
     def _on_step_changed(self, index: int):
-        self.rail.set_current(index)
+        self.rail.set_current(index, self._completed_steps())
         if index == 2:
             self._refresh_export_tab()
+
+    def _completed_steps(self) -> set:
+        """Tiêu chí "✓ hoàn thành" THẬT cho từng bước — xem
+        _StepRail.set_current() (báo cáo lỗi BUG-09/10):
+          Bước 1: đã chọn mẫu báo cáo (template_id khác rỗng).
+          Bước 2: có ít nhất 1 bài được bật, và MỌI bài bật đã đo xong
+                  ("done" — không còn "pending"/"running"/"failed").
+        Bước 3 không có khái niệm "xong" riêng (bước cuối), không đưa vào."""
+        completed = set()
+        if self._session.template_id:
+            completed.add(0)
+        enabled = [t for t in self._session.tests if t.enabled]
+        if enabled and all(t.status == "done" for t in enabled):
+            completed.add(1)
+        return completed
 
     # -------------------------------------------------------------------------
     # Auto-load profile
@@ -1654,12 +1692,11 @@ class SessionManagerWindow(QMainWindow):
 
         # Người dùng chủ động đổi mẫu khi phiên đã có dữ liệu -> xác nhận vì sẽ
         # thay toàn bộ danh sách bài test hiện tại bằng mặc định của mẫu mới.
-        if QMessageBox.question(
+        if not confirm_yes_no(
                 self, "Đổi mẫu báo cáo",
                 "Đổi mẫu báo cáo sẽ thay toàn bộ danh sách bài test hiện tại "
                 "(và kết quả đã chạy) bằng danh sách mặc định của mẫu mới. "
-                "Tiếp tục?",
-                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                "Tiếp tục?"):
             idx = self._step_meta.cmb_template.findData(self._session.template_id)
             if idx >= 0:
                 self._step_meta.cmb_template.blockSignals(True)
@@ -1670,8 +1707,14 @@ class SessionManagerWindow(QMainWindow):
         self._apply_template_defaults(tpl, tid)
 
     def _apply_template_defaults(self, tpl, tid: str):
+        # Chỉ coi là "đổi mẫu" (xoá Tên phương tiện của mẫu cũ) khi TRƯỚC ĐÓ
+        # đã có 1 mẫu KHÁC được chọn thật — lần đầu chọn mẫu (template_id
+        # đang rỗng) không có "tên mẫu cũ" nào để xoá, không được đụng tới
+        # tên DUT người dùng có thể đã gõ trước khi kịp chọn mẫu (báo cáo
+        # lỗi REG-08 — vẫn chưa sửa đúng ở các vòng trước).
+        is_switch = bool(self._session.template_id) and self._session.template_id != tid
         self._session.template_id = tid
-        tpl.fill_session_defaults(self._session)
+        tpl.fill_session_defaults(self._session, reset_name=is_switch)
         self._session.tests = tpl.default_tests()
         self._step_meta.load_from(self._session)
         self._step_review.load_tests(self._session.tests, tid)
@@ -1684,9 +1727,8 @@ class SessionManagerWindow(QMainWindow):
     # -------------------------------------------------------------------------
 
     def _new_session(self):
-        if QMessageBox.question(self, "Tạo phiên mới",
-                                "Tạo phiên kiểm định mới? Dữ liệu hiện tại sẽ bị xóa.",
-                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if not confirm_yes_no(self, "Tạo phiên mới",
+                              "Tạo phiên kiểm định mới? Dữ liệu hiện tại sẽ bị xóa."):
             return
         self._session = CalibrationSession()
         self._step_meta.load_from(self._session)
@@ -1697,6 +1739,12 @@ class SessionManagerWindow(QMainWindow):
         # lần nữa ở dưới cũng gặp tid rỗng y hệt nên không tự xoá được —
         # phải xoá tay (báo cáo lỗi REG-07 — rail vẫn ghi tên mẫu CŨ sau "Mới").
         self.rail.set_template_info("", "")
+        # Cùng lý do với rail ở trên: _on_template_changed() với tid rỗng
+        # return ngay, không gọi tới _step_review.load_tests() — Bước 2 vẫn
+        # hiện nguyên danh sách/kết quả của PHIÊN CŨ (chỉ là hiển thị,
+        # self._session.tests đã rỗng thật — Lưu phiên vẫn ra file sạch)
+        # cho tới khi người dùng chọn mẫu mới (báo cáo lỗi NEW-01). Xoá tay.
+        self._step_review.load_tests([], "")
         self._on_template_changed()
         self._refresh_export_tab()
         self._log("Đã tạo phiên mới.", Colors.ACCENT_PRIMARY)
@@ -1943,11 +1991,10 @@ class SessionManagerWindow(QMainWindow):
         problems = self._step_meta.validate_meta()
         if not problems:
             return True
-        return QMessageBox.question(
+        return confirm_yes_no(
             self, "Có thông tin cần kiểm tra lại",
             "Phát hiện vài ô ở Bước 1 có thể đã gõ sai:\n\n- " + "\n- ".join(problems) +
-            "\n\nVẫn tiếp tục xuất báo cáo?",
-            QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes
+            "\n\nVẫn tiếp tục xuất báo cáo?")
 
     @staticmethod
     def _friendly_export_error(exc: Exception, path: str) -> str:
@@ -2118,6 +2165,10 @@ class SessionManagerWindow(QMainWindow):
     def _refresh_export_tab(self):
         self._step_export.refresh(self._session.tests, self._session.all_passed,
                                   self._session.template_id)
+        # Mọi nơi đổi trạng thái phiên (đổi mẫu, chạy xong bài, Mới, mở
+        # phiên...) đều đã gọi hàm này — cùng chỗ cập nhật ✓ ở rail trái
+        # luôn, không cần bước điều hướng mới thấy đúng (báo cáo lỗi BUG-09/10).
+        self.rail.set_current(self.stack.currentIndex(), self._completed_steps())
 
     def _log(self, msg: str, color: str = Colors.TEXT_DIM):
         self.statusBar().setStyleSheet(f"color:{color};")

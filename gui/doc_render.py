@@ -155,6 +155,18 @@ def render_pdf_pages(pdf_path: str, dpi: int = 150) -> list[QPixmap]:
             pixmaps.append(QPixmap.fromImage(img.copy()))
     finally:
         pdf.close()
+        # MuPDF giữ 1 "store" nội bộ (cache ảnh/font đã render) ở tầng C,
+        # KHÔNG phải object Python nên gc.collect() không thấy/không dọn
+        # được — pdf.close() không tự xả nó. Mỗi lần "Xem nhanh" (gọi hàm
+        # này) cache lại phình thêm, không bao giờ co lại -> RAM tăng dần
+        # vĩnh viễn, đúng mô tả "tăng tuyến tính, không giảm dù chờ/đổi
+        # bước/mở-đóng cửa sổ khác" (báo cáo lỗi REG-RAM-02). Đã đo thực
+        # tế: 6 lần render cùng 1 PDF không gọi store_shrink -> +32 MB; có
+        # gọi sau mỗi lần -> RAM phẳng hoàn toàn. store_shrink(100) = xả
+        # 100% cache ngay, chấp nhận chậm lại chút ở lần mở PDF kế tiếp
+        # (phải render lại từ đầu) — hợp lý vì "Xem nhanh" không mở lại
+        # CÙNG 1 PDF nhiều lần trong 1 phiên.
+        fitz.TOOLS.store_shrink(100)
     return pixmaps
 
 

@@ -127,6 +127,23 @@ def test_fill_session_defaults_sets_manufacturer_and_resets_name(fixture_registr
     assert session.meta.dut.serial == "SN1"   # không đụng tới field không liên quan
 
 
+def test_fill_session_defaults_keeps_name_when_not_a_switch(fixture_registry):
+    """REG-08 (vẫn chưa sửa đúng ở các vòng trước): gõ Tên phương tiện
+    TRƯỚC khi chọn mẫu lần đầu bị xoá mất khi chọn mẫu. Lần ĐẦU TIÊN chọn
+    mẫu (reset_name=False, gui/session_manager.py::_apply_template_defaults
+    tự suy ra khi session.template_id đang rỗng) không được xoá tên — khác
+    với khi THỰC SỰ đổi từ 1 mẫu khác sang (reset_name=True, test ở trên)."""
+    from core.report_templates import get_template
+    tpl = get_template("TEST_GENERIC_TPL")
+
+    session = CalibrationSession(
+        meta=SessionMeta(dut=DUTInfo(name="Đầu đo công suất")),
+    )
+    tpl.fill_session_defaults(session, reset_name=False)
+    assert session.meta.dut.name == "Đầu đo công suất"
+    assert session.meta.dut.model == "X1"   # vẫn điền đúng model/measurement_range như thường
+
+
 def test_record_noun_matches_kind_in_meta_json(fixture_registry, tmp_path):
     """Tiêu đề hộp thoại lưu Biên Bản/GCN (gui/session_manager.py) phải đổi
     theo meta.json["kind"] — không được hardcode "Kiểm Định" cho mẫu hiệu

@@ -42,7 +42,7 @@ from PyQt5.QtCore import Qt
 
 from gui.theme import Colors
 from gui.file_dialog_utils import get_open_file_name
-from gui.widgets import paint_corner_brackets
+from gui.widgets import paint_corner_brackets, confirm_yes_no
 from core import table_wizard_io as wio
 from core import xlsx_wizard_io as xwio
 from core import table_import as timport
@@ -182,11 +182,14 @@ def _show_syntax_help(parent):
     text.setFont(QFont("Consolas", 10))
     text.setPlainText(SYNTAX_CHEAT_SHEET)
     lay.addWidget(text)
-    btns = QDialogButtonBox(QDialogButtonBox.Close)
-    btns.rejected.connect(dlg.reject)
-    btns.accepted.connect(dlg.accept)
-    btns.button(QDialogButtonBox.Close).clicked.connect(dlg.accept)
-    lay.addWidget(btns)
+    # QDialogButtonBox(QDialogButtonBox.Close) hiện "Close" tiếng Anh
+    # (báo cáo lỗi BUG-23) — dùng nút chữ Việt tay.
+    btn_close = QPushButton("Đóng")
+    btn_close.clicked.connect(dlg.accept)
+    close_row = QHBoxLayout()
+    close_row.addStretch()
+    close_row.addWidget(btn_close)
+    lay.addLayout(close_row)
     dlg.exec_()
 
 
@@ -195,6 +198,14 @@ def _open_path(path) -> None:
         os.startfile(str(path))  # noqa: S606 — mở bằng ứng dụng mặc định
     except Exception as exc:  # noqa: BLE001
         QMessageBox.warning(None, "Không mở được file", str(exc))
+
+
+def _find_existing_descriptor(descriptors, table_id: str):
+    """Descriptor đã có khớp đúng table_id, None nếu chưa có — dùng ở 2
+    wizard "Đọc bảng" để tự điền sẵn Tên bài test và giữ đúng Thứ tự cũ khi
+    re-import 1 bảng ĐÃ CÓ (table_id trùng) thay vì để trống/đẩy xuống cuối
+    danh sách (báo cáo lỗi NEW-04)."""
+    return next((d for d in descriptors if d.table_id == table_id), None)
 
 
 def _is_xlsx_template(tpl_dir: Path) -> bool:
@@ -285,6 +296,14 @@ class TemplateManagerDialog(QDialog):
     # Danh sách mẫu (trái)
     # ------------------------------------------------------------------
     def _reload_list(self, select_id: str | None = None):
+        # PHẢI đọc target TRƯỚC khi clear() — tpl_list.clear() xoá item
+        # đang chọn, Qt tự fire currentItemChanged(None, ...) NGAY LÚC ĐÓ
+        # (đồng bộ) -> _on_select_template(None, ...) -> _load_template(None)
+        # -> self.template_id bị ghi đè thành None TRƯỚC khi dòng code dưới
+        # kịp đọc nó -> luôn tụt về "target rỗng" -> chọn nhầm mục ĐẦU danh
+        # sách (báo cáo lỗi NEW-03 — chọn xong wizard "Đọc bảng" thì lựa
+        # chọn bên trái nhảy sang mẫu đầu danh sách).
+        target = select_id or self.template_id
         self.tpl_list.clear()
         for tid, _ in list_templates():
             info = template_summary(tid)
@@ -297,7 +316,6 @@ class TemplateManagerDialog(QDialog):
             item.setSizeHint(w.sizeHint())
             self.tpl_list.setItemWidget(item, w)
 
-        target = select_id or self.template_id
         idx = 0
         if target:
             for i in range(self.tpl_list.count()):
@@ -351,8 +369,7 @@ class TemplateManagerDialog(QDialog):
         msg = (f"Xoá mẫu '{tid} — {name}'?\n\n"
                f"File sẽ chuyển vào Thùng rác Windows (khôi phục được nếu lỡ tay), "
                f"nhưng phiên kiểm định ĐÃ LƯU nào còn tham chiếu mẫu này sẽ không mở lại được nữa.")
-        if QMessageBox.question(self, "Xác nhận xoá mẫu", msg,
-                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if not confirm_yes_no(self, "Xác nhận xoá mẫu", msg):
             return
         try:
             timport.delete_template(tid)
@@ -589,8 +606,7 @@ class TemplateManagerDialog(QDialog):
         msg = (f"Xoá bảng '{table_id} — {table_name}'?\n\n"
                f"File JSON sẽ chuyển vào Thùng rác Windows (khôi phục được nếu lỡ tay), "
                f"nhưng tag report_val() còn tham chiếu bảng này trong file Word sẽ không render được nữa.")
-        if QMessageBox.question(self, "Xác nhận xoá bảng", msg,
-                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if not confirm_yes_no(self, "Xác nhận xoá bảng", msg):
             return
         try:
             timport.delete_table(self.tables_dir, table_id)
@@ -666,7 +682,7 @@ class TemplateManagerDialog(QDialog):
             needle = "report_val('<ID>')" if is_xlsx else "tables.<ID>"
             msg = (f"Không thấy '{needle}' của {missing} trong file vừa chọn.\n\n"
                    f"Có thể do gõ nhầm mã bảng hoặc chưa gắn tag. Vẫn dùng file này?")
-            if QMessageBox.question(self, "Cảnh báo", msg) != QMessageBox.Yes:
+            if not confirm_yes_no(self, "Cảnh báo", msg):
                 return
 
         # Có đủ tag không có nghĩa là ĐÚNG số lượng ô report_val() — file mới
@@ -691,7 +707,7 @@ class TemplateManagerDialog(QDialog):
                        "(có thể do đổi số dòng/lần đo):\n\n" + "\n".join(mismatches) +
                        "\n\nDùng sai số lượng sẽ làm lệch/kẹt phần kết quả khi xuất báo cáo. "
                        "Vẫn dùng file này?")
-                if QMessageBox.question(self, "Cảnh báo lệch cấu trúc", msg) != QMessageBox.Yes:
+                if not confirm_yes_no(self, "Cảnh báo lệch cấu trúc", msg):
                     return
         try:
             timport.replace_docx(self.template_id, which, path)
@@ -758,8 +774,22 @@ class CopyTemplateDialog(QDialog):
         if (TEMPLATES_DIR / new_id).exists():
             QMessageBox.warning(self, "Lỗi", f"Mẫu '{new_id}' đã tồn tại — hãy chọn mã khác.")
             return
+        # Mã mẫu (template_id) bắt buộc duy nhất nhưng TÊN HIỂN THỊ thì
+        # không — gợi ý mặc định "{tên gốc} (bản sao)" giống nhau mỗi lần
+        # sao chép, nên sao chép CÙNG 1 mẫu 2 lần ra 2 mã khác nhau vẫn có
+        # thể trùng tên hiển thị, combo Bước 1 không phân biệt được 2 mẫu
+        # (báo cáo lỗi BUG-23) — chỉ cảnh báo, không chặn cứng (tên trùng
+        # không phải lỗi dữ liệu, chỉ gây nhầm lẫn).
+        new_name = self.e_new_name.text().strip()
+        dup = [tid for tid, tname in list_templates() if tname == new_name]
+        if dup and not confirm_yes_no(
+                self, "Tên hiển thị đã có mẫu khác dùng",
+                f"Tên '{new_name}' đang được dùng bởi mẫu khác ({', '.join(dup)}) — "
+                f"2 mẫu trùng tên sẽ khó phân biệt trong danh sách chọn mẫu ở Bước 1. "
+                f"Vẫn tiếp tục?"):
+            return
         try:
-            timport.copy_template(self.source_id, new_id, self.e_new_name.text().strip())
+            timport.copy_template(self.source_id, new_id, new_name)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Lỗi khi sao chép", str(exc))
             return
@@ -1092,13 +1122,11 @@ class ImportTableFromWordDialog(QDialog):
         if err:
             QMessageBox.warning(self, "Lỗi", err)
             return
-        if wio.table_id_exists(self.tables_dir, table_id) and QMessageBox.question(
-                self, "Bảng đã tồn tại",
-                f"Bảng '{table_id}' đã có — tiếp tục sẽ THAY THẾ toàn bộ cấu hình "
-                f"(cột/ngưỡng/định dạng...) của bảng này bằng dữ liệu vừa đọc. "
-                f"Tiếp tục?",
-                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
-            return
+        # KHÔNG hỏi "Thay thế?" ở đây nữa — Mã bảng còn sửa được ở màn
+        # TableFormDialog kế tiếp (is_new=True), nên xác nhận THẬT phải nằm
+        # ở đó (TableFormDialog._do_save(), xét đúng mã CUỐI CÙNG người
+        # dùng chốt), không phải ở đây. Hỏi cả 2 chỗ làm người dùng bị hỏi
+        # 2 LẦN cho CÙNG 1 việc (báo cáo lỗi NEW-04).
         name = e_name.text().strip()
         if not name:
             QMessageBox.warning(self, "Lỗi", "Cần nhập Tên bài test.")
@@ -1145,8 +1173,13 @@ class ImportTableFromWordDialog(QDialog):
                         if len(set(raw_counts)) == 1 and raw_counts and raw_counts[0] > 1
                         else None)
 
+        # Re-import 1 bảng ĐÃ CÓ (table_id trùng) -> giữ đúng Thứ tự cũ,
+        # không đẩy xuống cuối danh sách (báo cáo lỗi NEW-04 — A1 bị đặt
+        # thành 3 thay vì giữ 1 khi re-import).
+        existing_for_id = _find_existing_descriptor(self.existing_descriptors, table_id)
+        order = existing_for_id.order if existing_for_id else len(self.existing_descriptors) + 1
         spec = wio.WizardTableSpec(
-            table_id=table_id, name=name, order=len(self.existing_descriptors) + 1,
+            table_id=table_id, name=name, order=order,
             value_unit="", value_format="text", rows=rows,
             pass_rule={"type": "none"}, gcn=None,
         )
@@ -1274,9 +1307,15 @@ class ImportTableFromExcelDialog(QDialog):
         lay = QVBoxLayout(w)
 
         form_top = QFormLayout()
-        e_table_id = QLineEdit(self._suggest_table_id(sheet))
+        suggested_id = self._suggest_table_id(sheet)
+        e_table_id = QLineEdit(suggested_id)
         form_top.addRow("Mã bảng:", e_table_id)
-        e_name = QLineEdit()
+        # Mã gợi ý trùng 1 bảng ĐÃ CÓ (re-import để cập nhật cấu trúc) -> tự
+        # điền sẵn đúng Tên bài test cũ, không bắt gõ lại/không để trống rồi
+        # báo "Cần nhập Tên bài test" cho 1 bảng rõ ràng đã có tên từ trước
+        # (báo cáo lỗi NEW-04).
+        existing_for_id = _find_existing_descriptor(self.existing_descriptors, suggested_id)
+        e_name = QLineEdit(existing_for_id.name if existing_for_id else "")
         form_top.addRow("Tên bài test:", e_name)
         e_range = QLineEdit(sheet.used_range)
         form_top.addRow("Vùng dữ liệu (địa chỉ Excel, vd 'A2:W26'):", e_range)
@@ -1388,13 +1427,11 @@ class ImportTableFromExcelDialog(QDialog):
         if err:
             QMessageBox.warning(self, "Lỗi", err)
             return
-        if wio.table_id_exists(self.tables_dir, table_id) and QMessageBox.question(
-                self, "Bảng đã tồn tại",
-                f"Bảng '{table_id}' đã có — tiếp tục sẽ THAY THẾ toàn bộ cấu hình "
-                f"(cột/ngưỡng/định dạng...) của bảng này bằng dữ liệu vừa đọc. "
-                f"Tiếp tục?",
-                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
-            return
+        # KHÔNG hỏi "Thay thế?" ở đây nữa — Mã bảng còn sửa được ở màn
+        # TableFormDialog kế tiếp (is_new=True), nên xác nhận THẬT phải nằm
+        # ở đó (TableFormDialog._do_save(), xét đúng mã CUỐI CÙNG người
+        # dùng chốt), không phải ở đây. Hỏi cả 2 chỗ làm người dùng bị hỏi
+        # 2 LẦN cho CÙNG 1 việc (báo cáo lỗi NEW-04).
         name = e_name.text().strip()
         if not name:
             QMessageBox.warning(self, "Lỗi", "Cần nhập Tên bài test.")
@@ -1442,8 +1479,12 @@ class ImportTableFromExcelDialog(QDialog):
                         if len(set(raw_counts)) == 1 and raw_counts and raw_counts[0] > 1
                         else None)
 
+        # Xem chú thích ở ImportTableFromWordDialog._continue() — cùng lý
+        # do (NEW-04): giữ đúng Thứ tự cũ khi re-import 1 bảng đã có.
+        existing_for_id = _find_existing_descriptor(self.existing_descriptors, table_id)
+        order = existing_for_id.order if existing_for_id else len(self.existing_descriptors) + 1
         spec = wio.WizardTableSpec(
-            table_id=table_id, name=name, order=len(self.existing_descriptors) + 1,
+            table_id=table_id, name=name, order=order,
             value_unit="", value_format="text", rows=rows,
             pass_rule={"type": "none"}, gcn=None,
         )
@@ -1948,16 +1989,14 @@ class TableFormDialog(QDialog):
                 QMessageBox.warning(self, "Lỗi", err)
                 return
             # Mã bảng còn SỬA ĐƯỢC ở màn này (e_table_id.setEnabled(is_new))
-            # nên người dùng có thể đổi sang 1 mã KHÁC đã tồn tại ngay ở đây,
-            # dù _continue() của wizard đã hỏi xác nhận cho mã GỢI Ý ban đầu
-            # — kiểm tra lại lần cuối trước khi ghi đè (báo cáo lỗi REG-05:
-            # trước đây chặn cứng "đã tồn tại", phải xoá bảng cũ rồi làm lại
-            # từ đầu chỉ để cập nhật cấu trúc 1 bảng đã có).
-            if wio.table_id_exists(self.tables_dir, table_id) and QMessageBox.question(
+            # nên người dùng có thể đổi sang 1 mã KHÁC đã tồn tại ngay ở đây
+            # — đây là chỗ DUY NHẤT hỏi xác nhận "Thay thế" (không hỏi ở
+            # _continue() của wizard nữa, tránh hỏi 2 lần cho cùng 1 việc —
+            # báo cáo lỗi REG-05/NEW-04).
+            if wio.table_id_exists(self.tables_dir, table_id) and not confirm_yes_no(
                     self, "Bảng đã tồn tại",
                     f"Bảng '{table_id}' đã có — Lưu sẽ THAY THẾ toàn bộ cấu hình "
-                    f"(cột/ngưỡng/định dạng...) của bảng này. Tiếp tục?",
-                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                    f"(cột/ngưỡng/định dạng...) của bảng này. Tiếp tục?"):
                 return
         name = self.e_name.text().strip()
         value_unit = self.e_value_unit.currentText().strip()

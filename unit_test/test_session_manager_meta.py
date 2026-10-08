@@ -22,7 +22,10 @@ from PyQt5.QtWidgets import QApplication
 
 from core.table_descriptor import TableDescriptor, RowDef
 from core import table_wizard_io as wio
-from gui.session_manager import _MetaTab, _table_has_pass_fail, SessionManagerWindow
+from core.session import CalibrationSession, SessionTest, ReportTable, TableRow
+from gui.session_manager import (
+    _MetaTab, _table_has_pass_fail, SessionManagerWindow, _StepRail, _ExportTab,
+)
 
 _app = QApplication.instance() or QApplication([])
 
@@ -249,3 +252,117 @@ def test_step_rail_set_template_info_clears_to_placeholder():
         assert rail._lbl_tpl_name.text() == ""
     finally:
         rail.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# BUG-09/10: "✓ hoàn thành" ở rail trước đây chỉ xét VỊ TRÍ điều hướng
+# (i < index) — bấm sang Bước 2 khi chưa chọn mẫu/chưa đo gì vẫn hiện ✓ cho
+# cả Bước 1 và Bước 2. Bước 3: bài LỖI hiện "⏳" (chờ) thay vì báo lỗi; "Tổng
+# điểm đo" thực ra đếm SỐ BÀI, không phải số điểm đo.
+# ---------------------------------------------------------------------------
+
+def test_step_rail_set_current_only_marks_explicitly_completed_steps():
+    steps = [("Bước 1", "s1"), ("Bước 2", "s2"), ("Bước 3", "s3")]
+    rail = _StepRail(steps)
+    try:
+        # Đi tới Bước 2 (index=1) nhưng KHÔNG báo bước nào đã hoàn thành
+        # thật -> Bước 1 (index 0, "đi qua" rồi) KHÔNG được tự thành ✓.
+        rail.set_current(1, completed=set())
+        assert rail._dots[0].text() == "○", "Bước 1 hiện ✓ dù chưa hoàn thành thật (BUG-09)"
+        assert rail._dots[1].text() == "●"
+        assert rail._dots[2].text() == "○"
+
+        rail.set_current(1, completed={0})
+        assert rail._dots[0].text() == "✓"
+        assert rail._dots[1].text() == "●"
+    finally:
+        rail.deleteLater()
+
+
+def test_step_rail_set_current_without_completed_arg_keeps_old_behavior():
+    """Không truyền completed -> dùng lại y hệt hành vi cũ (i < index) cho
+    chỗ gọi nào chưa kịp cập nhật — không phải hành vi MONG MUỐN lâu dài,
+    chỉ để không crash nơi khác lỡ còn gọi set_current(index) trần."""
+    steps = [("Bước 1", "s1"), ("Bước 2", "s2"), ("Bước 3", "s3")]
+    rail = _StepRail(steps)
+    try:
+        rail.set_current(2)
+        assert rail._dots[0].text() == "✓"
+        assert rail._dots[1].text() == "✓"
+        assert rail._dots[2].text() == "●"
+    finally:
+        rail.deleteLater()
+
+
+def _fake_window(template_id: str, tests: list):
+    """self giả chỉ cần ._session — _completed_steps() không đụng gì khác."""
+    from types import SimpleNamespace
+    session = SimpleNamespace(template_id=template_id, tests=tests)
+    fake_self = SimpleNamespace(_session=session)
+    fake_self._completed_steps = lambda: SessionManagerWindow._completed_steps(fake_self)
+    return fake_self
+
+
+def test_completed_steps_step1_requires_template_selected():
+    win = _fake_window("", [])
+    assert 0 not in win._completed_steps(), "Bước 1 hiện hoàn thành dù chưa chọn mẫu (BUG-09)"
+
+    win2 = _fake_window("TEMPLATE_FREQ", [])
+    assert 0 in win2._completed_steps()
+
+
+def test_completed_steps_step2_requires_all_enabled_tests_done():
+    t_pending = SessionTest(table_id="A1", enabled=True, status="pending")
+    win = _fake_window("TEMPLATE_FREQ", [t_pending])
+    assert 1 not in win._completed_steps(), (
+        "Bước 2 hiện hoàn thành dù 0/8 bài đã đo (BUG-09)")
+
+    t_failed = SessionTest(table_id="A1", enabled=True, status="failed")
+    win_failed = _fake_window("TEMPLATE_FREQ", [t_failed])
+    assert 1 not in win_failed._completed_steps(), (
+        "Bước 2 hiện hoàn thành dù có bài đang Lỗi (BUG-09)")
+
+    t_done = SessionTest(table_id="A1", enabled=True, status="done")
+    win_done = _fake_window("TEMPLATE_FREQ", [t_done])
+    assert 1 in win_done._completed_steps()
+
+    # Bài bị TẮT (enabled=False) không tính vào yêu cầu "mọi bài bật đã đo".
+    t_disabled_pending = SessionTest(table_id="A2", enabled=False, status="pending")
+    win_mixed = _fake_window("TEMPLATE_FREQ", [t_done, t_disabled_pending])
+    assert 1 in win_mixed._completed_steps()
+
+
+def test_completed_steps_step2_empty_enabled_list_not_completed():
+    """Không có bài nào được bật -> không thể coi là 'đã đo xong hết'."""
+    win = _fake_window("TEMPLATE_FREQ", [])
+    assert 1 not in win._completed_steps()
+
+
+def test_export_tab_shows_error_icon_for_failed_test_not_hourglass():
+    """BUG-10: bài LỖI (status='failed', result_table rỗng/None) trước đây
+    rơi vào cùng nhánh "n == 0" như bài CHƯA CHẠY -> hiện "⏳" (chờ) thay vì
+    báo lỗi thật."""
+    tab = _ExportTab()
+    try:
+        t = SessionTest(table_id="A1", name="Bảng A1", enabled=True, status="failed")
+        tab.refresh([t], None, "TEMPLATE_FREQ")
+        item_text = tab.lst_tests.item(0).text()
+        assert item_text.startswith("❌"), f"Vẫn hiện sai icon cho bài Lỗi: {item_text!r}"
+    finally:
+        tab.deleteLater()
+
+
+def test_export_tab_total_stat_label_is_test_count_not_measurement_points():
+    """Nhãn "Tổng điểm đo" cũ gây hiểu lầm — counts["total"] thực ra là SỐ
+    BÀI (len(tests)), không phải tổng số report_val() của mọi bài. Đổi nhãn
+    thành "Tổng số bài" cho khớp đúng ý nghĩa, không đổi cách đếm."""
+    tab = _ExportTab()
+    try:
+        t1 = SessionTest(table_id="A1", enabled=True, status="done",
+                         result_table=ReportTable(table_id="A1", rows=[TableRow() for _ in range(19)]))
+        t2 = SessionTest(table_id="A2", enabled=True, status="done",
+                         result_table=ReportTable(table_id="A2", rows=[TableRow() for _ in range(19)]))
+        tab.refresh([t1, t2], None, "TEMPLATE_FREQ")
+        assert tab._rs_vals["total"].text() == "2"   # 2 BÀI, không phải 38 điểm đo
+    finally:
+        tab.deleteLater()

@@ -51,16 +51,22 @@ class BaseReportTemplate(ABC):
         Được gọi sau khi scenario chạy xong.
         """
 
-    def fill_session_defaults(self, session: CalibrationSession) -> None:
+    def fill_session_defaults(self, session: CalibrationSession, reset_name: bool = True) -> None:
         """Điền các giá trị mặc định từ template vào meta của session — gọi
         cả lúc nạp phiên mới LẪN lúc người dùng đổi sang mẫu khác giữa
-        phiên (xem gui/session_manager.py::_apply_template_defaults). Reset
-        "Tên phương tiện" về rỗng khi đổi mẫu: đây là mô tả riêng của DUT
-        thật đang kiểm (không phải thuộc tính của mẫu) nên không có giá trị
-        mặc định hợp lý nào để tự điền — giữ lại tên của mẫu CŨ (vd "Máy đếm
-        tần số" khi vừa đổi sang mẫu NRP2 công suất) còn sai hơn để trống
-        (báo cáo lỗi #6/#7)."""
-        session.meta.dut.name = ""
+        phiên (xem gui/session_manager.py::_apply_template_defaults).
+
+        reset_name=True (mặc định, dùng khi THỰC SỰ đổi từ 1 mẫu khác sang):
+        xoá rỗng "Tên phương tiện" — đây là mô tả riêng của DUT thật đang
+        kiểm (không phải thuộc tính của mẫu) nên không có giá trị mặc định
+        hợp lý nào để tự điền — giữ lại tên của mẫu CŨ (vd "Máy đếm tần số"
+        khi vừa đổi sang mẫu NRP2 công suất) còn sai hơn để trống (báo cáo
+        lỗi #6/#7). reset_name=False (lần ĐẦU TIÊN chọn mẫu, chưa từng có
+        mẫu nào trước đó): KHÔNG xoá — không phải "đổi mẫu" nên không có
+        tên mẫu cũ nào cần xoá, trong khi người dùng có thể đã gõ tên DUT
+        trước khi kịp chọn mẫu (báo cáo lỗi REG-08)."""
+        if reset_name:
+            session.meta.dut.name = ""
         session.meta.dut.model = self.DUT_MODELS[0] if self.DUT_MODELS else ""
         session.meta.dut.manufacturer = self.DUT_MANUFACTURER_DEFAULT
         session.meta.dut.measurement_range = self.MEASUREMENT_RANGE

@@ -3,9 +3,9 @@
   "template_name": "Khách – 51079A 0dBm (Excel 5 sheet)",
   "kind": "hieu_chuan",
   "dut_models": [
-    "N1922A"
+    "51079A"
   ],
   "standard": "A1-01.PP01.01 (2023)",
   "measurement_range": "",
-  "dut_manufacturer_default": "Keysight"
+  "dut_manufacturer_default": "Boonton"
 }

@@ -9,9 +9,28 @@ from __future__ import annotations
 
 from PyQt5.QtCore import Qt, QRect, QRectF, pyqtSignal
 from PyQt5.QtGui import QPainter, QPen, QColor, QFont
-from PyQt5.QtWidgets import QWidget, QHeaderView, QStyle, QStyleOptionButton, QLabel
+from PyQt5.QtWidgets import (
+    QWidget, QHeaderView, QStyle, QStyleOptionButton, QLabel, QMessageBox,
+)
 
 from gui.theme import Colors
+
+
+def confirm_yes_no(parent, title: str, text: str, default_yes: bool = True) -> bool:
+    """Hộp hỏi Có/Không dùng CHUNG cho mọi xác nhận trong app — Qt không có
+    sẵn bản dịch tiếng Việt nên QMessageBox.question(...,
+    QMessageBox.Yes | QMessageBox.No) hiện "Yes"/"No" tiếng Anh dù phần còn
+    lại của hộp thoại toàn tiếng Việt (báo cáo lỗi BUG-23). Trả True nếu
+    người dùng bấm "Có"."""
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(text)
+    box.setIcon(QMessageBox.Question)
+    btn_yes = box.addButton("Có", QMessageBox.YesRole)
+    btn_no = box.addButton("Không", QMessageBox.NoRole)
+    box.setDefaultButton(btn_yes if default_yes else btn_no)
+    box.exec_()
+    return box.clickedButton() is btn_yes
 
 
 # ============================================================================

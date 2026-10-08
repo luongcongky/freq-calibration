@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 from gui.theme import Colors
 from gui.file_dialog_utils import get_open_file_name, get_save_file_name
-from gui.widgets import set_badge, paint_corner_brackets
+from gui.widgets import set_badge, paint_corner_brackets, confirm_yes_no
 
 _COL_NUM    = 0
 _COL_ADDR   = 1
@@ -171,7 +171,7 @@ class DeviceManagerDialog(QDialog):
         # nhất/hay đổi nhất) nhận Stretch thay cho *IDN?. Vẫn Interactive —
         # người dùng tự kéo lại được.
         self.table.setColumnWidth(_COL_ADDR, 190)
-        self.table.setColumnWidth(_COL_IDN, 60)
+        self.table.setColumnWidth(_COL_IDN, 90)  # đủ chỗ cho "Đã lưu" (báo cáo lỗi BUG-21/NEW-05 — 60px cắt thành "Đã l")
         self.table.setColumnWidth(_COL_MATCH, 90)
         self.table.setColumnWidth(_COL_ASSIGN, 220)
         self.table.setColumnWidth(_COL_LABEL, 130)
@@ -552,11 +552,8 @@ class DeviceManagerDialog(QDialog):
         prof = self._build_profile_from_table()
         warns = prof.warnings()
         if warns:
-            ret = QMessageBox.question(
-                self, "Cảnh báo cấu hình",
-                "\n".join(warns) + "\n\nVẫn áp dụng?",
-                QMessageBox.Yes | QMessageBox.No)
-            if ret != QMessageBox.Yes:
+            if not confirm_yes_no(self, "Cảnh báo cấu hình",
+                                  "\n".join(warns) + "\n\nVẫn áp dụng?"):
                 return
         self.profile = prof
         self.accept()
@@ -649,10 +646,15 @@ class _CustomDeviceManagerDialog(QDialog):
 
         root.addLayout(splitter, 1)
 
-        bb = QDialogButtonBox(QDialogButtonBox.Close)
-        bb.rejected.connect(self.accept)
-        bb.accepted.connect(self.accept)
-        root.addWidget(bb)
+        # QDialogButtonBox(QDialogButtonBox.Close) hiện "Close" tiếng Anh
+        # (không có bản dịch Qt tiếng Việt cài sẵn) — dùng nút chữ Việt tay
+        # (báo cáo lỗi BUG-23).
+        btn_close = QPushButton("Đóng")
+        btn_close.clicked.connect(self.accept)
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_row.addWidget(btn_close)
+        root.addLayout(close_row)
 
     def _reload_list(self):
         self.list_w.clear()
@@ -698,14 +700,13 @@ class _CustomDeviceManagerDialog(QDialog):
         if item is None:
             return
         key = item.data(Qt.UserRole)
-        reply = QMessageBox.question(
+        if not confirm_yes_no(
             self, "Xác nhận xoá",
             f"Xoá dòng máy tự thêm '{key}'?\n\n"
             "Mọi kịch bản/profile đang dùng model này sẽ báo lỗi 'không có trong "
             "registry' cho tới khi bạn thêm lại.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
+            default_yes=False,
+        ):
             return
         remove_custom_device(key)
         self._reload_list()

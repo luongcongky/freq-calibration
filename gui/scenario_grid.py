@@ -43,7 +43,9 @@ logger = logging.getLogger(__name__)
 
 from gui.theme import Colors, build_global_qss
 from gui.file_dialog_utils import get_open_file_name, get_save_file_name
-from gui.widgets import ThemeToggle, EXPR_HELP, CheckBoxHeader, set_badge, paint_corner_brackets
+from gui.widgets import (
+    ThemeToggle, EXPR_HELP, CheckBoxHeader, set_badge, paint_corner_brackets, confirm_yes_no,
+)
 
 COLS = ["Bật / Nội dung", "Mô tả lệnh", "Thiết bị", "Tham số / Điều kiện", "Kết quả", "Trạng thái"]
 
@@ -1014,6 +1016,8 @@ class ScenarioGridWindow(QMainWindow):
         self._loading = False
         self._last_results: list[StepResult] = []
         self._last_mode = ""
+        self._run_total_steps: int | None = None   # xem _run()/_update_run_progress_status() — báo cáo lỗi BUG-23
+        self._run_done_steps = 0
         self._connected_keys: set[str] = set()
         self.address_map: dict[str, str] = {}
         self.cmd_delay_s: float = 0.1
@@ -1849,9 +1853,8 @@ class ScenarioGridWindow(QMainWindow):
             if not shadowed:
                 to_delete.append(item)
         if len(to_delete) > 1:
-            if QMessageBox.question(self, "Xóa nhiều mục",
-                                    f"Xóa {len(to_delete)} mục đã chọn?",
-                                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            if not confirm_yes_no(self, "Xóa nhiều mục",
+                                  f"Xóa {len(to_delete)} mục đã chọn?"):
                 return
         for item in to_delete:
             obj = self._obj_of(item)
@@ -2108,6 +2111,17 @@ class ScenarioGridWindow(QMainWindow):
 
         self.btn_run.setEnabled(False); self.btn_stop.setEnabled(True)
         self._last_mode = "REAL"
+        # Trước đây chỉ có log cuộn "B123 ..." mỗi bước — kịch bản dài (vài
+        # nghìn bước) không biết đang ở đâu/còn bao lâu (báo cáo lỗi
+        # BUG-23). flat_nodes KHÔNG có vòng lặp -> tổng số bước THẬT cố
+        # định, hiện được %; CÓ vòng lặp -> số lần thực thi thật phụ thuộc
+        # điều kiện dừng (không biết trước), chỉ hiện bộ đếm, không giả
+        # định tổng.
+        flat_nodes = enumerate_nodes(self.scenario.nodes)
+        has_loop = any(isinstance(n, LoopBlock) for n in flat_nodes)
+        self._run_total_steps = None if has_loop else len(flat_nodes)
+        self._run_done_steps = 0
+        self._update_run_progress_status()
         self._log(f"--- Bắt đầu chạy ({self._last_mode}) ---", Colors.ACCENT_PRIMARY)
         self.worker = ScenarioWorker(self.scenario, mock=mock, address_map=self.address_map,
                                      cmd_delay_s=self.cmd_delay_s)
@@ -2164,11 +2178,20 @@ class ScenarioGridWindow(QMainWindow):
         # biệt được sẽ bị bước "gộp giá trị trùng LIÊN TIẾP" dưới đây coi là
         # 1 giá trị (vd 2 máy cùng đọc ra "OK"/cùng 1 số) -> chỉ còn thấy kết
         # quả của 1 máy trên lưới, máy còn lại chỉ thấy được trong log (báo
-        # cáo lỗi BUG-20). Lệnh GHI (cell rỗng) vẫn để trống như cũ.
+        # cáo lỗi BUG-20). Lệnh GHI (cell rỗng) với CHỈ 1 thiết bị vẫn để
+        # trống như cũ (thành công đã thể hiện ở cột Trạng thái — xem
+        # StepResult.result_cell()); nhưng với NHIỀU thiết bị, "Trạng thái"
+        # chỉ có 1 badge DÙNG CHUNG cho cả bước, nên để trống hẳn sẽ không
+        # còn cách nào phân biệt máy nào đã chạy xong — luôn gắn nhãn +
+        # placeholder "(đã gửi)" cho lệnh ghi thành công để không biến mất
+        # khỏi lưới (sửa tiếp phần "kết quả NRVD vẫn không thấy" của BUG-20).
         step_obj = self._obj_of(item)
         devices = getattr(step_obj, "devices", None) or []
-        if cell and res.device_key and len(devices) > 1:
-            cell = f"[{res.device_key}] {cell}"
+        if res.device_key and len(devices) > 1:
+            # cell chỉ rỗng khi lệnh GHI thành công (result_cell() luôn trả
+            # chuỗi khác rỗng cho mọi trường hợp LỖI) — "(đã gửi)" chỉ bù
+            # cho đúng tình huống đó.
+            cell = f"[{res.device_key}] {cell or '(đã gửi)'}"
         history.append(cell)
         total = self._item_result_totals.get(key, 0) + 1
         self._item_result_totals[key] = total
@@ -2181,6 +2204,12 @@ class ScenarioGridWindow(QMainWindow):
         if total > len(history):   # đã cắt bớt kết quả cũ hơn _MAX_RESULT_HISTORY
             text = f"… (ẩn {total - len(history)} kết quả đầu)  |  {text}"
         item.setText(4, text)   # cột Kết quả
+        # Bước nhiều máy ghép nhiều kết quả vào 1 ô ("[4231A] ... | [NRVD]
+        # ..."), cột lại hẹp -> Qt cắt ngắn hiển thị, chỉ thấy đúng phần
+        # đầu. Trước đây không có tooltip nên không cách nào xem được phần
+        # bị cắt (báo cáo lỗi BUG-20 — sửa 1 phần, kết quả máy thứ 2 "không
+        # tooltip, giãn cột vẫn không thấy").
+        item.setToolTip(4, text)
         if res.kind != "control":
             any_err = any("LỖI" in s for s in history)
             badge = self._status_badges.get(key)
@@ -2201,6 +2230,8 @@ class ScenarioGridWindow(QMainWindow):
 
     def _on_result(self, res: StepResult):
         self._last_results.append(res)
+        self._run_done_steps += 1
+        self._update_run_progress_status()
         item = self._id_to_item.get(res.node_id)
         if item is None:
             self._log(f"B{res.step_index} {res.summary()}",
@@ -2209,6 +2240,18 @@ class ScenarioGridWindow(QMainWindow):
         self._apply_step_result(item, res)
         self._log(f"B{res.step_index} {res.summary()}",
                   Colors.ACCENT_RED if not res.ok else Colors.ACCENT_GREEN)
+
+    def _update_run_progress_status(self):
+        """Hiện "Đã chạy: N/tổng (XX%)" (kịch bản KHÔNG có vòng lặp — tổng
+        cố định) hoặc "Đã chạy: N bước" (CÓ vòng lặp — số lần thực thi thật
+        phụ thuộc điều kiện dừng, không biết trước tổng) ở status bar, thay
+        cho chỉ có log cuộn không biết đang ở đâu (báo cáo lỗi BUG-23)."""
+        if self._run_total_steps:
+            pct = self._run_done_steps * 100 // self._run_total_steps
+            self.statusBar().showMessage(
+                f"Đã chạy: {self._run_done_steps}/{self._run_total_steps} bước ({pct}%)")
+        else:
+            self.statusBar().showMessage(f"Đã chạy: {self._run_done_steps} bước")
 
     def _on_finished(self, total, stop_reason: str = ""):
         self.btn_run.setEnabled(True); self.btn_stop.setEnabled(False)
