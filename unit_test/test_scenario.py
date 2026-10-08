@@ -259,6 +259,44 @@ def test_runner_stop_flag():
     assert results == []
 
 
+def test_runner_stopped_early_false_when_scenario_runs_to_completion():
+    runner = ScenarioRunner(mock=True)
+    runner.run(_flat_scenario())
+    assert runner.stopped_early is False, (
+        "stopped_early=True dù chạy hết kịch bản -> sẽ hiện cảnh báo sai (R5-01)")
+
+
+def test_wait_step_interrupted_by_stop_flag_quickly(monkeypatch):
+    """R4-05 (test_reports/2026-10-08_round5): bấm Dừng lúc kịch bản đang ở
+    bước WAIT (vd 35s chờ zero) trước đây phải chờ gần hết 35s mới dừng, vì
+    time.sleep(35) gọi 1 lần không có cách nào ngắt giữa chừng. Giờ WAIT
+    phải chia nhỏ sleep & dừng NGAY khi stop_flag lên True."""
+    import core.scenario_runner as sr
+    sleeps: list[float] = []
+    monkeypatch.setattr(sr.time, "sleep", lambda s: sleeps.append(s))
+
+    calls = {"n": 0}
+
+    def stop_flag():
+        calls["n"] += 1
+        return calls["n"] > 3   # dừng sau vài lần poll, còn lâu mới hết 35s
+
+    scn = Scenario(nodes=[
+        ScenarioStep(action="wait", devices=[], params={"seconds": 35.0}),
+        ScenarioStep(action="measure_frequency", devices=["CNT91"]),
+    ])
+    runner = ScenarioRunner(mock=True, stop_flag=stop_flag)
+    runner.run(scn)
+
+    assert sleeps, "WAIT không gọi sleep() nào — không mô phỏng đúng hành vi chờ"
+    assert all(s <= ScenarioRunner._WAIT_POLL_S + 1e-9 for s in sleeps), (
+        f"WAIT vẫn sleep() nguyên 1 cục lớn, không chia nhỏ để ngắt được: {sleeps}")
+    assert sum(sleeps) < 35.0, (
+        f"Tổng thời gian sleep ({sum(sleeps)}s) gần bằng nguyên 35s — "
+        f"không dừng sớm được (R4-05)")
+    assert runner.stopped_early is True   # node 2 (measure_frequency) chưa kịp chạy
+
+
 def test_runner_stop_mid_run_auto_turns_off_rf(caplog):
     """R4-01 (test_reports/2026-10-08_round4): khách bấm Dừng giữa lúc đo
     thật -> SMW200A vẫn bật RF vì bước dọn dẹp ở cuối kịch bản không chạy.
@@ -281,6 +319,8 @@ def test_runner_stop_mid_run_auto_turns_off_rf(caplog):
     assert len(results) == 1  # chỉ node rf_on kịp chạy
     smw = runner._devices["SMW200A"]
     assert smw._mock_rf == "0", "RF chưa tự tắt khi dừng giữa đường (R4-01)"
+    assert runner.stopped_early is True, (
+        "stopped_early phải True để giao diện tự cảnh báo (R5-01)")
     assert any("dừng SỚM" in r.message for r in caplog.records), (
         "Không cảnh báo dừng sớm (R4-01) — người dùng có thể lầm máy đã an toàn")
 

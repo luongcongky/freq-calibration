@@ -132,6 +132,20 @@ def test_syntax_error():
         evaluate("1 +")
 
 
+def test_syntax_error_message_has_no_leaked_english(monkeypatch):
+    """R4-08 (test_reports/2026-10-08_round4): thông báo lỗi biểu thức
+    trước đây nhét thẳng SyntaxError.msg của Python ("'(' was never
+    closed") vào thông báo cho người dùng cuối."""
+    try:
+        evaluate("(1 + 2")
+    except ExprError as e:
+        msg = str(e)
+        assert "was never closed" not in msg
+        assert "unexpected EOF" not in msg
+    else:
+        pytest.fail("evaluate('(1 + 2') phải ném ExprError (thiếu dấu ')')")
+
+
 def test_validate_ok_and_fail():
     validate("abs(f_avg - f_set)/f_set")     # không ném
     with pytest.raises(ExprError):

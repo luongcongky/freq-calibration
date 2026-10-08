@@ -397,6 +397,26 @@ def test_stop_button_starts_disabled_and_run_button_enabled():
         tab.deleteLater()
 
 
+def test_progress_bar_stays_visible_across_set_running_no_layout_jump():
+    """R4-06 (test_reports/2026-10-08_round5): trước đây progress.setVisible()
+    đổi theo running -> đổi chiều cao layout, cụm nút Chạy/Dừng bị đẩy lên
+    ~26px ngay lúc bắt đầu chạy. Progress bar phải LUÔN hiện (chỉ đổi nội
+    dung/giá trị), không đổi visibility, để chiều cao layout cố định.
+    isHidden() phản ánh đúng việc CÓ gọi setVisible(False)/hide() hay không,
+    không phụ thuộc cửa sổ cha đã show() thật trên màn hình chưa (khác
+    isVisible())."""
+    tab = _TestReviewTab()
+    try:
+        assert tab.progress.isHidden() is False, "Progress bar bị ẩn ngay từ đầu (R4-06)"
+        tab.set_running(True)
+        assert tab.progress.isHidden() is False
+        tab.set_running(False)
+        assert tab.progress.isHidden() is False, (
+            "set_running() vẫn ẩn/hiện progress bar -> gây nhảy layout (R4-06)")
+    finally:
+        tab.deleteLater()
+
+
 # ---------------------------------------------------------------------------
 # R4-02 (test_reports/2026-10-08_round4): bài bị bấm "Dừng" giữa chừng vẫn bị
 # đánh "✅ Xong"/"Đã đo" dù dữ liệu CHƯA chạy hết — SessionManagerWindow.
@@ -407,7 +427,9 @@ def test_stop_button_starts_disabled_and_run_button_enabled():
 
 def _fake_on_test_done_self(test: SessionTest):
     """self giả cho SessionManagerWindow._on_test_done() — chỉ cần các
-    thuộc tính/method mà hàm này thật sự đụng tới."""
+    thuộc tính/method mà hàm này thật sự đụng tới. _CLEANUP_NOT_RUN_HINT là
+    thuộc tính CẤP CLASS (R5-01) — SimpleNamespace không tự kế thừa được,
+    phải gán tay."""
     from types import SimpleNamespace
     session = SimpleNamespace(template_id="__KHONG_TON_TAI__", tests=[test])
     return SimpleNamespace(
@@ -415,11 +437,19 @@ def _fake_on_test_done_self(test: SessionTest):
         _step_results_current=[],
         _step_review=SimpleNamespace(refresh_row=lambda i: None, set_running=lambda b: None),
         _log=lambda *a, **k: None,
+        _log_ram=lambda *a, **k: None,
         _after_single_or_continue=lambda: None,
+        _CLEANUP_NOT_RUN_HINT=SessionManagerWindow._CLEANUP_NOT_RUN_HINT,
     )
 
 
-def test_on_test_done_user_stopped_marks_status_stopped_not_done():
+def test_on_test_done_user_stopped_marks_status_stopped_not_done(monkeypatch):
+    from gui import session_manager as sm_mod
+
+    warned = []
+    monkeypatch.setattr(sm_mod.QMessageBox, "warning",
+                         lambda *a, **k: warned.append(a[1] if len(a) > 1 else ""))
+
     test = SessionTest(table_id="A1", name="Bảng A1", enabled=True, status="running")
     fake_self = _fake_on_test_done_self(test)
 
@@ -428,16 +458,37 @@ def test_on_test_done_user_stopped_marks_status_stopped_not_done():
     assert test.status == "stopped", (
         f"Bài dừng giữa chừng bị đánh status={test.status!r} — vẫn tính như "
         f"đã đo xong (R4-02)")
+    assert warned, "Không cảnh báo trên giao diện khi dừng sớm (R5-01)"
 
 
 def test_on_test_done_normal_finish_still_marks_done():
-    """Không được vô tình đổi hành vi chạy XONG bình thường (user_stopped=False)."""
+    """Không được vô tình đổi hành vi chạy XONG bình thường (stopped_early=False)."""
     test = SessionTest(table_id="A1", name="Bảng A1", enabled=True, status="running")
     fake_self = _fake_on_test_done_self(test)
 
     SessionManagerWindow._on_test_done(fake_self, 0, 19, "", False)
 
     assert test.status == "done"
+
+
+def test_on_test_done_device_failure_warns_cleanup_not_run_too(monkeypatch):
+    """R5-01: dừng do SỰ CỐ THIẾT BỊ cũng là dừng SỚM — thông báo lỗi phải
+    kèm cùng lời nhắc dọn dẹp chưa chạy như khi người dùng tự bấm Dừng,
+    không chỉ riêng trường hợp bấm Dừng tay."""
+    from gui import session_manager as sm_mod
+
+    shown = []
+    monkeypatch.setattr(sm_mod.QMessageBox, "critical",
+                         lambda *a, **k: shown.append(a[2] if len(a) > 2 else ""))
+
+    test = SessionTest(table_id="A1", name="Bảng A1", enabled=True, status="running")
+    fake_self = _fake_on_test_done_self(test)
+
+    SessionManagerWindow._on_test_done(fake_self, 0, 3, "Mất kết nối GPIB", False)
+
+    assert test.status == "failed"
+    assert shown and "CHƯA chạy" in shown[0], (
+        f"Thông báo lỗi thiết bị không nhắc dọn dẹp chưa chạy (R5-01): {shown}")
 
 
 def test_export_tab_shows_stopped_icon_for_stopped_test():

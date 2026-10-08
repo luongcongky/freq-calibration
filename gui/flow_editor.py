@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import math
+from datetime import datetime
 
 from PyQt5.QtCore import Qt, QRectF, QPointF, QLineF, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import (
@@ -588,9 +589,16 @@ class FlowEditorWindow(QMainWindow):
         # gì, hiện số liệu giả như số đo thật (báo cáo lỗi R4-03).
         self._address_map: dict = address_map or {}
         self._cmd_delay_s: float = cmd_delay_s
+        # Tên kịch bản ĐANG nạp (load_scenario()) — export_scenario() dùng lại
+        # để KHÔNG đè tên gốc thành "Sơ đồ luồng" khi xuất về Classic. Trước
+        # đây export_scenario() luôn hardcode Scenario(name="Sơ đồ luồng"),
+        # nên ghé Digital 1 lần rồi xuất lại là mất tên kịch bản gốc (báo cáo
+        # lỗi R4-08).
+        self._loaded_scenario_name: str = ""
         self._current_node: NodeItem | None = None
         self._build_map: dict | None = None   # tạm dùng khi _export_for_run()
         self._run_node_map: dict = {}         # id(step) -> NodeItem
+        self._last_results: list = []         # list[StepResult] của lần chạy gần nhất (R4-07)
         self.worker: FlowRunWorker | None = None
         self._pulse_timer = QTimer(self)
         self._pulse_timer.setInterval(450)
@@ -699,6 +707,22 @@ class FlowEditorWindow(QMainWindow):
             f" QPushButton:disabled {{ opacity:0.4; }}")
         self.btn_stop.clicked.connect(self._do_stop)
         tb.addWidget(self.btn_stop)
+
+        # Xuất KẾT QUẢ sau khi chạy (khác "Xuất Kịch Bản" ở thanh 3 bước —
+        # cái đó xuất ĐỊNH NGHĨA kịch bản, không phải số liệu đo được).
+        # Theme Classic (scenario_grid.py) đã có nút này từ lâu, Digital
+        # trước đây hoàn toàn chưa làm — chạy xong không có cách nào lấy số
+        # liệu ra khỏi app (báo cáo lỗi R4-07).
+        self.btn_export_results = QPushButton("📤  Xuất kết quả")
+        self.btn_export_results.setFixedHeight(36)
+        self.btn_export_results.setEnabled(False)
+        self.btn_export_results.setStyleSheet(
+            f"background:{Colors.BG_CARD_HI}; color:{Colors.TEXT_MAIN};"
+            f" font-weight:bold; font-size:13px; border:1px solid {Colors.BORDER};"
+            f" border-radius:8px; padding:0 20px;"
+            f" QPushButton:disabled {{ color:{Colors.TEXT_DIM}; }}")
+        self.btn_export_results.clicked.connect(self._export_run_results)
+        tb.addWidget(self.btn_export_results)
 
         tb.addStretch()
         lay.addLayout(tb)
@@ -869,6 +893,8 @@ class FlowEditorWindow(QMainWindow):
             return
         self._run_node_map = node_map
         self._reset_node_states()
+        self._last_results = []
+        self.btn_export_results.setEnabled(False)
         self.btn_run.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self._pulse_timer.start()
@@ -930,6 +956,7 @@ class FlowEditorWindow(QMainWindow):
 
     # --- nhận kết quả từng bước ---
     def _on_run_result(self, res):
+        self._last_results.append(res)
         node = self._run_node_map.get(res.node_id)
         if node is None:
             return
@@ -949,6 +976,7 @@ class FlowEditorWindow(QMainWindow):
         self._pulse_timer.stop()
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        self.btn_export_results.setEnabled(bool(self._last_results))
         if stop_reason:
             QMessageBox.critical(
                 self, "Kịch bản đã tự dừng",
@@ -963,6 +991,33 @@ class FlowEditorWindow(QMainWindow):
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
         QMessageBox.critical(self, "Lỗi chạy kịch bản", msg)
+
+    def _export_run_results(self):
+        """Xuất danh sách StepResult của lần chạy gần nhất ra .xlsx/.csv —
+        dùng lại đúng core/scenario_export.py mà theme Classic
+        (scenario_grid.py::_export_results()) đã dùng, để 2 theme ra CÙNG 1
+        định dạng file (báo cáo lỗi R4-07: Digital trước đây không có cách
+        nào xuất số liệu đo được)."""
+        if not self._last_results:
+            QMessageBox.information(self, "Chưa có dữ liệu",
+                                    "Hãy chạy kịch bản trước khi xuất.")
+            return
+        from core import scenario_export as sx
+        path, _ = get_save_file_name(self, "Xuất kết quả", "ket_qua_kich_ban.xlsx",
+                                     "Excel (*.xlsx);;CSV (*.csv)")
+        if not path:
+            return
+        meta = {
+            "scenario": self._loaded_scenario_name or "Sơ đồ luồng",
+            "mode": "MOCK" if not self._address_map else "REAL",
+            "run_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        try:
+            out = sx.export(self._last_results, path, meta=meta)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Lỗi xuất file", str(exc))
+            return
+        QMessageBox.information(self, "Xong", f"Đã xuất kết quả:\n{out}")
 
     def _set_props_enabled(self, on: bool):
         for w in (self.ed_name, self.ed_desc, self.cb_device, self.btn_save):
@@ -1156,6 +1211,9 @@ class FlowEditorWindow(QMainWindow):
 
     # --- nạp Scenario hiện có thành chuỗi node (mở rộng Loop/If) ---
     def load_scenario(self, scn):
+        self._loaded_scenario_name = getattr(scn, "name", "") or ""
+        self._last_results = []
+        self.btn_export_results.setEnabled(False)
         self.scene.clear()
         self._current_node = None
         seq: list[NodeItem] = []
@@ -1370,7 +1428,7 @@ class FlowEditorWindow(QMainWindow):
                 close_loop(fr)
             elif fr["kind"] == "if":
                 add(IfBlock(branches=fr["branches"]))
-        scn = Scenario(name="Sơ đồ luồng")
+        scn = Scenario(name=self._loaded_scenario_name or "Sơ đồ luồng")
         scn.nodes = root
         return scn
 

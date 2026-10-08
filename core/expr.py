@@ -36,6 +36,16 @@ class ExprError(Exception):
     """Lỗi cú pháp / runtime khi đánh giá biểu thức (thông báo thân thiện)."""
 
 
+def _syntax_error_msg(expr: str, e: SyntaxError) -> str:
+    """Thông báo lỗi cú pháp KHÔNG lẫn tiếng Anh của Python (vd "'(' was
+    never closed", "unexpected EOF while parsing") — trước đây nhét thẳng
+    e.msg vào thông báo cho người dùng cuối (báo cáo lỗi R4-08). Chỉ nêu vị
+    trí ký tự (e.offset) nếu có, không đoán dịch nội dung e.msg."""
+    if e.offset:
+        return f"sai cú pháp: '{expr}' (gần ký tự thứ {e.offset})"
+    return f"sai cú pháp: '{expr}'"
+
+
 # $ident  ->  định danh an toàn (ast không parse được ký tự '$')
 _DOLLAR = re.compile(r"\$([A-Za-z_]\w*)")
 
@@ -153,7 +163,7 @@ def validate(expr: str) -> None:
     try:
         ast.parse(safe, mode="eval")
     except SyntaxError as e:
-        raise ExprError(f"sai cú pháp: '{expr}' ({e.msg})") from e
+        raise ExprError(_syntax_error_msg(expr, e)) from e
 
 
 def evaluate(expr: str, variables: Optional[Mapping[str, Any]] = None):
@@ -164,5 +174,5 @@ def evaluate(expr: str, variables: Optional[Mapping[str, Any]] = None):
     try:
         tree = ast.parse(safe, mode="eval")
     except SyntaxError as e:
-        raise ExprError(f"sai cú pháp: '{expr}' ({e.msg})") from e
+        raise ExprError(_syntax_error_msg(expr, e)) from e
     return _eval(tree.body, names)

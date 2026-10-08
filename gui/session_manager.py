@@ -176,8 +176,8 @@ def _measured_counts_for(template_id: str, table_id: str, n_rows: int):
 
 class _TestWorker(QThread):
     result_ready = pyqtSignal(object)
-    # (tổng bước, lý do TỰ dừng vì lỗi thiết bị — rỗng nếu không, người dùng
-    # có chủ động bấm "Dừng" hay không — xem _on_test_done()/R4-02).
+    # (tổng bước, lý do TỰ dừng vì lỗi thiết bị — rỗng nếu không, kịch bản có
+    # dừng SỚM/chưa chạy hết hay không — xem _on_test_done()/R4-02/R5-01).
     finished_all = pyqtSignal(int, str, bool)
     failed       = pyqtSignal(str)
 
@@ -201,7 +201,7 @@ class _TestWorker(QThread):
                 cmd_delay_s=self._delay,
             )
             results = runner.run(self._scn)
-            self.finished_all.emit(len(results), runner.stop_reason, self._stop)
+            self.finished_all.emit(len(results), runner.stop_reason, runner.stopped_early)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Test worker failed")
             self.failed.emit(str(exc))
@@ -713,8 +713,13 @@ class _TestReviewTab(QWidget):
         bar.addWidget(self.btn_stop)
         left_lay.addLayout(bar)
 
+        # LUÔN hiện (không setVisible(False)/True theo running) — trước đây
+        # ẩn khi nghỉ, hiện khi chạy -> đổi chiều cao layout, cụm nút Chạy/
+        # Dừng bên trên bị đẩy lên ~26px ngay lúc bắt đầu chạy (báo cáo lỗi
+        # R4-06). Để trống format khi nghỉ cho đỡ rối mắt, không ẩn hẳn.
         self.progress = QProgressBar()
-        self.progress.setVisible(False)
+        self.progress.setValue(0)
+        self.progress.setFormat("")
         self.progress.setFixedHeight(18)
         left_lay.addWidget(self.progress)
         splitter.addWidget(left)
@@ -977,7 +982,6 @@ class _TestReviewTab(QWidget):
         self._running = running
         self.btn_run.setEnabled(not running)
         self.btn_stop.setEnabled(running)
-        self.progress.setVisible(running)
         if self._current_index is not None:
             self.btn_run_one.setEnabled(not running)
 
@@ -1906,8 +1910,8 @@ class SessionManagerWindow(QMainWindow):
         self._worker = _TestWorker(scenario, self.address_map, self.cmd_delay_s)
         self._worker.result_ready.connect(self._on_step_result)
         self._worker.finished_all.connect(
-            lambda n, reason, user_stopped, idx=index:
-                self._on_test_done(idx, n, reason, user_stopped))
+            lambda n, reason, stopped_early, idx=index:
+                self._on_test_done(idx, n, reason, stopped_early))
         self._worker.failed.connect(lambda msg, idx=index: self._on_test_failed(idx, msg))
         self._worker.start()
 
@@ -1924,8 +1928,19 @@ class SessionManagerWindow(QMainWindow):
                     os.path.normcase(os.path.abspath(running_path))):
                 win.apply_external_result(res)
 
+    # Cảnh báo dùng chung cho mọi lần dừng SỚM (R5-01) — RF (nếu có) đã được
+    # ScenarioRunner tự tắt (R4-01), nhưng lệnh dọn dẹp RIÊNG của từng máy ở
+    # cuối kịch bản (nếu kịch bản có khai báo, vd "BN" đưa Boonton 4231A về
+    # chế độ gốc) thì CHƯA chạy — trước đây chỉ ghi vào log file, giao diện
+    # không báo gì (báo cáo lỗi R5-01).
+    _CLEANUP_NOT_RUN_HINT = (
+        "\n\nKịch bản dừng giữa chừng — RF máy phát (nếu có) đã được tự tắt, "
+        "nhưng các lệnh dọn dẹp RIÊNG của từng máy ở CUỐI kịch bản (nếu có, vd "
+        "đưa máy đo về chế độ gốc) CHƯA chạy. Hãy kiểm tra lại thiết bị trước "
+        "khi đo tiếp.")
+
     def _on_test_done(self, index: int, n_steps: int, stop_reason: str = "",
-                      user_stopped: bool = False):
+                      stopped_early: bool = False):
         test = self._session.tests[index]
         test.step_results = list(self._step_results_current)
         try:
@@ -1934,7 +1949,7 @@ class SessionManagerWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._log(f"[{test.table_id}] Lỗi map kết quả: {exc}", Colors.ACCENT_WARN)
 
-        if user_stopped and not stop_reason:
+        if stopped_early and not stop_reason:
             # Người dùng chủ động bấm "Dừng" giữa lúc đo thật -> dữ liệu CHƯA
             # đủ (báo cáo lỗi R4-02: bài dừng giữa chừng vẫn bị đánh "✅ Xong"/
             # tính vào "Đã đo" dù mới có ~3,5/19 dòng, không cảnh báo gì).
@@ -1947,6 +1962,11 @@ class SessionManagerWindow(QMainWindow):
             self._step_review.set_running(False)
             self._log(f"⛔ Đã dừng [{test.table_id}] ({n_steps} bước — CHƯA chạy hết)",
                       Colors.ACCENT_WARN)
+            QMessageBox.warning(
+                self, "Đã dừng giữa chừng",
+                f"Bài test [{test.table_id}] đã DỪNG theo yêu cầu — mới chạy "
+                f"{n_steps} bước, CHƯA chạy hết." + self._CLEANUP_NOT_RUN_HINT,
+            )
             return
 
         if stop_reason:
@@ -1965,7 +1985,8 @@ class SessionManagerWindow(QMainWindow):
                 f"Bài test [{test.table_id}] đã TỰ DỪNG vì thiết bị gặp sự cố:\n\n"
                 f"{stop_reason}\n\n"
                 "Đã dừng luôn các bài test còn lại (nếu đang 'Chạy tất cả') để "
-                "tránh gửi tiếp lệnh vào máy đang lỗi. Hãy kiểm tra thiết bị rồi chạy lại.",
+                "tránh gửi tiếp lệnh vào máy đang lỗi. Hãy kiểm tra thiết bị rồi "
+                "chạy lại." + self._CLEANUP_NOT_RUN_HINT,
             )
             return
 

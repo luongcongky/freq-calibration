@@ -317,6 +317,13 @@ class ScenarioRunner:
         # phần cứng...) — tránh cứ tiếp tục gửi lệnh vào máy đang gặp sự cố
         # suốt phần còn lại của kịch bản/vòng lặp. Rỗng = chưa gặp sự cố nào.
         self.stop_reason: str = ""
+        # True nếu run() kết thúc TRƯỚC khi chạy hết mọi node (dừng theo yêu
+        # cầu hoặc do stop_reason) -> các bước dọn dẹp riêng của thiết bị ở
+        # CUỐI kịch bản (nếu kịch bản có khai báo, vd lệnh "BN" đưa 4231A về
+        # chế độ gốc) CHƯA chạy. Giao diện gọi ScenarioRunner nên đọc cờ này
+        # sau run() để tự cảnh báo người dùng — trước đây chỉ log.warning()
+        # (chỉ nằm trong file log, người dùng không thấy) (báo cáo lỗi R5-01).
+        self.stopped_early: bool = False
 
     def _should_stop(self) -> bool:
         return self._stop_flag() or bool(self.stop_reason)
@@ -415,7 +422,8 @@ class ScenarioRunner:
                     dev.disconnect()
                 except Exception:  # noqa: BLE001
                     pass
-            if pc < len(nodes):
+            self.stopped_early = pc < len(nodes)
+            if self.stopped_early:
                 log.warning(
                     "ScenarioRunner: kịch bản dừng SỚM (chưa chạy hết) — các bước dọn dẹp "
                     "riêng của thiết bị ở cuối kịch bản (nếu có, vd đưa máy đo về chế độ "
@@ -566,6 +574,25 @@ class ScenarioRunner:
             res.ok = False; res.error = str(exc)
         self._emit(res)
 
+    # Chu kỳ kiểm tra stop_flag trong lúc WAIT (giây) — xem _interruptible_wait().
+    _WAIT_POLL_S = 0.1
+
+    def _interruptible_wait(self, params: dict) -> dict:
+        """Giống execute_action("wait", ...) nhưng chia nhỏ time.sleep() để
+        bấm "Dừng" có tác dụng NGAY trong lúc chờ, không phải chờ hết WAIT
+        mới dừng — trước đây gọi time.sleep(35) một lần, bấm Dừng lúc kịch
+        bản đang chờ (vd 35s chờ zero) phải đợi tới ~30s sau mới dừng, dễ
+        khiến người dùng tưởng app bị treo (báo cáo lỗi R4-05)."""
+        total = float(params.get("seconds", 0))
+        elapsed = 0.0
+        while elapsed < total:
+            if self._should_stop():
+                break
+            step_s = min(self._WAIT_POLL_S, total - elapsed)
+            time.sleep(step_s)
+            elapsed += step_s
+        return {"text": f"waited {params.get('seconds', 0)}s"}
+
     def _run_step(self, idx: int, step: ScenarioStep, iteration: int) -> None:
         spec = ACTION_SPECS.get(step.action, {})
 
@@ -599,7 +626,10 @@ class ScenarioRunner:
                 if step.action == "wait" and not self._settle_wait:
                     params["seconds"] = 0
                 params = self._resolve_params(params)
-                info = execute_action(step.action, None, params)
+                if step.action == "wait":
+                    info = self._interruptible_wait(params)
+                else:
+                    info = execute_action(step.action, None, params)
                 res.value = info.get("value"); res.unit = info.get("unit", "")
                 res.text = info.get("text", "")
             except Exception as exc:  # noqa: BLE001

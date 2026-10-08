@@ -17,6 +17,7 @@ QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 from PyQt5.QtWidgets import QApplication
 
 from gui.flow_editor import FlowEditorWindow
+from core.scenario_runner import StepResult
 
 _app = QApplication.instance() or QApplication([])
 
@@ -62,6 +63,115 @@ def test_switch_to_digital_passes_real_address_map(monkeypatch):
             assert win._flow_win._cmd_delay_s == 0.3
         finally:
             win._flow_win.deleteLater()
+    finally:
+        win.deleteLater()
+
+
+def test_export_scenario_preserves_loaded_scenario_name():
+    """R4-08 (test_reports/2026-10-08_round4): sau khi ghé Digital rồi xuất
+    lại, tên kịch bản trong Scenario Builder đổi thành "Sơ đồ luồng" —
+    export_scenario() trước đây HARDCODE tên này, đè mất tên gốc."""
+    from core.scenario import Scenario, ScenarioStep
+
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        original = Scenario(name="51079A_via_4231A", nodes=[
+            ScenarioStep(action="identify", devices=["4231A"]),
+        ])
+        win.load_scenario(original)
+        exported = win.export_scenario()
+        assert exported.name == "51079A_via_4231A", (
+            f"Tên kịch bản gốc bị mất, còn lại: {exported.name!r}")
+    finally:
+        win.deleteLater()
+
+
+def test_export_scenario_falls_back_to_default_name_in_pure_demo_mode():
+    """Mở Flow Editor ĐỘC LẬP (không nạp Scenario thật nào, vd demo) ->
+    chưa từng gọi load_scenario() -> vẫn cần 1 tên mặc định hợp lý,
+    không crash."""
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        exported = win.export_scenario()
+        assert exported.name == "Sơ đồ luồng"
+    finally:
+        win.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# R4-07 (test_reports/2026-10-08_round4, còn mở tới vòng 5): theme Digital
+# chạy xong KHÔNG có cách nào xuất số liệu đo được ra file (theme Classic
+# scenario_grid.py đã có nút này từ lâu) — nút "Xuất kết quả" + _last_results
+# là phần MỚI thêm để lấp khoảng trống này.
+# ---------------------------------------------------------------------------
+
+def test_on_run_result_accumulates_last_results():
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        win._run_node_map = {}
+        assert win._last_results == []
+        win._on_run_result(StepResult(action="identify", node_id=999))
+        assert len(win._last_results) == 1
+    finally:
+        win.deleteLater()
+
+
+def test_export_results_button_disabled_until_run_produces_results():
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        assert win.btn_export_results.isEnabled() is False
+        win._run_node_map = {}
+        win._on_run_result(StepResult(action="identify", node_id=999))
+        win._on_run_finished(1, "")
+        assert win.btn_export_results.isEnabled() is True
+    finally:
+        win.deleteLater()
+
+
+def test_export_results_button_disabled_again_when_loading_new_scenario():
+    from core.scenario import Scenario
+
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        win._run_node_map = {}
+        win._on_run_result(StepResult(action="identify", node_id=999))
+        win._on_run_finished(1, "")
+        assert win.btn_export_results.isEnabled() is True
+
+        win.load_scenario(Scenario(name="khac"))
+        assert win.btn_export_results.isEnabled() is False
+        assert win._last_results == []
+    finally:
+        win.deleteLater()
+
+
+def test_export_run_results_calls_scenario_export_with_results(monkeypatch, tmp_path):
+    from gui import flow_editor as fe_mod
+
+    monkeypatch.setattr(fe_mod.QMessageBox, "information", lambda *a, **k: None)
+
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        win._run_node_map = {}
+        win._on_run_result(StepResult(action="identify", node_id=999))
+        win._on_run_finished(1, "")
+
+        out_path = tmp_path / "ket_qua.xlsx"
+        monkeypatch.setattr(fe_mod, "get_save_file_name",
+                            lambda *a, **k: (str(out_path), ""))
+        calls = {}
+        def fake_export(results, path, meta=None):
+            calls["results"] = results
+            calls["path"] = path
+            calls["meta"] = meta
+            return path
+        import core.scenario_export as sx
+        monkeypatch.setattr(sx, "export", fake_export)
+
+        win._export_run_results()
+
+        assert len(calls["results"]) == 1
+        assert calls["path"] == str(out_path)
     finally:
         win.deleteLater()
 

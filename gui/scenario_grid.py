@@ -2238,7 +2238,28 @@ class ScenarioGridWindow(QMainWindow):
             if badge is not None:
                 set_badge(badge, "LỖI" if any_err else "OK",
                          Colors.ACCENT_RED if any_err else Colors.ACCENT_GREEN)
+        self._mark_ancestors_ran(item)
         self._loading = False
+
+    def _mark_ancestors_ran(self, item) -> None:
+        """Khối Loop/If (và nhánh Branch được CHỌN chạy) chứa item vừa có
+        kết quả -> đánh dấu "✓ Đã chạy" thay vì mãi giữ badge mặc định "Chờ"
+        — loop/if/branch không tự nhận StepResult riêng (xem
+        _install_status_badge()) nên trước đây không có cách nào biết đã
+        chạy hay chưa (báo cáo lỗi R4-08). Nhánh KHÔNG được chọn (điều kiện
+        sai) không có con nào phát StepResult -> đúng ý vẫn giữ "Chờ"."""
+        cur = item
+        while True:
+            parent_obj = cur.data(0, ROLE_PARENT)
+            if parent_obj is None:
+                break
+            parent_item = self._id_to_item.get(id(parent_obj))
+            if parent_item is None:
+                break
+            badge = self._status_badges.get(id(parent_item))
+            if badge is not None:
+                set_badge(badge, "✓ Đã chạy", Colors.ACCENT_PRIMARY)
+            cur = parent_item
 
     def apply_external_result(self, res: StepResult):
         """Nhận 1 StepResult từ worker chạy Ở CỬA SỔ KHÁC (Bước 2 của Phiên
