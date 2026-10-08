@@ -4,6 +4,8 @@ unit_test/test_scenario.py
 Test mô hình kịch bản DẠNG CÂY (Step/Loop/If) và bộ thực thi ở chế độ MOCK.
 """
 
+import logging
+
 import pytest
 
 from core.scenario import (
@@ -255,6 +257,32 @@ def test_runner_disabled_node_skipped():
 def test_runner_stop_flag():
     results = ScenarioRunner(mock=True, stop_flag=lambda: True).run(_flat_scenario())
     assert results == []
+
+
+def test_runner_stop_mid_run_auto_turns_off_rf(caplog):
+    """R4-01 (test_reports/2026-10-08_round4): khách bấm Dừng giữa lúc đo
+    thật -> SMW200A vẫn bật RF vì bước dọn dẹp ở cuối kịch bản không chạy.
+    Cho phép node "rf_on" chạy xong (RF đã BẬT), rồi dừng TRƯỚC node kế
+    tiếp -> finally phải tự rf_off() + log cảnh báo dừng sớm."""
+    calls = {"n": 0}
+
+    def stop_flag():
+        calls["n"] += 1
+        return calls["n"] > 1  # cho qua node đầu (rf_on), dừng trước node 2
+
+    scn = Scenario(nodes=[
+        ScenarioStep(action="rf_on", devices=["SMW200A"]),
+        ScenarioStep(action="measure_frequency", devices=["CNT91"]),
+    ])
+    runner = ScenarioRunner(mock=True, stop_flag=stop_flag)
+    with caplog.at_level(logging.WARNING):
+        results = runner.run(scn)
+
+    assert len(results) == 1  # chỉ node rf_on kịp chạy
+    smw = runner._devices["SMW200A"]
+    assert smw._mock_rf == "0", "RF chưa tự tắt khi dừng giữa đường (R4-01)"
+    assert any("dừng SỚM" in r.message for r in caplog.records), (
+        "Không cảnh báo dừng sớm (R4-01) — người dùng có thể lầm máy đã an toàn")
 
 
 def test_runner_real_without_address_raises():

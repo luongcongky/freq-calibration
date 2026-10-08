@@ -395,3 +395,95 @@ def test_stop_button_starts_disabled_and_run_button_enabled():
         assert tab.btn_run.isEnabled() is True
     finally:
         tab.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# R4-02 (test_reports/2026-10-08_round4): bài bị bấm "Dừng" giữa chừng vẫn bị
+# đánh "✅ Xong"/"Đã đo" dù dữ liệu CHƯA chạy hết — SessionManagerWindow.
+# _on_test_done() trước đây chỉ phân biệt "tự dừng vì lỗi thiết bị"
+# (stop_reason) với "chạy xong", không có nhánh riêng cho người dùng CHỦ
+# ĐỘNG bấm "Dừng" (_TestWorker._stop, không đi qua ScenarioRunner.stop_reason).
+# ---------------------------------------------------------------------------
+
+def _fake_on_test_done_self(test: SessionTest):
+    """self giả cho SessionManagerWindow._on_test_done() — chỉ cần các
+    thuộc tính/method mà hàm này thật sự đụng tới."""
+    from types import SimpleNamespace
+    session = SimpleNamespace(template_id="__KHONG_TON_TAI__", tests=[test])
+    return SimpleNamespace(
+        _session=session,
+        _step_results_current=[],
+        _step_review=SimpleNamespace(refresh_row=lambda i: None, set_running=lambda b: None),
+        _log=lambda *a, **k: None,
+        _after_single_or_continue=lambda: None,
+    )
+
+
+def test_on_test_done_user_stopped_marks_status_stopped_not_done():
+    test = SessionTest(table_id="A1", name="Bảng A1", enabled=True, status="running")
+    fake_self = _fake_on_test_done_self(test)
+
+    SessionManagerWindow._on_test_done(fake_self, 0, 4, "", True)
+
+    assert test.status == "stopped", (
+        f"Bài dừng giữa chừng bị đánh status={test.status!r} — vẫn tính như "
+        f"đã đo xong (R4-02)")
+
+
+def test_on_test_done_normal_finish_still_marks_done():
+    """Không được vô tình đổi hành vi chạy XONG bình thường (user_stopped=False)."""
+    test = SessionTest(table_id="A1", name="Bảng A1", enabled=True, status="running")
+    fake_self = _fake_on_test_done_self(test)
+
+    SessionManagerWindow._on_test_done(fake_self, 0, 19, "", False)
+
+    assert test.status == "done"
+
+
+def test_export_tab_shows_stopped_icon_for_stopped_test():
+    """Bài status='stopped' phải hiện icon riêng (⛔), tính là "chưa đủ" dù
+    có vài dòng lỡ được xác nhận — không lẫn với bài đã đo xong, chỉ đang
+    chờ xác nhận (R4-02)."""
+    tab = _ExportTab()
+    try:
+        t = SessionTest(table_id="A1", name="Bảng A1", enabled=True, status="stopped")
+        tab.refresh([t], None, "TEMPLATE_FREQ")
+        item_text = tab.lst_tests.item(0).text()
+        assert item_text.startswith("⛔"), f"Vẫn hiện sai icon cho bài Dừng dở: {item_text!r}"
+    finally:
+        tab.deleteLater()
+
+
+def test_completed_steps_step2_not_completed_when_test_stopped():
+    t_stopped = SessionTest(table_id="A1", enabled=True, status="stopped")
+    win = _fake_window("TEMPLATE_FREQ", [t_stopped])
+    assert 1 not in win._completed_steps(), (
+        "Bước 2 hiện hoàn thành dù có bài bị Dừng giữa chừng (R4-02)")
+
+
+def test_confirm_stopped_tests_warning_blocks_export_when_user_says_no(monkeypatch):
+    """Trước đây xuất thẳng báo cáo thiếu dữ liệu mà không cảnh báo gì (R4-02)
+    — giờ phải hỏi lại, và tôn trọng lựa chọn "Không" của người dùng (không
+    xuất)."""
+    from types import SimpleNamespace
+    from gui import session_manager as sm_mod
+
+    t_stopped = SessionTest(table_id="A1", enabled=True, status="stopped")
+    t_done = SessionTest(table_id="A2", enabled=True, status="done")
+    fake_self = SimpleNamespace(_session=SimpleNamespace(tests=[t_stopped, t_done]))
+
+    asked = {}
+    monkeypatch.setattr(sm_mod, "confirm_yes_no",
+                         lambda *a, **k: (asked.update(title=a[1]), False)[1])
+
+    result = SessionManagerWindow._confirm_stopped_tests_warning(fake_self)
+    assert result is False
+    assert "DỪNG GIỮA CHỪNG" in asked.get("title", "")
+
+
+def test_confirm_stopped_tests_warning_passes_when_no_stopped_tests():
+    from types import SimpleNamespace
+
+    t_done = SessionTest(table_id="A1", enabled=True, status="done")
+    fake_self = SimpleNamespace(_session=SimpleNamespace(tests=[t_done]))
+    assert SessionManagerWindow._confirm_stopped_tests_warning(fake_self) is True

@@ -1932,7 +1932,9 @@ class ScenarioGridWindow(QMainWindow):
                                           parent=None, demo=False,
                                           on_export=self._apply_flow_scenario,
                                           on_switch=self._switch_from_digital,
-                                          on_scan_device=self._scan_for_flow)
+                                          on_scan_device=self._scan_for_flow,
+                                          address_map=self.address_map,
+                                          cmd_delay_s=self.cmd_delay_s)
         self._flow_win.load_scenario(self.scenario)
         self._flow_win.show()
         self.hide()                       # ẩn Classic — chỉ hiện 1 theme tại 1 thời điểm

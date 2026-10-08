@@ -60,6 +60,9 @@ STATUS_LABELS = {
     "running":  ("▶ Đang chạy",  Colors.ACCENT_PRIMARY),
     "failed":   ("❌ Lỗi",       Colors.ACCENT_RED),
     "skipped":  ("— Bỏ qua",    Colors.TEXT_DIM),
+    # Dừng SỚM theo yêu cầu người dùng (nút "Dừng") — khác "done": dữ liệu
+    # CHƯA chạy hết, không được tính là đã đo xong (báo cáo lỗi R4-02).
+    "stopped":  ("⛔ Đã dừng (dở)", Colors.ACCENT_WARN),
 }
 
 _COL_CHK    = 0
@@ -173,7 +176,9 @@ def _measured_counts_for(template_id: str, table_id: str, n_rows: int):
 
 class _TestWorker(QThread):
     result_ready = pyqtSignal(object)
-    finished_all = pyqtSignal(int, str)   # (tổng bước, lý do tự dừng — rỗng nếu chạy hết)
+    # (tổng bước, lý do TỰ dừng vì lỗi thiết bị — rỗng nếu không, người dùng
+    # có chủ động bấm "Dừng" hay không — xem _on_test_done()/R4-02).
+    finished_all = pyqtSignal(int, str, bool)
     failed       = pyqtSignal(str)
 
     def __init__(self, scenario: Scenario, address_map: dict, cmd_delay_s: float):
@@ -196,7 +201,7 @@ class _TestWorker(QThread):
                 cmd_delay_s=self._delay,
             )
             results = runner.run(self._scn)
-            self.finished_all.emit(len(results), runner.stop_reason)
+            self.finished_all.emit(len(results), runner.stop_reason, self._stop)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Test worker failed")
             self.failed.emit(str(exc))
@@ -1234,6 +1239,12 @@ class _ExportTab(QWidget):
                 # vẫn ⌛ thay vì ✗ Lỗi").
                 icon = "❌"
                 n_partial += 1
+            elif t.status == "stopped":
+                # Dừng giữa chừng theo yêu cầu người dùng (R4-02) — luôn tính
+                # "chưa đủ" dù vài dòng đã lỡ được xác nhận, không lẫn với
+                # "đã đo xong, chỉ đang chờ xác nhận" (nhánh dưới).
+                icon = "⛔"
+                n_partial += 1
             elif n == 0:
                 icon = "⏳"
             elif c == 0:
@@ -1888,14 +1899,15 @@ class SessionManagerWindow(QMainWindow):
 
         if self._run_mode == "all":
             done = sum(1 for t in self._session.tests[:index]
-                       if t.status in ("done", "failed", "skipped"))
+                       if t.status in ("done", "failed", "skipped", "stopped"))
             enabled_total = sum(1 for t in self._session.tests if t.enabled)
             self._step_review.set_progress(done, enabled_total)
 
         self._worker = _TestWorker(scenario, self.address_map, self.cmd_delay_s)
         self._worker.result_ready.connect(self._on_step_result)
         self._worker.finished_all.connect(
-            lambda n, reason, idx=index: self._on_test_done(idx, n, reason))
+            lambda n, reason, user_stopped, idx=index:
+                self._on_test_done(idx, n, reason, user_stopped))
         self._worker.failed.connect(lambda msg, idx=index: self._on_test_failed(idx, msg))
         self._worker.start()
 
@@ -1912,7 +1924,8 @@ class SessionManagerWindow(QMainWindow):
                     os.path.normcase(os.path.abspath(running_path))):
                 win.apply_external_result(res)
 
-    def _on_test_done(self, index: int, n_steps: int, stop_reason: str = ""):
+    def _on_test_done(self, index: int, n_steps: int, stop_reason: str = "",
+                      user_stopped: bool = False):
         test = self._session.tests[index]
         test.step_results = list(self._step_results_current)
         try:
@@ -1920,6 +1933,21 @@ class SessionManagerWindow(QMainWindow):
             test.result_table = tpl.map_test_result(test)
         except Exception as exc:  # noqa: BLE001
             self._log(f"[{test.table_id}] Lỗi map kết quả: {exc}", Colors.ACCENT_WARN)
+
+        if user_stopped and not stop_reason:
+            # Người dùng chủ động bấm "Dừng" giữa lúc đo thật -> dữ liệu CHƯA
+            # đủ (báo cáo lỗi R4-02: bài dừng giữa chừng vẫn bị đánh "✅ Xong"/
+            # tính vào "Đã đo" dù mới có ~3,5/19 dòng, không cảnh báo gì).
+            # Đánh dấu trạng thái riêng "stopped" (KHÔNG dùng "done"), và
+            # KHÔNG tự chạy tiếp bài kế tiếp khi đang "Chạy tất cả" — người
+            # dùng vừa chủ động yêu cầu dừng toàn bộ, chạy tiếp bài khác là
+            # trái ý họ.
+            test.status = "stopped"
+            self._step_review.refresh_row(index)
+            self._step_review.set_running(False)
+            self._log(f"⛔ Đã dừng [{test.table_id}] ({n_steps} bước — CHƯA chạy hết)",
+                      Colors.ACCENT_WARN)
+            return
 
         if stop_reason:
             # Thiết bị thật gặp sự cố -> ScenarioRunner đã tự dừng kịch bản
@@ -2003,6 +2031,21 @@ class SessionManagerWindow(QMainWindow):
             "Phát hiện vài ô ở Bước 1 có thể đã gõ sai:\n\n- " + "\n- ".join(problems) +
             "\n\nVẫn tiếp tục xuất báo cáo?")
 
+    def _confirm_stopped_tests_warning(self) -> bool:
+        """Cảnh báo rõ trước khi xuất nếu còn bài bị DỪNG GIỮA CHỪNG (nút
+        "Dừng") trong danh sách — trước đây bài dừng dở vẫn bị tính "done"
+        và xuất thẳng ra báo cáo thiếu dữ liệu mà không có cảnh báo nào
+        (báo cáo lỗi R4-02). Trả False nếu người dùng chọn quay lại kiểm tra."""
+        stopped = [t for t in self._session.tests if t.enabled and t.status == "stopped"]
+        if not stopped:
+            return True
+        names = "\n- ".join(f"{t.table_id}: {t.name}" for t in stopped)
+        return confirm_yes_no(
+            self, "Có bài test bị DỪNG GIỮA CHỪNG",
+            f"{len(stopped)} bài sau đã bị DỪNG trước khi đo xong (dữ liệu CHƯA đầy đủ):\n\n"
+            f"- {names}\n\nVẫn tiếp tục xuất báo cáo với dữ liệu thiếu này?",
+            default_yes=False)
+
     @staticmethod
     def _friendly_export_error(exc: Exception, path: str) -> str:
         """Thay message kỹ thuật khó hiểu ([Errno 13] Permission denied...)
@@ -2036,6 +2079,8 @@ class SessionManagerWindow(QMainWindow):
         self._sync_meta()
         if not self._confirm_meta_warnings():
             return
+        if not self._confirm_stopped_tests_warning():
+            return
         tpl = get_template(self._session.template_id)
         if not self._check_template_file_exists(tpl, "bienban_docx_path", "Biên Bản"):
             return
@@ -2056,6 +2101,8 @@ class SessionManagerWindow(QMainWindow):
     def _export_gcnkd(self):
         self._sync_meta()
         if not self._confirm_meta_warnings():
+            return
+        if not self._confirm_stopped_tests_warning():
             return
         tpl = get_template(self._session.template_id)
         if not self._check_template_file_exists(tpl, "gcnkd_docx_path", "GCN"):

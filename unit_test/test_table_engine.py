@@ -359,3 +359,34 @@ def test_map_table_leftover_values_produce_note():
     assert rt.rows[0].value_measured == 1.0
     assert "A9" in rt.note
     assert "2" in rt.note   # 2 giá trị dư chưa dùng tới
+
+
+# ---------------------------------------------------------------------------
+# R4-04: xuất Word làm sai/mất dữ liệu có "&"/"<" — docxtpl (mặc định
+# autoescape=False) chèn thẳng giá trị context vào XML .docx KHÔNG escape,
+# nên "R&S" (giá trị MẶC ĐỊNH của TEMPLATE_POWER!) render ra "R" (XML coi
+# "&S" là 1 entity reference không hợp lệ, mất hết phần sau); "A<B" render
+# ra "A" (XML coi đó là mở 1 tag mới, nặng hơn có thể sinh XML sai cấu trúc
+# khiến Word báo lỗi không mở được file). render_with_table_contexts()/
+# render_gcnkd_summary() giờ gọi tpl.render(context, autoescape=True).
+# ---------------------------------------------------------------------------
+
+def test_render_with_table_contexts_escapes_ampersand_and_angle_bracket(tmp_path):
+    from docx import Document as _Document
+    tpl_path = tmp_path / "tpl.docx"
+    doc = _Document()
+    doc.add_paragraph("Hãng SX: {{ mfr }}")
+    doc.add_paragraph("Tên: {{ name }}")
+    doc.save(str(tpl_path))
+
+    session = CalibrationSession()
+    out_path = table_engine.render_with_table_contexts(
+        session, [], tpl_path, tmp_path / "out.docx",
+        meta_context_fn=lambda s: {"mfr": "R&S", "name": "Đầu đo & cảm biến <quote> 'x' > y"},
+    )
+
+    out_doc = _Document(str(out_path))
+    full_text = "\n".join(p.text for p in out_doc.paragraphs)
+    assert "Hãng SX: R&S" in full_text, f"'&' làm mất dữ liệu (R4-04): {full_text!r}"
+    assert "Đầu đo & cảm biến <quote> 'x' > y" in full_text, (
+        f"'&'/'<' làm mất dữ liệu (R4-04): {full_text!r}")

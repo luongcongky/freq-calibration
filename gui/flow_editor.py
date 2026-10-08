@@ -31,7 +31,7 @@ from PyQt5.QtWidgets import (
 
 from gui.theme import Colors
 from gui.file_dialog_utils import get_open_file_name, get_save_file_name
-from gui.widgets import ThemeToggle, EXPR_HELP
+from gui.widgets import ThemeToggle, EXPR_HELP, confirm_yes_no
 
 # Thiết bị mẫu (khi mở độc lập). Khi tích hợp sẽ thay bằng ConnectionProfile.
 DEMO_DEVICES = [
@@ -568,7 +568,8 @@ def _device_card(dev: dict) -> QFrame:
 
 class FlowEditorWindow(QMainWindow):
     def __init__(self, devices=None, parent=None, demo=True, on_export=None,
-                 on_switch=None, on_scan_device=None):
+                 on_switch=None, on_scan_device=None,
+                 address_map: dict | None = None, cmd_delay_s: float = 0.1):
         super().__init__(parent)
         self.setWindowTitle("FREQ-CAL :: Flow Editor (Theme Digital)")
         self.setWindowIcon(QIcon("gui/logo.png"))
@@ -578,8 +579,15 @@ class FlowEditorWindow(QMainWindow):
         self._on_switch = on_switch          # callback(scn) để quay lại theme Classic
         self._on_scan_device = on_scan_device  # callback() -> dict | None
         self._connected = bool(devices)
-        self._address_map: dict = {}
-        self._cmd_delay_s: float = 0.1
+        # address_map: địa chỉ VISA THẬT đã xác nhận ở theme Classic (nếu
+        # chuyển qua từ đó) — trước đây luôn rỗng cho tới khi người dùng tự
+        # bấm lại Step 1 "Scan" NGAY TRONG Digital, dù self._connected đã là
+        # True (devices không rỗng) và danh sách bên trái đã hiện sẵn các
+        # máy "● đã kết nối" — khiến CHẠY luôn rơi về MOCK (mock = not
+        # bool(self._address_map) ở FlowRunWorker) mà giao diện không báo
+        # gì, hiện số liệu giả như số đo thật (báo cáo lỗi R4-03).
+        self._address_map: dict = address_map or {}
+        self._cmd_delay_s: float = cmd_delay_s
         self._current_node: NodeItem | None = None
         self._build_map: dict | None = None   # tạm dùng khi _export_for_run()
         self._run_node_map: dict = {}         # id(step) -> NodeItem
@@ -838,6 +846,22 @@ class FlowEditorWindow(QMainWindow):
             QMessageBox.warning(self, "Chưa kết nối",
                                 "Vui lòng scan thiết bị (Step 1) trước khi chạy.")
             return
+        if not self._address_map:
+            # self._connected=True (devices không rỗng, danh sách bên trái
+            # hiện "● đã kết nối") KHÔNG đồng nghĩa self._address_map có địa
+            # chỉ VISA thật — 2 trạng thái này có thể lệch nhau (vd mang
+            # sang từ Classic nhưng Classic cũng chưa Scan & Identify).
+            # FlowRunWorker tự rơi về mock khi address_map rỗng mà không
+            # báo gì trên giao diện, hiện số liệu giả như đo thật (báo cáo
+            # lỗi R4-03) — cảnh báo rõ TRƯỚC khi chạy, không chỉ ghi trong log.
+            if not confirm_yes_no(
+                    self, "Sẽ chạy MÔ PHỎNG (không có thiết bị thật)",
+                    "Chưa có địa chỉ VISA thật nào được xác nhận — chạy lúc này sẽ ra "
+                    "SỐ GIẢ (mô phỏng), không phải số đo thật, dù danh sách thiết bị bên "
+                    "trái đang hiện 'đã kết nối'.\n\n"
+                    "Bấm Step 1 để Scan & Identify thiết bị thật trước khi chạy.\n\n"
+                    "Vẫn chạy mô phỏng?", default_yes=False):
+                return
         scn, node_map = self._export_for_run()
         if not scn.nodes:
             QMessageBox.warning(self, "Kịch bản trống",

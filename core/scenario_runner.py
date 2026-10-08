@@ -351,11 +351,15 @@ class ScenarioRunner:
         # Nhãn (label) cấp ngoài cùng -> chỉ số node, làm đích cho goto.
         labels = {n.params.get("name"): i for i, n in enumerate(nodes)
                   if isinstance(n, ScenarioStep) and n.action == "label" and n.params.get("name")}
+        # Khởi tạo TRƯỚC try — nếu _open_device() lỗi (vd mất kết nối VISA)
+        # thì ngoại lệ bay thẳng xuống finally trước khi pc kịp gán trong
+        # try, "if pc < len(nodes)" ở finally sẽ NameError (che mất lỗi
+        # THẬT của _open_device) nếu không có dòng này.
+        pc, jumps = 0, 0
         try:
             for dk in scn.all_device_keys():
                 self._devices[dk] = self._open_device(dk)
 
-            pc, jumps = 0, 0
             while pc < len(nodes):
                 if self._should_stop():
                     if self.stop_reason:
@@ -388,11 +392,34 @@ class ScenarioRunner:
                     continue
                 pc += 1
         finally:
-            for dev in self._devices.values():
+            # An toàn thiết bị: nếu kịch bản dừng SỚM (bấm Dừng, hoặc tự
+            # dừng vì lỗi thiết bị), các bước dọn dẹp người dùng đặt ở CUỐI
+            # kịch bản (vd tắt RF máy phát, đưa máy đo về chế độ gốc)
+            # KHÔNG kịp chạy — máy phát có thể còn BẬT RF (báo cáo lỗi
+            # R4-01, SMW200A vẫn ~7 dBm sau khi Dừng). Tự tắt RF (rf_off())
+            # cho MỌI thiết bị có hỗ trợ, bất kể chạy xong hay dừng giữa
+            # đường — an toàn vô điều kiện, không chỉ khi phát hiện dừng
+            # sớm (disconnect() không tự làm việc này). KHÔNG đoán được
+            # lệnh dọn dẹp riêng của từng máy khác rf_off() (vd "BN" đưa
+            # Boonton 4231A về chế độ gốc) — chỉ báo rõ cho người dùng khi
+            # dừng sớm để tự kiểm tra lại máy, không im lặng để lỡ hiểu
+            # nhầm là máy đã về trạng thái an toàn.
+            for dk, dev in self._devices.items():
+                if hasattr(dev, "rf_off"):
+                    try:
+                        dev.rf_off()
+                        log.warning("ScenarioRunner: đã tự tắt RF (an toàn) cho '%s'", dk)
+                    except Exception:  # noqa: BLE001
+                        log.exception("ScenarioRunner: tắt RF an toàn cho '%s' THẤT BẠI", dk)
                 try:
                     dev.disconnect()
                 except Exception:  # noqa: BLE001
                     pass
+            if pc < len(nodes):
+                log.warning(
+                    "ScenarioRunner: kịch bản dừng SỚM (chưa chạy hết) — các bước dọn dẹp "
+                    "riêng của thiết bị ở cuối kịch bản (nếu có, vd đưa máy đo về chế độ "
+                    "gốc) CHƯA CHẠY. Kiểm tra lại trạng thái máy trước khi đo tiếp.")
         return self._results
 
     def _run_node(self, idx: int, node) -> None:

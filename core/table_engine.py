@@ -681,7 +681,16 @@ def render_with_table_contexts(session: CalibrationSession, descriptors: list,
     context["tables"] = build_all_table_contexts(session, descriptors)
 
     tpl = DocxTemplate(str(template_path))
-    tpl.render(context)
+    # autoescape=True — docxtpl (mặc định autoescape=False) chèn thẳng
+    # chuỗi vào XML .docx KHÔNG escape "&"/"<"/">" : "R&S" render ra "R"
+    # (mất hết sau &, XML coi "&S" là 1 entity reference không hợp lệ),
+    # "A<B" render ra "A" (mất hết sau <, XML coi đó là mở 1 tag mới) —
+    # nặng hơn, 1 số trường hợp sinh XML sai cấu trúc khiến Word báo lỗi
+    # không mở được file dù app báo "Đã xuất" thành công (báo cáo lỗi
+    # R4-04). Đã kiểm chứng trực tiếp: autoescape=True xử lý đúng cả 2 ký
+    # tự, không ảnh hưởng cú pháp {% for %}/{% if %} (chỉ áp cho giá trị
+    # {{ }} render ra, không phải cấu trúc template).
+    tpl.render(context, autoescape=True)
     tpl.save(str(output_path))
 
     from docx import Document
@@ -733,6 +742,6 @@ def render_gcnkd_summary(session: CalibrationSession, descriptors: list,
     context["rows"] = rows
 
     tpl = DocxTemplate(str(template_path))
-    tpl.render(context)
+    tpl.render(context, autoescape=True)  # xem render_with_table_contexts() — báo cáo lỗi R4-04
     tpl.save(str(output_path))
     return output_path

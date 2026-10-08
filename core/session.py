@@ -200,7 +200,7 @@ class SessionTest:
     name: str = ""               # Tên bài test
     scenario_path: str = ""      # Đường dẫn file .json kịch bản
     enabled: bool = True
-    status: str = "pending"      # "pending" | "running" | "done" | "failed" | "skipped"
+    status: str = "pending"      # "pending" | "running" | "done" | "failed" | "skipped" | "stopped"
     result_table: Optional[ReportTable] = None
     step_results: list = field(default_factory=list)   # list[StepResult]
     error_msg: str = ""
