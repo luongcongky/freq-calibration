@@ -227,8 +227,13 @@ class CNT90XL:
                 self.reset()
 
         except pyvisa.VisaIOError as exc:
+            # Thông báo lỗi tiếng Anh thuần (khác hẳn các driver mới dựa
+            # trên drivers/base_visa.py, đều dùng "<máy>: không kết nối
+            # được tới '<địa chỉ>': <lỗi>") — CNT90XL/SMW200A là 2 driver
+            # GỐC viết trước khi có base_visa.py, có connect() riêng, không
+            # kế thừa được câu chữ chung (báo cáo lỗi K04).
             raise CNT90XLConnectionError(
-                f"Cannot connect to CNT-90XL at '{self._address}': {exc}"
+                f"CNT-90XL: không kết nối được tới '{self._address}': {exc}"
             ) from exc
 
     def disconnect(self) -> None:

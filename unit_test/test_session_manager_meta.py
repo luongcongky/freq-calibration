@@ -397,6 +397,22 @@ def test_stop_button_starts_disabled_and_run_button_enabled():
         tab.deleteLater()
 
 
+def test_load_tests_clears_stale_progress_bar_from_previous_run():
+    """K12 (test_reports/2026-10-09_khong_thiet_bi): sau "Chạy tất cả" (có
+    bài Lỗi) rồi bấm "Mới"/"Mở phiên", thanh tiến trình vàng đầy "Bài 2/2"
+    của phiên CŨ vẫn còn — load_tests() (gọi khi Mới/Mở phiên) phải xoá nó,
+    không chỉ _run_all() mới reset."""
+    tab = _TestReviewTab()
+    try:
+        tab.set_progress(2, 2)
+        assert tab.progress.text() == "Bài 2/2"
+        tab.load_tests([], "")
+        assert tab.progress.text() == "", (
+            f"Thanh tiến trình cũ vẫn còn sau load_tests() (K12): {tab.progress.text()!r}")
+    finally:
+        tab.deleteLater()
+
+
 def test_progress_bar_stays_visible_across_set_running_no_layout_jump():
     """R4-06 (test_reports/2026-10-08_round5): trước đây progress.setVisible()
     đổi theo running -> đổi chiều cao layout, cụm nút Chạy/Dừng bị đẩy lên
@@ -530,6 +546,182 @@ def test_confirm_stopped_tests_warning_blocks_export_when_user_says_no(monkeypat
     result = SessionManagerWindow._confirm_stopped_tests_warning(fake_self)
     assert result is False
     assert "DỪNG GIỮA CHỪNG" in asked.get("title", "")
+
+
+def test_export_tab_does_not_prefill_dat_when_no_confirmed_data():
+    """K08 (test_reports/2026-10-09_khong_thiet_bi): mọi bài Lỗi, không có
+    số liệu nào (all_passed=None) -> Ô "Kết luận" trước đây tự điền sẵn
+    "Đạt yêu cầu kỹ thuật đo lường", xuất thẳng ra báo cáo mà không ai để
+    ý. Giờ phải để TRỐNG khi chưa có gì được xác nhận."""
+    tab = _ExportTab()
+    try:
+        t = SessionTest(table_id="A1", name="Bảng A1", enabled=True, status="failed")
+        tab.refresh([t], None, "TEMPLATE_FREQ")
+        assert tab.conclusion_text() == "", (
+            f"Vẫn tự điền kết luận dù chưa có số liệu nào (K08): {tab.conclusion_text()!r}")
+    finally:
+        tab.deleteLater()
+
+
+def test_export_tab_still_prefills_dat_or_khong_dat_when_confirmed():
+    """Không được vô tình đổi hành vi khi THỰC SỰ có kết quả đã xác nhận."""
+    tab = _ExportTab()
+    try:
+        t = SessionTest(table_id="A1", enabled=True, status="done")
+        tab.refresh([t], True, "TEMPLATE_FREQ")
+        assert tab.conclusion_text() == "Đạt yêu cầu kỹ thuật đo lường"
+
+        tab2 = _ExportTab()
+        try:
+            tab2.refresh([t], False, "TEMPLATE_FREQ")
+            assert tab2.conclusion_text() == "Không đạt yêu cầu kỹ thuật đo lường"
+        finally:
+            tab2.deleteLater()
+    finally:
+        tab.deleteLater()
+
+
+def test_confirm_failed_tests_warning_blocks_export_when_user_says_no(monkeypatch):
+    """K08: bài Lỗi (không dừng giữa chừng, LỖI THẬT) trước đây không được
+    hỏi gì trước khi xuất — chỉ bài "dừng giữa chừng" (R4-02) mới được hỏi."""
+    from types import SimpleNamespace
+    from gui import session_manager as sm_mod
+
+    t_failed = SessionTest(table_id="A1", enabled=True, status="failed")
+    fake_self = SimpleNamespace(_session=SimpleNamespace(tests=[t_failed]))
+
+    asked = {}
+    monkeypatch.setattr(sm_mod, "confirm_yes_no",
+                         lambda *a, **k: (asked.update(title=a[1]), False)[1])
+
+    result = SessionManagerWindow._confirm_failed_tests_warning(fake_self)
+    assert result is False
+    assert "LỖI" in asked.get("title", "")
+
+
+def test_confirm_failed_tests_warning_passes_when_no_failed_tests():
+    from types import SimpleNamespace
+
+    t_done = SessionTest(table_id="A1", enabled=True, status="done")
+    fake_self = SimpleNamespace(_session=SimpleNamespace(tests=[t_done]))
+    assert SessionManagerWindow._confirm_failed_tests_warning(fake_self) is True
+
+
+# ---------------------------------------------------------------------------
+# K06/K07 (test_reports/2026-10-09_khong_thiet_bi): lỗi kết nối khi máy tắt
+# chỉ hiện ở status bar (K06), và tổng kết cuối "Chạy tất cả" không nhắc
+# tới việc có bài LỖI (K07).
+# ---------------------------------------------------------------------------
+
+def _fake_run_one_self(test, run_mode="one"):
+    from types import SimpleNamespace
+    session = SimpleNamespace(tests=[test])
+    return SimpleNamespace(
+        _session=session,
+        _run_mode=run_mode,
+        _step_review=SimpleNamespace(refresh_row=lambda i: None),
+        _log=lambda *a, **k: None,
+        _after_single_or_continue=lambda: None,
+    )
+
+
+def test_on_test_failed_shows_dialog_for_single_run(monkeypatch):
+    from gui import session_manager as sm_mod
+
+    shown = []
+    monkeypatch.setattr(sm_mod.QMessageBox, "critical",
+                        lambda *a, **k: shown.append(a[2] if len(a) > 2 else ""))
+    test = SessionTest(table_id="A1", enabled=True, status="running")
+    fake_self = _fake_run_one_self(test, run_mode="one")
+
+    SessionManagerWindow._on_test_failed(fake_self, 0, "VI_ERROR_BERR: Bus error")
+
+    assert test.status == "failed"
+    assert shown, "Chạy 1 bài bị lỗi nhưng không hiện hộp thoại (K06)"
+
+
+def test_on_test_failed_no_dialog_during_run_all(monkeypatch):
+    """"Chạy tất cả" không bật 1 hộp thoại/bài — tránh dội N hộp liên tiếp
+    khi nhiều bài cùng lỗi; tổng kết đã có ở _all_tests_done() (K07)."""
+    from gui import session_manager as sm_mod
+
+    shown = []
+    monkeypatch.setattr(sm_mod.QMessageBox, "critical",
+                        lambda *a, **k: shown.append(1))
+    test = SessionTest(table_id="A1", enabled=True, status="running")
+    fake_self = _fake_run_one_self(test, run_mode="all")
+
+    SessionManagerWindow._on_test_failed(fake_self, 0, "VI_ERROR_BERR: Bus error")
+
+    assert shown == [], "Hiện hộp thoại cho từng bài trong 'Chạy tất cả' (dội N hộp)"
+
+
+def test_all_tests_done_log_mentions_failed_tests():
+    from types import SimpleNamespace
+
+    t1 = SessionTest(table_id="A1", enabled=True, status="failed")
+    t2 = SessionTest(table_id="A2", enabled=True, status="failed")
+    session = SimpleNamespace(tests=[t1, t2], all_passed=None)
+    logs = []
+    fake_self = SimpleNamespace(
+        _session=session,
+        _step_review=SimpleNamespace(set_running=lambda b: None, set_progress=lambda a, b: None),
+        _refresh_export_tab=lambda: None,
+        stack=SimpleNamespace(setCurrentIndex=lambda i: None),
+        _log=lambda msg, color=None: logs.append(msg),
+        _log_ram=lambda *a, **k: None,
+    )
+
+    SessionManagerWindow._all_tests_done(fake_self)
+
+    assert any("LỖI" in m and "A1" in m and "A2" in m for m in logs), (
+        f"Tổng kết không nhắc tới bài LỖI (K07): {logs}")
+
+
+def test_all_tests_done_log_unchanged_when_pending_confirmation():
+    """Không được đổi hành vi khi tests chạy ỔN, chỉ đang chờ xác nhận
+    (không có bài nào status='failed')."""
+    from types import SimpleNamespace
+
+    t1 = SessionTest(table_id="A1", enabled=True, status="done")
+    session = SimpleNamespace(tests=[t1], all_passed=None)
+    logs = []
+    fake_self = SimpleNamespace(
+        _session=session,
+        _step_review=SimpleNamespace(set_running=lambda b: None, set_progress=lambda a, b: None),
+        _refresh_export_tab=lambda: None,
+        stack=SimpleNamespace(setCurrentIndex=lambda i: None),
+        _log=lambda msg, color=None: logs.append(msg),
+        _log_ram=lambda *a, **k: None,
+    )
+
+    SessionManagerWindow._all_tests_done(fake_self)
+
+    assert any("chưa có dòng nào được xác nhận" in m for m in logs)
+
+
+def test_open_scenario_builder_passes_session_profile_through(monkeypatch):
+    """K10 (test_reports/2026-10-09_khong_thiet_bi): _open_scenario_builder()
+    trước đây chỉ truyền address_map/cmd_delay_s, không truyền profile đầy
+    đủ (có IDN) -> ScenarioGridWindow._profile không được gán đúng ->
+    Digital (sau khi ghé) hiện "Chưa kết nối thiết bị / 0 Nodes"."""
+    from core.profile import ConnectionProfile, ProfileEntry
+
+    win = SessionManagerWindow()
+    try:
+        prof = ConnectionProfile(entries=[
+            ProfileEntry(model_key="4231A", address="GPIB0::13::INSTR",
+                         idn="Boonton,4231A,SN1,1.0"),
+        ])
+        win._profile = prof
+        win.address_map = prof.address_map()
+        win._open_scenario_builder()
+        try:
+            assert win._scenario_win._profile is prof
+        finally:
+            win._scenario_win.deleteLater()
+    finally:
+        win.deleteLater()
 
 
 def test_confirm_stopped_tests_warning_passes_when_no_stopped_tests():

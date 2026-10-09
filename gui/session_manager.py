@@ -773,6 +773,12 @@ class _TestReviewTab(QWidget):
         self._clear_detail()
         self._update_chk_header()
         self._update_summary_cards()
+        # Xoá thanh tiến trình của lần "Chạy tất cả" TRƯỚC — "Mới"/"Mở phiên"
+        # nạp lại danh sách bài test nhưng không ai đụng tới progress bar,
+        # nên thanh vàng đầy "Bài 2/2" của phiên CŨ vẫn còn, trông như phiên
+        # MỚI/đã mở đã chạy xong (báo cáo lỗi K12).
+        self.progress.setValue(0)
+        self.progress.setFormat("")
 
     def _update_summary_cards(self):
         counts = _compute_result_counts(self._tests)
@@ -1275,8 +1281,17 @@ class _ExportTab(QWidget):
                 f"color:{Colors.ACCENT_GREEN if ok else Colors.ACCENT_RED}; "
                 f"font-size:12px; font-weight:bold; background:transparent;")
         if not self._conclusion_manual:
-            self.e_conclusion.setText(_AUTO_CONCLUSION_FAIL if all_passed is False
-                                      else _AUTO_CONCLUSION_PASS)
+            # Trước đây "else" gộp CẢ all_passed=True (đạt thật) VÀ None
+            # (CHƯA có dòng nào xác nhận — vd mọi bài đều Lỗi, 0 số liệu)
+            # thành CÙNG 1 nhánh -> tự điền sẵn "Đạt yêu cầu..." dù chưa hề
+            # có kết quả nào, xuất thẳng ra báo cáo mà không ai để ý (báo
+            # cáo lỗi K08). None giờ để TRỐNG, không tự nhận định bất cứ gì.
+            if all_passed is False:
+                self.e_conclusion.setText(_AUTO_CONCLUSION_FAIL)
+            elif all_passed is True:
+                self.e_conclusion.setText(_AUTO_CONCLUSION_PASS)
+            else:
+                self.e_conclusion.setText("")
         self.btn_export.setEnabled(True)
         self.btn_print.setEnabled(True)
 
@@ -1647,6 +1662,7 @@ class SessionManagerWindow(QMainWindow):
                 cmd_delay_s=self.cmd_delay_s,
                 on_device_changed=self._on_scenario_builder_device_changed,
                 on_closed=self._on_scenario_builder_closed,
+                profile=self._profile,
             )
             self._scenario_win.show()
         else:
@@ -2000,6 +2016,15 @@ class SessionManagerWindow(QMainWindow):
         test.status = "failed"; test.error_msg = msg
         self._step_review.refresh_row(index)
         self._log(f"❌ Lỗi [{test.table_id}]: {msg}", Colors.ACCENT_RED)
+        # Trước đây lỗi chỉ hiện ở thanh trạng thái dưới đáy (status bar),
+        # dễ bị bỏ sót (báo cáo lỗi K06 — Builder đã có hộp thoại "Lỗi chạy
+        # kịch bản", Bước 2 thì chưa). Chỉ hiện hộp thoại cho "Chạy bài
+        # này" (1 bài) — "Chạy tất cả" không bật từng hộp/bài để tránh dội
+        # N hộp thoại liên tiếp khi nhiều bài cùng lỗi (vd cả loạt máy tắt);
+        # tổng kết lỗi của "Chạy tất cả" đã có riêng ở Bước 3 (xem K07).
+        if self._run_mode != "all":
+            QMessageBox.critical(self, "Lỗi chạy kịch bản",
+                                 f"Bài [{test.table_id}] gặp lỗi:\n\n{msg}")
         self._after_single_or_continue()
 
     def _all_tests_done(self):
@@ -2009,10 +2034,18 @@ class SessionManagerWindow(QMainWindow):
         self._refresh_export_tab()
         self.stack.setCurrentIndex(2)
         passed = self._session.all_passed
+        failed = [t for t in self._session.tests if t.enabled and t.status == "failed"]
         if passed is True:
             self._log("=== PHIÊN HOÀN TẤT — TẤT CẢ (ĐÃ XÁC NHẬN) ĐẠT ===", Colors.ACCENT_GREEN)
         elif passed is False:
             self._log("=== PHIÊN HOÀN TẤT — CÓ BÀI KHÔNG ĐẠT ===", Colors.ACCENT_RED)
+        elif failed:
+            # Trước đây rơi vào "else" chung — "Đã chạy xong..." nghe như đã
+            # chạy ổn, chỉ còn chờ xác nhận, không hề nhắc tới việc có bài
+            # LỖI (vd mất kết nối thiết bị) (báo cáo lỗi K07).
+            names = ", ".join(t.table_id for t in failed)
+            self._log(f"=== CÓ {len(failed)} BÀI LỖI ({names}) — kiểm tra lại thiết bị/kết nối ===",
+                      Colors.ACCENT_RED)
         else:
             self._log("=== Đã chạy xong — chưa có dòng nào được xác nhận vào báo cáo ===", Colors.ACCENT_PRIMARY)
         self._log_ram("sau khi chạy xong phiên")
@@ -2067,6 +2100,22 @@ class SessionManagerWindow(QMainWindow):
             f"- {names}\n\nVẫn tiếp tục xuất báo cáo với dữ liệu thiếu này?",
             default_yes=False)
 
+    def _confirm_failed_tests_warning(self) -> bool:
+        """Cảnh báo trước khi xuất nếu còn bài LỖI (status="failed") trong
+        danh sách — trước đây xuất thẳng ra báo cáo "Kết luận: Đạt" (xem
+        _ExportTab.refresh()) mà không hỏi gì, dù bài Lỗi nghĩa là KHÔNG có
+        số liệu nào (báo cáo lỗi K08 — bài "dừng giữa chừng" đã được hỏi,
+        bài "Lỗi" thì chưa). Trả False nếu người dùng chọn quay lại kiểm tra."""
+        failed = [t for t in self._session.tests if t.enabled and t.status == "failed"]
+        if not failed:
+            return True
+        names = "\n- ".join(f"{t.table_id}: {t.name}" for t in failed)
+        return confirm_yes_no(
+            self, "Có bài test LỖI, chưa có số liệu",
+            f"{len(failed)} bài sau đã LỖI, chưa đo được số liệu nào:\n\n"
+            f"- {names}\n\nVẫn tiếp tục xuất báo cáo (phần tương ứng sẽ để trống)?",
+            default_yes=False)
+
     @staticmethod
     def _friendly_export_error(exc: Exception, path: str) -> str:
         """Thay message kỹ thuật khó hiểu ([Errno 13] Permission denied...)
@@ -2102,6 +2151,8 @@ class SessionManagerWindow(QMainWindow):
             return
         if not self._confirm_stopped_tests_warning():
             return
+        if not self._confirm_failed_tests_warning():
+            return
         tpl = get_template(self._session.template_id)
         if not self._check_template_file_exists(tpl, "bienban_docx_path", "Biên Bản"):
             return
@@ -2124,6 +2175,8 @@ class SessionManagerWindow(QMainWindow):
         if not self._confirm_meta_warnings():
             return
         if not self._confirm_stopped_tests_warning():
+            return
+        if not self._confirm_failed_tests_warning():
             return
         tpl = get_template(self._session.template_id)
         if not self._check_template_file_exists(tpl, "gcnkd_docx_path", "GCN"):

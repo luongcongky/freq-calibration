@@ -86,6 +86,10 @@ if (Test-Path "templates") { Copy-Item -Recurse -Force "templates" (Join-Path $R
 New-Item -ItemType Directory -Force -Path (Join-Path $ReleaseDir "gui") | Out-Null
 Copy-Item -Force "gui\logo.png" (Join-Path $ReleaseDir "gui\logo.png")
 Copy-Item -Force "gui\logo.ico" (Join-Path $ReleaseDir "gui\logo.ico")
+# gui/arrow_down.svg: cung ly do nhu logo.png/logo.ico o tren -- thieu dong
+# nay lam ban .exe mat mui ten tam xuong o moi combo box/o ngay (build.ps1
+# truoc day chi copy logo, bo sot file nay) (bao cao loi K01).
+Copy-Item -Force "gui\arrow_down.svg" (Join-Path $ReleaseDir "gui\arrow_down.svg")
 # VERSION: core/paths.py::get_app_version() doc file nay canh .exe de hien
 # so phien ban len tieu de cua so (session_manager.py/scenario_grid.py) --
 # copy tay giong logo.png/logo.ico, PyInstaller khong tu dong goi.

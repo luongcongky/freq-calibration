@@ -325,6 +325,19 @@ def test_runner_stop_mid_run_auto_turns_off_rf(caplog):
         "Không cảnh báo dừng sớm (R4-01) — người dùng có thể lầm máy đã an toàn")
 
 
+def test_runner_no_cleanup_warning_logged_when_no_device_ever_opened(caplog):
+    """Ghi chú trong test_reports/2026-10-09_khong_thiet_bi: cảnh báo 'dừng
+    SỚM ... CHƯA chạy' vẫn log ngay cả khi KHÔNG mở được thiết bị nào (vd
+    toàn bộ máy đang tắt) — không có gì để dọn dẹp cả, chỉ gây nhiễu log."""
+    scn = Scenario(nodes=[ScenarioStep(action="identify", devices=["CNT91"])])
+    runner = ScenarioRunner(mock=False, address_map={})  # thiếu địa chỉ -> lỗi ngay thiết bị đầu
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(ValueError):
+            runner.run(scn)
+    assert not any("dừng SỚM" in r.message for r in caplog.records), (
+        f"Vẫn log cảnh báo dọn dẹp dù chưa mở được thiết bị nào: {caplog.records}")
+
+
 def test_runner_real_without_address_raises():
     scn = Scenario(nodes=[ScenarioStep(action="identify", devices=["CNT91"])])
     with pytest.raises(ValueError, match="thiếu địa chỉ VISA"):

@@ -99,6 +99,11 @@ class DeviceManagerDialog(QDialog):
         self.setMinimumSize(1150, 680)
         self.profile = profile or ConnectionProfile()
         self._scan_worker: ScanWorker | None = None
+        # row -> res.ok của lần bấm "Test" GẦN NHẤT cho dòng đó — dùng để
+        # cảnh báo ở _on_accept() nếu người dùng "Xác nhận" dù đã Test thất
+        # bại (báo cáo lỗi K05: Test cả 3 dòng đều đỏ, bấm Xác nhận vẫn
+        # không hỏi gì, ra chấm xanh "đã kết nối" như bình thường).
+        self._test_ok: dict[int, bool] = {}
 
         self._build_ui()
 
@@ -178,6 +183,12 @@ class DeviceManagerDialog(QDialog):
         self.table.setColumnWidth(_COL_SERIAL, 110)
         self.table.setColumnWidth(_COL_TEST, 90)
         hdr.setSectionResizeMode(_COL_STATUS, QHeaderView.Stretch)
+        # Lỗi kết nối thật (vd "...: VI_ERROR_BERR (...): Bus error occurred
+        # during transfer.") dài hơn hẳn "OK: ..."/"Chưa kiểm tra" — dù cột
+        # đã Stretch, 1 dòng cao mặc định vẫn cắt chữ, chỉ đọc được qua
+        # tooltip khi rê chuột (báo cáo lỗi K04). Tăng chiều cao dòng + cho
+        # badge Trạng thái xuống dòng để đọc được thẳng trên bảng.
+        self.table.verticalHeader().setDefaultSectionSize(40)
         root.addWidget(self.table)
 
         # Hàng dưới: profile + xác nhận
@@ -288,6 +299,7 @@ class DeviceManagerDialog(QDialog):
         status_lay.setContentsMargins(4, 1, 4, 1)
         status_lay.setAlignment(Qt.AlignCenter)
         status_lbl = QLabel()
+        status_lbl.setWordWrap(True)
         set_badge(status_lbl, "Chưa kiểm tra", Colors.TEXT_DIM)
         status_lay.addWidget(status_lbl)
         self.table.setCellWidget(r, _COL_STATUS, status_w)
@@ -302,6 +314,7 @@ class DeviceManagerDialog(QDialog):
 
     def _clear_rows(self):
         self.table.setRowCount(0)
+        self._test_ok.clear()
 
     # ------------------------------------------------------------------
     # Scan
@@ -319,6 +332,20 @@ class DeviceManagerDialog(QDialog):
 
     def _on_scan_done(self, devices: list):
         self.btn_scan.setEnabled(True)
+        # Scan ra 0 thiết bị trả *IDN? (vd máy đang tắt/lỏng cáp) -> TRƯỚC
+        # ĐÂY vẫn xóa sạch bảng (kể cả các dòng profile vừa nạp) rồi báo
+        # "✅ Scan hoàn tất" màu XANH y như quét thành công -- bấm "Xác
+        # nhận" ngay sau đó là mất trắng cấu hình thiết bị của phiên mà
+        # không ai hay (báo cáo lỗi K02). Giữ nguyên bảng cũ, báo rõ bằng
+        # màu cảnh báo, không coi là "hoàn tất" bình thường.
+        found_any = any(self._has_idn(dev.idn) for dev in devices)
+        if not found_any:
+            self.lbl_status.setStyleSheet(
+                f"color:{Colors.ACCENT_WARN}; font-weight:bold;")
+            self.lbl_status.setText(
+                "⚠ Không tìm thấy thiết bị nào trả lời — kiểm tra nguồn/cáp/driver "
+                "NI-VISA. Danh sách cũ được giữ nguyên.")
+            return
         self._clear_rows()
         matched = 0
         hidden = 0
@@ -469,6 +496,7 @@ class DeviceManagerDialog(QDialog):
             self._set_status(r, "Chưa gán model", Colors.ACCENT_WARN)
             return
         res = test_connection(model_key, address, mock=False)
+        self._test_ok[r] = res.ok
         if res.ok:
             self._set_status(r, f"OK: {res.model}", Colors.ACCENT_GREEN)
         else:
@@ -549,6 +577,24 @@ class DeviceManagerDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _on_accept(self):
+        # Dòng đã bấm "Test" và THẤT BẠI (self._test_ok[r] is False) mà vẫn
+        # được gán model + Xác nhận -> sắp bị coi như "đã kết nối" ở mọi nơi
+        # khác trong app (chấm xanh, khung "Thiết bị từ Phiên") dù máy chưa
+        # chắc đã bật/đã nối (báo cáo lỗi K05). Chỉ cảnh báo dòng ĐÃ Test —
+        # dòng chưa bấm Test (profile nạp sẵn, chưa kiểm tra lại) là tình
+        # huống khác, không chặn ở đây.
+        failed_rows = [r for r in range(self.table.rowCount())
+                       if self._test_ok.get(r) is False
+                       and self.table.cellWidget(r, _COL_ASSIGN).currentData()]
+        if failed_rows:
+            names = ", ".join(
+                self.table.cellWidget(r, _COL_ASSIGN).currentData() for r in failed_rows)
+            if not confirm_yes_no(
+                    self, "Có dòng Test thất bại",
+                    f"{len(failed_rows)} dòng đã Test THẤT BẠI (chưa chắc máy đã bật/đã "
+                    f"nối đúng): {names}.\n\nVẫn xác nhận coi như đã kết nối?",
+                    default_yes=False):
+                return
         prof = self._build_profile_from_table()
         warns = prof.warnings()
         if warns:

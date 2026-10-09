@@ -423,7 +423,12 @@ class ScenarioRunner:
                 except Exception:  # noqa: BLE001
                     pass
             self.stopped_early = pc < len(nodes)
-            if self.stopped_early:
+            # Chỉ log khi THẬT SỰ có thiết bị đã mở (self._devices) — nếu
+            # _open_device() lỗi ngay thiết bị ĐẦU TIÊN (vd máy tắt hẳn,
+            # chưa mở được máy nào) thì không có gì để "dọn dẹp" cả, log
+            # cảnh báo này chỉ gây nhiễu khi đọc log (ghi chú ở báo cáo
+            # test_reports/2026-10-09_khong_thiet_bi).
+            if self.stopped_early and self._devices:
                 log.warning(
                     "ScenarioRunner: kịch bản dừng SỚM (chưa chạy hết) — các bước dọn dẹp "
                     "riêng của thiết bị ở cuối kịch bản (nếu có, vd đưa máy đo về chế độ "

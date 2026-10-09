@@ -145,8 +145,12 @@ class SMW200A:
                 self.reset()
 
         except pyvisa.VisaIOError as exc:
+            # Thông báo tiếng Anh thuần, khác với các driver dựa trên
+            # drivers/base_visa.py (đều dùng "<máy>: không kết nối được tới
+            # '<địa chỉ>': <lỗi>") — SMW200A là driver GỐC viết trước khi có
+            # base_visa.py (báo cáo lỗi K04).
             raise SMW200AConnectionError(
-                f"Cannot connect to SMW200A at '{self._address}': {exc}"
+                f"{self.MODEL_NAME}: không kết nối được tới '{self._address}': {exc}"
             ) from exc
 
     def disconnect(self) -> None:

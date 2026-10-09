@@ -599,6 +599,11 @@ class FlowEditorWindow(QMainWindow):
         self._build_map: dict | None = None   # tạm dùng khi _export_for_run()
         self._run_node_map: dict = {}         # id(step) -> NodeItem
         self._last_results: list = []         # list[StepResult] của lần chạy gần nhất (R4-07)
+        # True nếu lần chạy GẦN NHẤT là mô phỏng (không có địa chỉ VISA thật)
+        # -> _update_result_display() gắn nhãn "🧪 MÔ PHỎNG" lên kết quả,
+        # tránh nhìn giống số đo thật (file xuất đã ghi "MOCK" nhưng giao
+        # diện trước đây không có dấu hiệu nào) (báo cáo lỗi K11).
+        self._last_run_mock: bool = False
         self.worker: FlowRunWorker | None = None
         self._pulse_timer = QTimer(self)
         self._pulse_timer.setInterval(450)
@@ -833,13 +838,20 @@ class FlowEditorWindow(QMainWindow):
         if self._on_scan_device is not None:
             result = self._on_scan_device()   # trả dict {"devices":…,"address_map":…,"cmd_delay_s":…} hoặc None
             if result is not None:
-                self.devices = result.get("devices") or []
+                devices = result.get("devices") or []
+                self.devices = devices
                 self._address_map = result.get("address_map") or {}
                 self._cmd_delay_s = result.get("cmd_delay_s", 0.1)
-                self._connected = True
+                # Xác nhận danh sách TRỐNG (0 thiết bị, vd máy đang tắt) vẫn
+                # trả dict khác None (người dùng bấm "Xác nhận" thật) ->
+                # trước đây vẫn coi là "đã kết nối" -> Step 1 chuyển ✓ xanh,
+                # Step 2 mở khóa dù 0 thiết bị, và cảnh báo mô phỏng sau đó
+                # tự mâu thuẫn (nói "danh sách đang hiện đã kết nối" trong
+                # khi danh sách đang ghi "Chưa kết nối") (báo cáo lỗi K10).
+                self._connected = bool(devices)
                 self._refresh_left_devices()
-                self._stepper.set_connected(True)
-                if self._stepper._current < 1:
+                self._stepper.set_connected(self._connected)
+                if self._connected and self._stepper._current < 1:
                     self._stepper.set_current(1)
         else:
             QMessageBox.information(
@@ -886,6 +898,7 @@ class FlowEditorWindow(QMainWindow):
                     "Bấm Step 1 để Scan & Identify thiết bị thật trước khi chạy.\n\n"
                     "Vẫn chạy mô phỏng?", default_yes=False):
                 return
+        self._last_run_mock = not bool(self._address_map)
         scn, node_map = self._export_for_run()
         if not scn.nodes:
             QMessageBox.warning(self, "Kịch bản trống",
@@ -944,7 +957,8 @@ class FlowEditorWindow(QMainWindow):
                 f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_DIM};"
                 f" border:1px solid {Colors.BORDER}; border-radius:4px; padding:6px;")
         elif node._last_result_ok:
-            self.lbl_result.setText(node._last_result_text or "OK")
+            prefix = "🧪 MÔ PHỎNG — " if self._last_run_mock else ""
+            self.lbl_result.setText(prefix + (node._last_result_text or "OK"))
             self.lbl_result.setStyleSheet(
                 f"background:{Colors.BG_INPUT}; color:{Colors.ACCENT_GREEN};"
                 f" border:1px solid {Colors.ACCENT_GREEN}; border-radius:4px; padding:6px;")

@@ -9,9 +9,15 @@
    - Neu Windows canh bao "Windows protected your PC" (SmartScreen):
      bam "More info" -> "Run anyway".
 
-2) NEU CHUA CO THIET BI THAT (chi xem/dung thu giao dien)
-   - Phan mem chay duoc ngay o che do MOC (MOCK), khong can cai them
-     gi ca.
+2) NEU CHUA CO THIET BI THAT (chi xem/soan giao dien)
+   - Phan mem van mo duoc, xem va soan mau bao cao, kich ban, phien
+     kiem dinh binh thuong - KHONG can cai them gi ca.
+   - Nhung KHONG do duoc: bam "Chay" se bi chan voi thong bao "Chua
+     co thiet bi nao duoc ket noi". Phai co thiet bi THAT (muc 3)
+     moi do duoc.
+   - Rieng man hinh "Digital" (so do luong) trong Scenario Builder co
+     cho chay THU o che do MO PHONG (so lieu gia, khong phai so do
+     thuc), nhung phai tu xac nhan qua 1 hop thoai truoc khi chay.
 
 3) NEU DA CO THIET BI DO THAT (ket noi qua GPIB)
    - Phai cai them NI-VISA (driver cua hang National Instruments) thi

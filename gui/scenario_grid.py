@@ -995,7 +995,8 @@ class ScenarioWorker(QThread):
 class ScenarioGridWindow(QMainWindow):
     def __init__(self, parent=None, address_map: dict | None = None,
                  cmd_delay_s: float | None = None,
-                 on_device_changed=None, on_closed=None):
+                 on_device_changed=None, on_closed=None,
+                 profile=None):
         super().__init__(parent)
         # Cửa sổ top-level (parent=None) — không có ai ở tầng C++ huỷ nó khi
         # đóng. KHÔNG đặt cờ này thì close() chỉ ẨN cửa sổ, toàn bộ cây
@@ -1039,6 +1040,20 @@ class ScenarioGridWindow(QMainWindow):
         if address_map is not None:
             self.address_map = dict(address_map)
             self._connected_keys = set(address_map.keys())
+            # self._profile (RIÊNG với address_map) nuôi _devices_for_flow()/
+            # _scan_for_flow() khi ghé theme Digital — trước đây KHÔNG được
+            # gán gì ở nhánh này (chỉ _auto_load_profile() gán, đọc file
+            # connection_profile.json trên đĩa, có thể rỗng/khác hẳn phiên
+            # đang chạy) -> Digital hiện "Chưa kết nối thiết bị / 0 Nodes"
+            # dù Classic đang ghi đúng "3 máy từ Phiên" (báo cáo lỗi K10).
+            # Ưu tiên profile ĐẦY ĐỦ (có IDN) nếu cha truyền được, nếu không
+            # vẫn dựng tối thiểu từ address_map để Digital có gì mà hiện.
+            if profile is not None:
+                self._profile = profile
+            else:
+                from core.profile import ConnectionProfile, ProfileEntry
+                self._profile = ConnectionProfile(entries=[
+                    ProfileEntry(model_key=k, address=v) for k, v in address_map.items()])
             # Ẩn nút Thiết bị, hiện label thông báo dùng thiết bị từ Phiên Kiểm Định
             self._btn_device.setVisible(False)
             self._lbl_device_info.setVisible(True)
@@ -2324,6 +2339,17 @@ class ScenarioGridWindow(QMainWindow):
     def _on_failed(self, msg):
         self.btn_run.setEnabled(True); self.btn_stop.setEnabled(False)
         self._log(f"LỖI: {msg}", Colors.ACCENT_RED)
+        # Lỗi ở ĐÂY nghĩa là kịch bản hỏng TRƯỚC khi chạy được bước nào (vd
+        # không mở được thiết bị — _open_device() lỗi ngay đầu run(), xem
+        # core/scenario_runner.py) -> không bước nào kịp nhận StepResult để
+        # _apply_step_result() tự đổi badge, nên mọi dòng còn lại vẫn im
+        # "Chờ" dù kịch bản đã THẬT SỰ dừng/lỗi — trông như sắp chạy tiếp,
+        # không phải đã lỗi (báo cáo lỗi K09). Đổi badge các dòng còn "Chờ"
+        # thành "LỖI" cho khớp thực tế.
+        for it in self._all_items():
+            badge = self._status_badges.get(id(it))
+            if badge is not None and badge.text().strip() == "Chờ":
+                set_badge(badge, "LỖI", Colors.ACCENT_RED)
         QMessageBox.critical(self, "Lỗi chạy kịch bản", msg)
 
     def _export_results(self):

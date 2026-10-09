@@ -11,6 +11,7 @@ phụ thuộc lẫn nhau. Áp stylesheet này lên QApplication để MỌI popu
 from __future__ import annotations
 
 import pathlib
+import sys
 
 
 class Colors:
@@ -45,8 +46,18 @@ class Colors:
 def build_global_qss() -> str:
     """Stylesheet toàn cục đặt trên QApplication (theme tối cho mọi popup/dropdown)."""
     C = Colors
-    # Đường dẫn tuyệt đối tới file SVG mũi tên, dùng forward-slash cho Qt
-    _arrow_path = str(pathlib.Path(__file__).with_name("arrow_down.svg")).replace("\\", "/")
+    # Đường dẫn tuyệt đối tới file SVG mũi tên, dùng forward-slash cho Qt.
+    # __file__ KHÔNG dùng được khi đóng gói (PyInstaller) — gui/theme.py chỉ
+    # còn là bytecode trong PYZ, không có file .py thật nằm cạnh để suy ra
+    # đường dẫn -> mất mũi tên ▼ ở mọi combo box/ô ngày trong bản .exe (báo
+    # cáo lỗi K01), dù chạy từ source vẫn đúng vì __file__ lúc đó là file
+    # thật. Theo đúng cách logo.png/logo.ico đã làm (build.ps1 copy tay vào
+    # thư mục "gui/" CẠNH file .exe) — dùng sys.executable khi frozen.
+    if getattr(sys, "frozen", False):
+        _arrow_path = str(pathlib.Path(sys.executable).parent / "gui" / "arrow_down.svg")
+    else:
+        _arrow_path = str(pathlib.Path(__file__).with_name("arrow_down.svg"))
+    _arrow_path = _arrow_path.replace("\\", "/")
     return f"""
         QWidget {{ background-color: {C.BG_WINDOW}; color: {C.TEXT_MAIN};
                    font-family: 'Consolas', 'Courier New', monospace; }}

@@ -191,6 +191,33 @@ def test_multi_device_write_command_shows_placeholder_for_each_device():
         win.deleteLater()
 
 
+def test_on_failed_marks_pending_steps_as_error_not_cho(monkeypatch):
+    """K09 (test_reports/2026-10-09_khong_thiet_bi): chạy bước khi máy tắt
+    -> _open_device() lỗi NGAY ĐẦU run() (core/scenario_runner.py), trước
+    khi bước nào kịp nhận StepResult -> worker.failed (không phải
+    result_ready) -> trước đây _on_failed() chỉ hiện hộp lỗi, không đụng gì
+    tới badge -> dòng bước vẫn ghi "Chờ" dù kịch bản đã dừng/lỗi THẬT."""
+    from gui import scenario_grid
+
+    monkeypatch.setattr(scenario_grid.QMessageBox, "critical", lambda *a, **k: None)
+    step = ScenarioStep(action="identify", devices=["4231A"])
+    win = ScenarioGridWindow(parent=None)
+    win.setAttribute(Qt.WA_DeleteOnClose, False)
+    try:
+        win.scenario.nodes = [step]
+        win._refresh_tree()
+        item = win._id_to_item[id(step)]
+        badge = win._status_badges[id(item)]
+        assert badge.text() == "Chờ"
+
+        win._on_failed("Không mở được thiết bị '4231A': timeout")
+
+        assert badge.text() == "LỖI", (
+            f"Dòng bước vẫn ghi 'Chờ' sau khi kịch bản lỗi (K09): {badge.text()!r}")
+    finally:
+        win.deleteLater()
+
+
 def test_single_device_step_result_not_tagged():
     """Bước chỉ 1 thiết bị — KHÔNG gắn thêm [tên máy] vào cột Kết quả như
     trước đây (chỉ bước nhiều máy mới cần phân biệt)."""

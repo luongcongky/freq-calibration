@@ -67,6 +67,58 @@ def test_switch_to_digital_passes_real_address_map(monkeypatch):
         win.deleteLater()
 
 
+# ---------------------------------------------------------------------------
+# K10 (test_reports/2026-10-09_khong_thiet_bi): ScenarioGridWindow mở từ
+# Phiên Kiểm Định (chỉ truyền address_map, không truyền profile đầy đủ)
+# -> self._profile không được gán -> _devices_for_flow() trả None ->
+# Digital hiện "Chưa kết nối thiết bị / 0 Nodes" dù Classic đang ghi đúng
+# số máy từ Phiên.
+# ---------------------------------------------------------------------------
+
+def test_switch_to_digital_shows_devices_even_without_explicit_profile(monkeypatch):
+    """Phiên Kiểm Định trước đây chỉ truyền address_map (không có
+    ConnectionProfile đầy đủ) -> self._profile không được gán -> Digital
+    trống. Phải tự dựng profile tối thiểu từ address_map (K10)."""
+    from gui.scenario_grid import ScenarioGridWindow
+
+    win = ScenarioGridWindow(parent=None, address_map={"4231A": "GPIB0::13::INSTR"},
+                             cmd_delay_s=0.3)
+    try:
+        monkeypatch.setattr(win, "hide", lambda: None)
+        win._switch_to_digital()
+        try:
+            assert win._flow_win.devices, (
+                "Digital không có thiết bị nào để hiện dù Classic có 1 máy (K10)")
+            assert win._flow_win._connected is True
+        finally:
+            win._flow_win.deleteLater()
+    finally:
+        win.deleteLater()
+
+
+def test_switch_to_digital_uses_explicit_profile_when_given(monkeypatch):
+    from core.profile import ConnectionProfile, ProfileEntry
+    from gui.scenario_grid import ScenarioGridWindow
+
+    prof = ConnectionProfile(entries=[
+        ProfileEntry(model_key="4231A", address="GPIB0::13::INSTR",
+                     label="Máy đếm phòng A", idn="Boonton,4231A,SN1,1.0"),
+    ])
+    win = ScenarioGridWindow(parent=None, address_map={"4231A": "GPIB0::13::INSTR"},
+                             cmd_delay_s=0.3, profile=prof)
+    try:
+        monkeypatch.setattr(win, "hide", lambda: None)
+        win._switch_to_digital()
+        try:
+            names = [d["name"] for d in win._flow_win.devices]
+            assert "Máy đếm phòng A" in names, (
+                f"Không dùng profile đầy đủ được truyền vào (K10): {names}")
+        finally:
+            win._flow_win.deleteLater()
+    finally:
+        win.deleteLater()
+
+
 def test_export_scenario_preserves_loaded_scenario_name():
     """R4-08 (test_reports/2026-10-08_round4): sau khi ghé Digital rồi xuất
     lại, tên kịch bản trong Scenario Builder đổi thành "Sơ đồ luồng" —
@@ -173,6 +225,88 @@ def test_export_run_results_calls_scenario_export_with_results(monkeypatch, tmp_
         assert len(calls["results"]) == 1
         assert calls["path"] == str(out_path)
     finally:
+        win.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# K10 (test_reports/2026-10-09_khong_thiet_bi): xác nhận danh sách thiết bị
+# TRỐNG (0 máy, vd máy tắt) ở Step 1 vẫn bị coi là "đã kết nối" -> Step 1
+# chuyển ✓ xanh, Step 2 mở khóa dù 0 thiết bị thật nào.
+# ---------------------------------------------------------------------------
+
+def test_scan_device_with_empty_result_does_not_mark_connected():
+    win = FlowEditorWindow(devices=None, parent=None, demo=False,
+                           on_scan_device=lambda: {"devices": [], "address_map": {},
+                                                    "cmd_delay_s": 0.1})
+    try:
+        win._do_scan_device()
+        assert win._connected is False, (
+            "Xác nhận danh sách trống vẫn coi là đã kết nối (K10)")
+    finally:
+        win.deleteLater()
+
+
+def test_scan_device_with_real_devices_marks_connected():
+    win = FlowEditorWindow(devices=None, parent=None, demo=False,
+                           on_scan_device=lambda: {
+                               "devices": [{"name": "4231A", "key": "4231A",
+                                           "sub": "GPIB0::13::INSTR", "icon": "🔌"}],
+                               "address_map": {"4231A": "GPIB0::13::INSTR"},
+                               "cmd_delay_s": 0.1})
+    try:
+        win._do_scan_device()
+        assert win._connected is True
+    finally:
+        win.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# K11 (test_reports/2026-10-09_khong_thiet_bi): sau khi đồng ý chạy mô
+# phỏng, ô KẾT QUẢ hiện số liệu giả trong khung xanh như số thật, không có
+# nhãn "MÔ PHỎNG" nào trên giao diện.
+# ---------------------------------------------------------------------------
+
+def test_result_label_shows_mo_phong_prefix_when_last_run_was_mock():
+    from types import SimpleNamespace
+
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        win._last_run_mock = True
+        fake_node = SimpleNamespace(_last_result_ok=True,
+                                    _last_result_text="BOONTON,4231A,00000001,REV1.0")
+        win._update_result_display(fake_node)
+        assert win.lbl_result.text().startswith("🧪 MÔ PHỎNG"), (
+            f"Kết quả mô phỏng không có nhãn cảnh báo (K11): {win.lbl_result.text()!r}")
+    finally:
+        win.deleteLater()
+
+
+def test_result_label_has_no_mo_phong_prefix_for_real_run():
+    from types import SimpleNamespace
+
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        win._last_run_mock = False
+        fake_node = SimpleNamespace(_last_result_ok=True, _last_result_text="1.000000 GHz")
+        win._update_result_display(fake_node)
+        assert win.lbl_result.text() == "1.000000 GHz"
+    finally:
+        win.deleteLater()
+
+
+def test_do_run_sets_last_run_mock_based_on_address_map(monkeypatch):
+    from gui import flow_editor as fe_mod
+
+    win = FlowEditorWindow(devices=_DEVICES, parent=None, demo=False)
+    try:
+        monkeypatch.setattr(fe_mod, "confirm_yes_no", lambda *a, **k: True)
+        monkeypatch.setattr(fe_mod.QMessageBox, "warning", lambda *a, **k: None)
+        win._do_run()   # kịch bản trống (demo=False, chưa load node) -> dừng sớm sau khi gán cờ
+        assert win._last_run_mock is True, (
+            "Không đánh dấu lần chạy là mô phỏng dù address_map rỗng (K11)")
+    finally:
+        if win.worker:
+            win.worker.wait(2000)
         win.deleteLater()
 
 
