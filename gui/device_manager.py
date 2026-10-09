@@ -209,10 +209,15 @@ class DeviceManagerDialog(QDialog):
             "Khoảng nghỉ giữa các lệnh khi gửi tới thiết bị (0 = tắt). Lưu kèm profile."
         )
         bottom.addWidget(self.spn_delay)
-        bottom.addStretch()
         self.lbl_status = QLabel("")
         self.lbl_status.setStyleSheet(f"color:{Colors.TEXT_DIM};")
-        bottom.addWidget(self.lbl_status)
+        # wordWrap + stretch=1 (thay addStretch() rời) — câu cảnh báo dài
+        # (vd Scan 0 thiết bị, K02) trước đây không xuống dòng, bị 2 nút
+        # "Xác nhận"/"Hủy" ở cuối hàng CÙNG dòng che mất đúng đoạn cuối
+        # quan trọng nhất ("Danh sách cũ được giữ nguyên.") (báo cáo lỗi
+        # R-01). Cho label CHIẾM khoảng trống còn lại và tự xuống dòng.
+        self.lbl_status.setWordWrap(True)
+        bottom.addWidget(self.lbl_status, 1)
         btn_ok = QPushButton("✔ Xác nhận")
         btn_ok.setStyleSheet(
             f"background:{Colors.ACCENT_GREEN}; color:{Colors.BG_WINDOW};"

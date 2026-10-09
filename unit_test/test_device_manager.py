@@ -164,6 +164,18 @@ def test_scan_done_with_devices_still_replaces_rows_as_before():
         dlg.deleteLater()
 
 
+def test_lbl_status_word_wraps_long_warning():
+    """R-01 (test_reports/2026-10-09_khong_thiet_bi_retest): cảnh báo Scan
+    0 thiết bị dài 2 câu, không xuống dòng -> bị nút "Hủy" che mất đúng
+    đoạn cuối quan trọng nhất ("Danh sách cũ được giữ nguyên.")."""
+    dlg = DeviceManagerDialog(parent=None, mock=True, profile=ConnectionProfile())
+    try:
+        assert dlg.lbl_status.wordWrap() is True, (
+            "lbl_status không wordWrap -> câu dài vẫn có thể bị che (R-01)")
+    finally:
+        dlg.deleteLater()
+
+
 def test_status_label_word_wraps_long_error_text():
     """K04: lỗi kết nối dài (VI_ERROR_BERR...) trước đây chỉ đọc được qua
     tooltip khi rê chuột, cột Trạng thái cắt mất chữ."""
