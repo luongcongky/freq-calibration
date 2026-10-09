@@ -504,7 +504,19 @@ class _MetaTab(QScrollArea):
         m = session.meta
         idx = self.cmb_template.findData(session.template_id)
         if idx >= 0:
+            # blockSignals: setCurrentIndex() ở đây đổi sang 1 mục KHÁC mục
+            # đang hiện (vd Mở phiên khác mẫu phiên trước) sẽ tự fire
+            # currentIndexChanged -> _on_template_changed() -> gọi
+            # save_meta_fields_to(self._session) NGAY LÚC NÀY, chép các ô
+            # Bước 1 TRÊN GIAO DIỆN (vẫn đang trống/của phiên CŨ vì các
+            # setText() dưới đây CHƯA kịp chạy) đè lên `m` = session.meta —
+            # cùng object mà các dòng setText() dưới đây sẽ đọc lại, nên đọc
+            # ra TOÀN RỖNG dù session.meta vừa đọc đúng từ file (báo cáo lỗi
+            # R-02). Mọi nơi khác trong class này đổi cmb_template bằng tay
+            # đều đã blockSignals, chỉ load_from() bỏ sót.
+            self.cmb_template.blockSignals(True)
             self.cmb_template.setCurrentIndex(idx)
+            self.cmb_template.blockSignals(False)
         self.e_name.setText(m.dut.name)
         self.e_model.setText(m.dut.model)
         self.e_serial.setText(m.dut.serial)

@@ -234,6 +234,62 @@ def test_check_template_file_exists_false_and_warns_when_missing(tmp_path, monke
 
 
 # ---------------------------------------------------------------------------
+# R-02 (test_reports/2026-10-09_retest2/BAO_CAO_TEST_LAI_2.md): "Mở phiên"
+# (StepMeta.load_from()) đổi cmb_template.setCurrentIndex() KHÔNG chặn
+# signal -> tự fire currentIndexChanged -> _on_template_changed() chạy
+# save_meta_fields_to(self._session) NGAY LÚC ĐÓ, chép các ô Bước 1 (vẫn
+# đang trống/của phiên cũ, vì load_from() CHƯA kịp setText()) đè lên
+# session.meta vừa đọc từ file -> load_from() điền lại từ meta đã bị xoá.
+# ---------------------------------------------------------------------------
+
+def test_load_from_does_not_wipe_meta_when_switching_template(monkeypatch):
+    """Dựng 1 SessionManagerWindow THẬT (để currentIndexChanged thật sự nối
+    tới _on_template_changed()), đặt combo đang ở mẫu A + Bước 1 TRỐNG
+    (mô phỏng phiên "Mới"), rồi load_from() 1 session mẫu B có đủ dữ liệu
+    Bước 1 (mô phỏng "Mở phiên") — mọi ô phải giữ đúng giá trị đã nạp."""
+    from core.session import CalibrationSession, SessionMeta, DUTInfo
+    from gui import session_manager as sm_mod
+
+    win = SessionManagerWindow()
+    try:
+        ids = [win._step_meta.cmb_template.itemData(i)
+               for i in range(win._step_meta.cmb_template.count())]
+        ids = [i for i in ids if i]
+        assert len(ids) >= 2, "Cần ít nhất 2 mẫu có sẵn để tái hiện đổi mẫu"
+        tid_a, tid_b = ids[0], ids[1]
+
+        # Bước 1: đứng ở mẫu A, phiên hiện tại rỗng (như "Mới").
+        win._session = CalibrationSession(template_id=tid_a)
+        win._step_meta.load_from(win._session)
+
+        # "Mở phiên" khác mẫu (B), đủ dữ liệu Bước 1.
+        loaded = CalibrationSession(
+            template_id=tid_b,
+            meta=SessionMeta(
+                dut=DUTInfo(name="TEN-R02", model="KH-R02",
+                           manufacturer="HANG-R02", serial="SN-R02"),
+                operator="KDV-R02",
+            ),
+            tests=[],
+        )
+        monkeypatch.setattr(sm_mod, "confirm_yes_no", lambda *a, **k: True)
+        win._session = loaded
+        win._step_meta.load_from(win._session)
+
+        assert win._step_meta.e_name.text() == "TEN-R02", (
+            f"Tên phương tiện bị xoá khi đổi mẫu lúc Mở phiên (R-02): "
+            f"{win._step_meta.e_name.text()!r}")
+        assert win._step_meta.e_model.text() == "KH-R02"
+        assert win._step_meta.e_mfr.text() == "HANG-R02"
+        assert win._step_meta.e_serial.text() == "SN-R02"
+        assert win._step_meta.e_operator.text() == "KDV-R02"
+        # session.meta cũng không được bị trộn/xoá (ảnh hưởng Lưu phiên sau đó).
+        assert loaded.meta.dut.name == "TEN-R02"
+    finally:
+        win.deleteLater()
+
+
+# ---------------------------------------------------------------------------
 # REG-07: sau "Mới", rail footer ("Biểu mẫu đang dùng") vẫn hiện tên mẫu CŨ
 # dù combobox đã về "— Chọn mẫu —".
 # ---------------------------------------------------------------------------
